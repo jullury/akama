@@ -1,0 +1,80 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: akama
+      POSTGRES_PASSWORD: akama
+      POSTGRES_DB: akama
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U akama"]
+      interval: 5s
+      retries: 5
+
+  n8n:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "5678:5678"           # n8n web UI
+    depends_on:
+      postgres:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    environment:
+      # n8n DB (n8n's own state)
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: akama
+      DB_POSTGRESDB_USER: akama
+      DB_POSTGRESDB_PASSWORD: akama
+      # Security
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      # Webhook URL for Telegram (must be publicly reachable, e.g. via ngrok in dev)
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      # Agent API keys (passed through to shell scripts)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Agent HOME dir for opencode/claude config persistence
+      AGENT_HOME: /data/home
+      # SSH credentials for worker access (used by workflows)
+      SSH_USER: ${SSH_USER:-root}
+      SSH_PASSWORD: ${SSH_PASSWORD}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - workspaces:/workspaces
+      - agent_home:/data/home
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: akama
+      PGUSER: akama
+      PGPASSWORD: akama
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # SSH credentials (optional - defaults to root with no password auth)
+      SSH_USER: ${SSH_USER:-root}
+      SSH_PASSWORD: ${SSH_PASSWORD}
+    volumes:
+      - workspaces:/workspaces
+      - agent_home:/data/home
+    ports:
+      - "2222:22"
+
+volumes:
+  postgres_data:
+  n8n_data:
+  workspaces:
+  agent_home:

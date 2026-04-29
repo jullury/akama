@@ -1,0 +1,274 @@
+{
+  "name": "03-follow-up",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT * FROM akama_jobs WHERE notification_msg_id = {{ $json.reply_to_message.message_id }}"
+      },
+      "id": "find-job",
+      "name": "Find Job By Reply",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE akama_jobs SET status = 'updating', updated_at = NOW() WHERE id = {{ $('Find Job By Reply').item.json.id }}"
+      },
+      "id": "update-updating",
+      "name": "Set Status Updating",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build follow-up prompt and write to temp file\nconst job = $('Find Job By Reply').item.json;\nconst followUpText = $('Execute Workflow Trigger').item.json.text || '';\nconst prompt = `You are continuing work on the same repository.\n\nAdditional instructions from the user:\n${followUpText}\n\nInstructions:\n- Apply the changes requested above.\n- Commit all changes with a descriptive message.\n- Do NOT open pull requests \u2014 just commit.`;\n\nconst fs = require('fs');\nconst path = `/tmp/prompt-follow-up-${job.id}.txt`;\nfs.writeFileSync(path, prompt);\nreturn { prompt_path: path, job_id: job.id };"
+      },
+      "id": "write-prompt",
+      "name": "Write Follow-up Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "code": "\nimport subprocess\nimport os\n\n# Execute the shell command\n# Note: n8n expressions in the command need to be pre-resolved\ncommand = \"\"\"=/usr/local/bin/akama-scripts/run-agent.sh {{ $('Find Job By Reply').item.json.agent }} {{ $('Find Job By Reply').item.json.agent_model }} {{ $('Find Job By Reply').item.json.workspace_path }} {{ $json.prompt_path }}\"\"\"\nresult = subprocess.run(command, shell=True, capture_output=True, text=True)\n\nitems = []\nfor item in range(len(max([len(input.item.json) if isinstance(input.item.json, list) else [input.item.json] for input in [_ for _ in [__import__('sys').modules.get('__main__')]]) if False else [1])):\n    items.append({\n        'json': {\n            'stdout': result.stdout,\n            'stderr': result.stderr,\n            'returncode': result.returncode\n        }\n    })\n\nreturn items\n"
+      },
+      "id": "run-agent",
+      "name": "Run Agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "code": "\nimport subprocess\nimport os\n\n# Execute the shell command\n# Note: n8n expressions in the command need to be pre-resolved\ncommand = \"\"\"=/usr/local/bin/akama-scripts/git-commit-push.sh {{ $('Find Job By Reply').item.json.workspace_path }} {{ $('Find Job By Reply').item.json.branch_name }} {{ $('Find Job By Reply').item.json.git_token }}\"\"\"\nresult = subprocess.run(command, shell=True, capture_output=True, text=True)\n\nitems = []\nfor item in range(len(max([len(input.item.json) if isinstance(input.item.json, list) else [input.item.json] for input in [_ for _ in [__import__('sys').modules.get('__main__')]]) if False else [1])):\n    items.append({\n        'json': {\n            'stdout': result.stdout,\n            'stderr': result.stderr,\n            'returncode': result.returncode\n        }\n    })\n\nreturn items\n"
+      },
+      "id": "git-push",
+      "name": "Git Commit Push",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE akama_jobs SET status = 'pr_created', agent_output = '', updated_at = NOW() WHERE id = {{ $('Find Job By Reply').item.json.id }}"
+      },
+      "id": "update-pr",
+      "name": "Update Job PR Created",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Find Job By Reply').item.json.chat_id }}",
+        "text": "=[{{ $('Find Job By Reply').item.json.provider }}] Updated \u2014 {{ $('Find Job By Reply').item.json.pr_url }}\n\nReply for more or /done {{ $('Find Job By Reply').item.json.id }}"
+      },
+      "id": "notify-updated",
+      "name": "Notify Updated",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE akama_jobs SET notification_msg_id = '{{ $json.message_id }}', updated_at = NOW() WHERE id = {{ $('Find Job By Reply').item.json.id }}"
+      },
+      "id": "update-notif",
+      "name": "Update Notification ID",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        2000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE akama_jobs SET status = 'failed', error_msg = '{{ $json.message.replace(/'/g, \"''\") }}', updated_at = NOW() WHERE id = {{ $('Find Job By Reply').item.json.id }}"
+      },
+      "id": "update-failed",
+      "name": "Set Status Failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        1340,
+        540
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Find Job By Reply').item.json.chat_id }}",
+        "text": "=\u274c Follow-up failed: {{ $json.message }}"
+      },
+      "id": "notify-error",
+      "name": "Notify Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1560,
+        540
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Find Job By Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Job By Reply": {
+      "main": [
+        [
+          {
+            "node": "Set Status Updating",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status Updating": {
+      "main": [
+        [
+          {
+            "node": "Write Follow-up Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Follow-up Prompt": {
+      "main": [
+        [
+          {
+            "node": "Run Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Agent": {
+      "main": [
+        [
+          {
+            "node": "Git Commit Push",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ],
+      "error": [
+        [
+          {
+            "node": "Set Status Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Git Commit Push": {
+      "main": [
+        [
+          {
+            "node": "Update Job PR Created",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Job PR Created": {
+      "main": [
+        [
+          {
+            "node": "Notify Updated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Updated": {
+      "main": [
+        [
+          {
+            "node": "Update Notification ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Status Failed": {
+      "main": [
+        [
+          {
+            "node": "Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2026-04-29T00:00:00.000Z",
+  "versionId": 1,
+  "id": "0a4a1e12-870b-41f7-b713-e94f216838a7"
+}
