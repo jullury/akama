@@ -14,43 +14,196 @@
       "position": [
         240,
         300
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
-        "conditions": {
-          "string": [
+        "options": {
+          "fallbackOutput": "extra"
+        },
+        "rules": {
+          "values": [
             {
-              "value1": "={{ $json.message.text }}",
-              "value2": "/start"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Start"
             },
             {
-              "value1": "={{ $json.message.text }}",
-              "value2": "/connect"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/connect",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Connect"
             },
             {
-              "value1": "={{ $json.message.text }}",
-              "value2": "/connections"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/connections",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Connections"
             },
             {
-              "value1": "={{ $json.message.text }}",
-              "value2": "/disconnect"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/disconnect",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Disconnect"
             },
             {
-              "value1": "={{ $json.message.text }}",
-              "value2": "/issues"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/issues",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Issues"
             },
             {
-              "value1": "={{ $json.message.text }}",
-              "value2": "/status"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/status",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Status"
             },
             {
-              "value1": "={{ $json.message.text }}",
-              "value2": "/done"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/done",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Done"
             },
             {
-              "value1": "={{ $json.message.text }}",
-              "value2": "/cancel"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/cancel",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Cancel"
             }
           ]
         }
@@ -76,29 +229,34 @@
       "position": [
         700,
         100
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
-    {
+ {
       "parameters": {
         "chatId": "={{ $json.message.chat.id }}",
         "text": "Choose a provider:",
-        "extraFields": {
-          "replyMarkup": {
-            "inlineKeyboard": [
-              [
-                {
-                  "text": "GitHub",
-                  "callback_data": "connect:github"
-                },
-                {
-                  "text": "GitLab",
-                  "callback_data": "connect:gitlab"
-                },
-                {
-                  "text": "Trello",
-                  "callback_data": "connect:trello"
-                }
-              ]
+        "additionalFields": {
+          "replyMarkup": "inlineKeyboard",
+          "inlineKeyboard": {
+            "rows": [
+              {
+                "buttons": [
+                  {
+                    "text": "GitHub",
+                    "callback_data": "connect:github"
+                  },
+                  {
+                    "text": "GitLab",
+                    "callback_data": "connect:gitlab"
+                  }
+                ]
+              }
             ]
           }
         }
@@ -110,7 +268,13 @@
       "position": [
         700,
         220
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
@@ -128,7 +292,13 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "=INSERT INTO akama_conversations (chat_id, platform, state, data, updated_at) VALUES ($1, 'telegram', 'await_provider', '{}', NOW()) ON CONFLICT (chat_id, platform) DO UPDATE SET state = 'await_provider', data = '{}', updated_at = NOW()"
+        "query": "=INSERT INTO akama_conversations (chat_id, platform, state, data, updated_at) VALUES ($1, 'telegram', 'await_provider', '{}', NOW()) ON CONFLICT (chat_id, platform) DO UPDATE SET state = 'await_provider', data = '{}', updated_at = NOW()",
+        "parameters": [
+          {
+            "position": 1,
+            "value": "={{ $json.chat_id }}"
+          }
+        ]
       },
       "id": "save-state-connect",
       "name": "Save Connect State",
@@ -137,7 +307,13 @@
       "position": [
         1140,
         220
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -151,7 +327,53 @@
       "position": [
         700,
         700
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=DELETE FROM akama_connections WHERE chat_id = {{ $json.message.chat.id }}"
+      },
+      "id": "cmd-disconnect",
+      "name": "Delete Connections",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [
+        700,
+        340
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "All connections removed."
+      },
+      "id": "notify-disconnect",
+      "name": "Notify Disconnected",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        920,
+        340
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
@@ -164,8 +386,14 @@
       "typeVersion": 1.2,
       "position": [
         700,
-        340
-      ]
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
@@ -179,7 +407,13 @@
       "position": [
         700,
         580
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -193,7 +427,13 @@
       "position": [
         920,
         580
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
@@ -207,7 +447,13 @@
       "position": [
         700,
         460
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -234,16 +480,34 @@
       "position": [
         1140,
         460
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": true,
-            "leftValue": "={{ $json.state }}",
-            "rightValue": "idle"
-          }
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "state-is-idle",
+              "leftValue": "={{ $json.state }}",
+              "rightValue": "idle",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
         }
       },
       "id": "check-state",
@@ -257,12 +521,7 @@
     },
     {
       "parameters": {
-        "workflowId": {
-          "__rl": true,
-          "value": "workflows/03-follow-up.json",
-          "mode": "list",
-          "cachedResultName": "03-follow-up"
-        },
+        "workflowId": "0a4a1e12-870b-41f7-b713-e94f216838a7",
         "options": {}
       },
       "id": "call-followup",
@@ -286,7 +545,13 @@
       "position": [
         1140,
         760
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
@@ -300,7 +565,13 @@
       "position": [
         1140,
         860
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -327,7 +598,13 @@
       "position": [
         700,
         640
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -341,7 +618,13 @@
       "position": [
         920,
         640
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     }
   ],
   "connections": {
@@ -381,7 +664,14 @@
         ],
         [
           {
-            "node": "Mark Job Done",
+            "node": "Delete Connections",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Query Open Jobs",
             "type": "main",
             "index": 0
           }
@@ -395,7 +685,32 @@
         ],
         [
           {
+            "node": "Mark Job Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
             "node": "Reset State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Query Conversation State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Connections": {
+      "main": [
+        [
+          {
+            "node": "Notify Disconnected",
             "type": "main",
             "index": 0
           }
@@ -483,14 +798,14 @@
       "main": [
         [
           {
-            "node": "Call Follow-up",
+            "node": "Send Help",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Send Help",
+            "node": "Call Follow-up",
             "type": "main",
             "index": 0
           }

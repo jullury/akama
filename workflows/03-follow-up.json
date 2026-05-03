@@ -24,7 +24,13 @@
       "position": [
         460,
         300
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -38,7 +44,13 @@
       "position": [
         680,
         300
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -55,31 +67,36 @@
     },
     {
       "parameters": {
-        "language": "python",
-        "code": "\nimport subprocess\nimport os\n\n# Execute the shell command\n# Note: n8n expressions in the command need to be pre-resolved\ncommand = \"\"\"=/usr/local/bin/akama-scripts/run-agent.sh {{ $('Find Job By Reply').item.json.agent }} {{ $('Find Job By Reply').item.json.agent_model }} {{ $('Find Job By Reply').item.json.workspace_path }} {{ $json.prompt_path }}\"\"\"\nresult = subprocess.run(command, shell=True, capture_output=True, text=True)\n\nitems = []\nfor item in range(len(max([len(input.item.json) if isinstance(input.item.json, list) else [input.item.json] for input in [_ for _ in [__import__('sys').modules.get('__main__')]]) if False else [1])):\n    items.append({\n        'json': {\n            'stdout': result.stdout,\n            'stderr': result.stderr,\n            'returncode': result.returncode\n        }\n    })\n\nreturn items\n"
+        "command": "=/usr/local/bin/akama-scripts/run-agent.sh {{ $('Find Job By Reply').item.json.agent }} {{ $('Find Job By Reply').item.json.agent_model }} {{ $('Find Job By Reply').item.json.workspace_path }} {{ $json.prompt_path }}"
       },
       "id": "run-agent",
       "name": "Run Agent",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
       "position": [
         1120,
         300
-      ]
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "sshPassword": { "id": "3", "name": "Worker SSH" }
+      }
     },
     {
       "parameters": {
-        "language": "python",
-        "code": "\nimport subprocess\nimport os\n\n# Execute the shell command\n# Note: n8n expressions in the command need to be pre-resolved\ncommand = \"\"\"=/usr/local/bin/akama-scripts/git-commit-push.sh {{ $('Find Job By Reply').item.json.workspace_path }} {{ $('Find Job By Reply').item.json.branch_name }} {{ $('Find Job By Reply').item.json.git_token }}\"\"\"\nresult = subprocess.run(command, shell=True, capture_output=True, text=True)\n\nitems = []\nfor item in range(len(max([len(input.item.json) if isinstance(input.item.json, list) else [input.item.json] for input in [_ for _ in [__import__('sys').modules.get('__main__')]]) if False else [1])):\n    items.append({\n        'json': {\n            'stdout': result.stdout,\n            'stderr': result.stderr,\n            'returncode': result.returncode\n        }\n    })\n\nreturn items\n"
+        "command": "=/usr/local/bin/akama-scripts/git-commit-push.sh {{ $('Find Job By Reply').item.json.workspace_path }} {{ $('Find Job By Reply').item.json.branch_name }} {{ $('Find Job By Reply').item.json.git_token }}"
       },
       "id": "git-push",
       "name": "Git Commit Push",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
       "position": [
         1340,
         300
-      ]
+      ],
+      "credentials": {
+        "sshPassword": { "id": "3", "name": "Worker SSH" }
+      }
     },
     {
       "parameters": {
@@ -93,7 +110,13 @@
       "position": [
         1560,
         300
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -107,7 +130,13 @@
       "position": [
         1780,
         300
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
@@ -121,7 +150,13 @@
       "position": [
         2000,
         300
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -135,7 +170,13 @@
       "position": [
         1340,
         540
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -149,7 +190,13 @@
       "position": [
         1560,
         540
-      ]
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     }
   ],
   "connections": {

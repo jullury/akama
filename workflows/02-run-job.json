@@ -18,7 +18,13 @@
       "name": "Read Job",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [460, 300]
+      "position": [460, 300],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -29,7 +35,13 @@
       "name": "Set Status Running",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [680, 300]
+      "position": [680, 300],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -40,22 +52,26 @@
       "name": "Notify Working",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [900, 300]
+      "position": [900, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
-        "host": "=worker",
-        "port": 22,
-        "authentication": "password",
-        "username": "={{ $env.SSH_USER }}",
-        "password": "={{ $env.SSH_PASSWORD }}",
         "command": "=/usr/local/bin/akama-scripts/git-clone.sh {{ $('Read Job').item.json.repo_url }} {{ $('Read Job').item.json.git_token }} /workspaces/{{ $('Read Job').item.json.id }}"
       },
       "id": "git-clone",
       "name": "Git Clone",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
-      "position": [1120, 300]
+      "position": [1120, 300],
+      "credentials": {
+        "sshPassword": { "id": "3", "name": "Worker SSH" }
+      }
     },
     {
       "parameters": {
@@ -66,7 +82,13 @@
       "name": "Update Workspace Path",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [1340, 300]
+      "position": [1340, 300],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -80,11 +102,6 @@
     },
     {
       "parameters": {
-        "host": "=worker",
-        "port": 22,
-        "authentication": "password",
-        "username": "={{ $env.SSH_USER }}",
-        "password": "={{ $env.SSH_PASSWORD }}",
         "command": "=/usr/local/bin/akama-scripts/run-agent.sh {{ $('Read Job').item.json.agent }} {{ $('Read Job').item.json.agent_model }} /workspaces/{{ $('Read Job').item.json.id }} {{ $json.prompt_path }}"
       },
       "id": "run-agent",
@@ -92,22 +109,23 @@
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
       "position": [1780, 300],
-      "onError": "continueErrorOutput"
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "sshPassword": { "id": "3", "name": "Worker SSH" }
+      }
     },
     {
       "parameters": {
-        "host": "=worker",
-        "port": 22,
-        "authentication": "password",
-        "username": "={{ $env.SSH_USER }}",
-        "password": "={{ $env.SSH_PASSWORD }}",
         "command": "=/usr/local/bin/akama-scripts/git-commit-push.sh /workspaces/{{ $('Read Job').item.json.id }} akama/issue-{{ $('Read Job').item.json.issue_id }} {{ $('Read Job').item.json.git_token }}"
       },
       "id": "git-push",
       "name": "Git Commit Push",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
-      "position": [1780, 540]
+      "position": [1780, 540],
+      "credentials": {
+        "sshPassword": { "id": "3", "name": "Worker SSH" }
+      }
     },
     {
       "parameters": {
@@ -172,7 +190,13 @@
       "name": "Update Job PR Created",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [2660, 540]
+      "position": [2660, 540],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -183,7 +207,13 @@
       "name": "Notify PR Ready",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [2880, 540]
+      "position": [2880, 540],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
@@ -194,7 +224,13 @@
       "name": "Save Notification ID",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [3100, 540]
+      "position": [3100, 540],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -205,7 +241,13 @@
       "name": "Set Status Failed",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.4,
-      "position": [2000, 780]
+      "position": [2000, 780],
+      "credentials": {
+        "postgres": {
+          "id": "1",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -216,22 +258,26 @@
       "name": "Notify Error",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
-      "position": [2220, 780]
+      "position": [2220, 780],
+      "credentials": {
+        "telegramApi": {
+          "id": "2",
+          "name": "Telegram account"
+        }
+      }
     },
     {
       "parameters": {
-        "host": "=worker",
-        "port": 22,
-        "authentication": "password",
-        "username": "={{ $env.SSH_USER }}",
-        "password": "={{ $env.SSH_PASSWORD }}",
         "command": "=rm -rf /workspaces/{{ $('Read Job').item.json.id }}"
       },
       "id": "cleanup-failed",
       "name": "Cleanup Workspace",
       "type": "n8n-nodes-base.ssh",
       "typeVersion": 1,
-      "position": [2440, 780]
+      "position": [2440, 780],
+      "credentials": {
+        "sshPassword": { "id": "3", "name": "Worker SSH" }
+      }
     }
   ],
   "connections": {

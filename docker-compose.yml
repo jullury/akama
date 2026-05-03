@@ -40,6 +40,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       # Agent HOME dir for opencode/claude config persistence
       AGENT_HOME: /data/home
+      # Telegram bot token (auto-imported as n8n credential on startup)
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       # SSH credentials for worker access (used by workflows)
       SSH_USER: ${SSH_USER:-root}
       SSH_PASSWORD: ${SSH_PASSWORD}
