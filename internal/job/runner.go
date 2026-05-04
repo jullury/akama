@@ -36,6 +36,19 @@ func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.C
 		return
 	}
 
+	userCfg, err := storage.GetUserConfig(jobsDB, j.ChatID)
+	if err != nil {
+		log.Printf("get user config: %v", err)
+	}
+	gitName, gitEmail := "", ""
+	if userCfg != nil {
+		gitName = userCfg.GitName
+		gitEmail = userCfg.GitEmail
+		if userCfg.AgentModel != "" {
+			j.AgentModel = userCfg.AgentModel
+		}
+	}
+
 	repoPath, _ := url.Parse(j.RepoURL)
 	parts := strings.Split(strings.Trim(repoPath.Path, "/"), "/")
 	var workspacePath string
@@ -97,20 +110,22 @@ func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.C
 
 	notify(bot, j.ChatID, fmt.Sprintf("📦 [%s] %s — committing and pushing changes...", j.Provider, repoName))
 
-	branchName := fmt.Sprintf("akama/issue-%s", j.IssueID)
-	if err := git.CommitPush(workspacePath, branchName, j.GitToken); err != nil {
+	branchName := fmt.Sprintf("fix/issue-%s", j.IssueID)
+	commitMsg := agent.BuildCommitMessage(agentText)
+	if err := git.CommitPush(workspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("commit/push: %v", err), workspacePath)
 		return
 	}
 
 	notify(bot, j.ChatID, fmt.Sprintf("🔗 [%s] %s — creating pull request...", j.Provider, repoName))
 
+	prBody := agent.BuildPRDescription(agentText, j.IssueURL)
 	var prURL string
 	switch j.Provider {
 	case "github":
-		prURL, err = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, fmt.Sprintf("Fixes %s", j.IssueURL))
+		prURL, err = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
 	case "gitlab":
-		prURL, err = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, fmt.Sprintf("Fixes %s", j.IssueURL))
+		prURL, err = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
 	}
 	if err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err), workspacePath)

@@ -34,6 +34,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	switch {
 	case strings.HasPrefix(text, "/start"):
 		b.handleStart(chatID)
+	case strings.HasPrefix(text, "/config"):
+		b.handleConfig(chatID)
 	case strings.HasPrefix(text, "/connect"):
 		b.handleConnect(chatID)
 	case strings.HasPrefix(text, "/connections"):
@@ -97,6 +99,15 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		b.startDeviceFlow(chatID, "github")
 	case "connect:gitlab":
 		b.startDeviceFlow(chatID, "gitlab")
+	case "config:git_name":
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_config", map[string]interface{}{"field": "git_name"})
+		b.send(chatID, "Enter your git commit name:")
+	case "config:git_email":
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_config", map[string]interface{}{"field": "git_email"})
+		b.send(chatID, "Enter your git commit email:")
+	case "config:model":
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_config", map[string]interface{}{"field": "model"})
+		b.send(chatID, "Enter the AI model to use (e.g. claude-sonnet-4-6):")
 	default:
 		log.Printf("callback: unhandled data: %q", data)
 	}
@@ -110,6 +121,28 @@ func (b *Bot) handleText(chatID int64, text string) {
 	}
 
 	switch conv.State {
+	case "await_config":
+		field, _ := conv.Data["field"].(string)
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		cfg, _ := storage.GetUserConfig(b.JobsDB, chatID)
+		if cfg == nil {
+			cfg = &storage.UserConfig{ChatID: chatID}
+		}
+		switch field {
+		case "git_name":
+			cfg.GitName = text
+			b.send(chatID, fmt.Sprintf("Git name set to: %s", text))
+		case "git_email":
+			cfg.GitEmail = text
+			b.send(chatID, fmt.Sprintf("Git email set to: %s", text))
+		case "model":
+			cfg.AgentModel = text
+			b.send(chatID, fmt.Sprintf("AI model set to: %s", text))
+		}
+		if err := storage.SetUserConfig(b.JobsDB, cfg); err != nil {
+			log.Printf("set user config: %v", err)
+			b.send(chatID, "Failed to save config.")
+		}
 	case "await_agent_input":
 		jobIDFloat, _ := conv.Data["job_id"].(float64)
 		jobID := int64(jobIDFloat)

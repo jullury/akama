@@ -11,7 +11,7 @@ import (
 )
 
 func (b *Bot) handleStart(chatID int64) {
-	msg := `Welcome to Akama! 🤖
+	msg := `Welcome to Akama!
 
 I can fix GitHub/GitLab issues using AI agents.
 
@@ -19,6 +19,7 @@ Commands:
 /connect - Connect a repository
 /connections - List saved connections
 /disconnect - Remove all connections
+/config - Set git user, email and AI model
 /issues - List open PR jobs
 /status - Show recent jobs
 /done <id> - Mark job as done
@@ -26,6 +27,42 @@ Commands:
 
 Send an issue URL to get started!`
 	b.send(chatID, msg)
+}
+
+func (b *Bot) handleConfig(chatID int64) {
+	cfg, err := storage.GetUserConfig(b.JobsDB, chatID)
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Error loading config: %v", err))
+		return
+	}
+	gitName := cfg.GitName
+	if gitName == "" {
+		gitName = "(not set — default: Akama)"
+	}
+	gitEmail := cfg.GitEmail
+	if gitEmail == "" {
+		gitEmail = "(not set — default: akama@bot)"
+	}
+	model := cfg.AgentModel
+	if model == "" {
+		model = fmt.Sprintf("(not set — using %s)", b.Config.DefaultAgent)
+	}
+
+	text := fmt.Sprintf("Current settings:\n\nGit Name:  %s\nGit Email: %s\nAI Model:  %s\n\nWhat would you like to change?",
+		gitName, gitEmail, model)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Git Name", "config:git_name"),
+			tgbotapi.NewInlineKeyboardButtonData("Git Email", "config:git_email"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("AI Model", "config:model"),
+		),
+	)
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = keyboard
+	b.API.Send(msg)
 }
 
 func (b *Bot) handleConnect(chatID int64) {

@@ -31,12 +31,9 @@ func Clone(repoURL, token, destPath string) error {
 	return nil
 }
 
-func CommitPush(repoPath, branchName, token, gitName, gitEmail string) error {
-	if gitName == "" {
-		gitName = "Akama"
-	}
-	if gitEmail == "" {
-		gitEmail = "akama@bot"
+func CommitPush(repoPath, branchName, token, gitName, gitEmail, commitMsg string) error {
+	if commitMsg == "" {
+		commitMsg = "fix: apply changes"
 	}
 
 	askpassPath, err := writeAskpass(token)
@@ -45,13 +42,20 @@ func CommitPush(repoPath, branchName, token, gitName, gitEmail string) error {
 	}
 	defer os.Remove(askpassPath)
 
-	cmds := [][]string{
-		{"git", "-C", repoPath, "config", "user.email", gitEmail},
-		{"git", "-C", repoPath, "config", "user.name", gitName},
-		{"git", "-C", repoPath, "add", "-A"},
-		{"git", "-C", repoPath, "commit", "--allow-empty", "-m", "fix: apply akama agent changes"},
-		{"git", "-C", repoPath, "checkout", "-B", branchName},
+	// Only override git identity if the user has explicitly configured it.
+	// If empty, git falls back to the system/global git config.
+	var cmds [][]string
+	if gitName != "" {
+		cmds = append(cmds, []string{"git", "-C", repoPath, "config", "user.name", gitName})
 	}
+	if gitEmail != "" {
+		cmds = append(cmds, []string{"git", "-C", repoPath, "config", "user.email", gitEmail})
+	}
+	cmds = append(cmds,
+		[]string{"git", "-C", repoPath, "add", "-A"},
+		[]string{"git", "-C", repoPath, "commit", "--allow-empty", "-m", commitMsg},
+		[]string{"git", "-C", repoPath, "checkout", "-B", branchName},
+	)
 	for _, args := range cmds {
 		cmd := newCommand(repoPath, askpassPath, args[0], args[1:]...)
 		if output, err := cmd.CombinedOutput(); err != nil {

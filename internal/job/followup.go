@@ -23,6 +23,16 @@ func RunFollowUp(jobID int64, userText string, jobsDB *sql.DB, bot *tgbotapi.Bot
 
 	storage.SetJobStatus(jobsDB, jobID, "updating")
 
+	userCfg, err := storage.GetUserConfig(jobsDB, j.ChatID)
+	if err != nil {
+		log.Printf("get user config: %v", err)
+	}
+	gitName, gitEmail := "", ""
+	if userCfg != nil {
+		gitName = userCfg.GitName
+		gitEmail = userCfg.GitEmail
+	}
+
 	prompt := agent.BuildFollowUpPrompt(userText)
 	promptPath, err := agent.WritePrompt(j.WorkspacePath, prompt)
 	if err != nil {
@@ -30,7 +40,7 @@ func RunFollowUp(jobID int64, userText string, jobsDB *sql.DB, bot *tgbotapi.Bot
 		return
 	}
 
-	_, err = agent.Run(j.Agent, j.AgentModel, j.WorkspacePath, promptPath, agentCfg)
+	rawOutput, err := agent.Run(j.Agent, j.AgentModel, j.WorkspacePath, promptPath, agentCfg)
 	if err != nil {
 		failFollowUp(jobsDB, bot, j, fmt.Sprintf("agent run: %v", err))
 		return
@@ -38,22 +48,24 @@ func RunFollowUp(jobID int64, userText string, jobsDB *sql.DB, bot *tgbotapi.Bot
 
 	branchName := j.BranchName
 	if branchName == "" {
-		branchName = fmt.Sprintf("akama/issue-%s", j.IssueID)
+		branchName = fmt.Sprintf("fix/issue-%s", j.IssueID)
 	}
 
-	if err := git.CommitPush(j.WorkspacePath, branchName, j.GitToken); err != nil {
+	commitMsg := agent.BuildCommitMessage(agent.ParseOutput(rawOutput))
+	if err := git.CommitPush(j.WorkspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
 		failFollowUp(jobsDB, bot, j, fmt.Sprintf("commit/push: %v", err))
 		return
 	}
 
 	// awaiting_input means no PR was created yet — create it now.
 	if j.Status == "awaiting_input" || j.PRURL == "" {
+		prBody := agent.BuildPRDescription(agent.ParseOutput(rawOutput), j.IssueURL)
 		var prURL string
 		switch j.Provider {
 		case "github":
-			prURL, err = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, fmt.Sprintf("Fixes %s", j.IssueURL))
+			prURL, err = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
 		case "gitlab":
-			prURL, err = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, fmt.Sprintf("Fixes %s", j.IssueURL))
+			prURL, err = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
 		}
 		if err != nil {
 			failFollowUp(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err))
