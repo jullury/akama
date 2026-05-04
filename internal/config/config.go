@@ -9,6 +9,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var Version = "dev"
+
 type Config struct {
 	TelegramToken    string `yaml:"telegram_token"`
 	AnthropicAPIKey  string `yaml:"anthropic_api_key"`
