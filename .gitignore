@@ -1,4 +1,5 @@
 .env
 ssh
 akama
-.akama
+.akama.git-askpass
+.akama-prompt.txt

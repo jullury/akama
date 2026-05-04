@@ -9,15 +9,18 @@ ifneq (,$(wildcard .env))
     export $(shell sed 's/=.*//' .env)
 endif
 
+VERSION ?= $(shell git describe --tags --always --abbrev=0 2>/dev/null || echo "dev")
+
 build:
 	@echo "Building akama with OAuth credentials from .env..."
 	go build -ldflags "\
 	-X github.com/jullury/akama/internal/config.GitHubClientID=$(GITHUB_CLIENT_ID) \
 	-X github.com/jullury/akama/internal/config.GitHubClientSecret=$(GITHUB_CLIENT_SECRET) \
 	-X github.com/jullury/akama/internal/config.GitLabClientID=$(GITLAB_CLIENT_ID) \
-	-X github.com/jullury/akama/internal/config.GitLabClientSecret=$(GITLAB_CLIENT_SECRET)" \
+	-X github.com/jullury/akama/internal/config.GitLabClientSecret=$(GITLAB_CLIENT_SECRET) \
+	-X github.com/jullury/akama/internal/config.Version=$(VERSION)" \
 	-o akama .
-	@echo "Build complete: ./akama"
+	@echo "Build complete: ./akama (version: $(VERSION))"
 
 start: build
 	@echo "Stopping any running akama instance..."
@@ -38,15 +41,15 @@ dist:
 		-X github.com/jullury/akama/internal/config.GitHubClientID=$(GITHUB_CLIENT_ID) \
 		-X github.com/jullury/akama/internal/config.GitHubClientSecret=$(GITHUB_CLIENT_SECRET) \
 		-X github.com/jullury/akama/internal/config.GitLabClientID=$(GITLAB_CLIENT_ID) \
-		-X github.com/jullury/akama/internal/config.GitLabClientSecret=$(GITLAB_CLIENT_SECRET)" \
+		-X github.com/jullury/akama/internal/config.GitLabClientSecret=$(GITLAB_CLIENT_SECRET) \
+		-X github.com/jullury/akama/internal/config.Version=$(VERSION)" \
 		-o dist/akama-$$os-$$arch . ; \
 	done
 	@echo "Binaries written to dist/"
 
 release:
-	$(eval VERSION ?= v$(shell date +'%Y.%m.%d'))
-	git tag -a $(VERSION) -m "Release $(VERSION)"
-	git push origin $(VERSION)
+	@echo "Release is now handled by semantic-release on push to main."
+	@echo "Ensure your commits follow conventional commits: https://www.conventionalcommits.org/"
 
 clean:
 	rm -f akama
