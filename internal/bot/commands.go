@@ -231,6 +231,7 @@ func (b *Bot) handleDone(chatID int64, text string) {
 	}
 
 	storage.SetJobStatus(b.JobsDB, jobID, "done")
+	storage.ResetConversation(b.JobsDB, chatID, "telegram")
 	os.RemoveAll(j.WorkspacePath)
 	b.send(chatID, fmt.Sprintf("Job %d marked as done. Workspace cleaned up.", jobID))
 }
