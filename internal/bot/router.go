@@ -66,7 +66,7 @@ func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
 		return
 	}
 
-	if j.Status == "pr_created" || j.Status == "updating" {
+	if j.Status == "pr_created" || j.Status == "updating" || j.Status == "awaiting_input" {
 		agentCfg := &agent.Config{
 			AnthropicAPIKey: b.Config.AnthropicAPIKey,
 			OpenAIAPIKey:    b.Config.OpenAIAPIKey,
@@ -110,6 +110,16 @@ func (b *Bot) handleText(chatID int64, text string) {
 	}
 
 	switch conv.State {
+	case "await_agent_input":
+		jobIDFloat, _ := conv.Data["job_id"].(float64)
+		jobID := int64(jobIDFloat)
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		agentCfg := &agent.Config{
+			AnthropicAPIKey: b.Config.AnthropicAPIKey,
+			OpenAIAPIKey:    b.Config.OpenAIAPIKey,
+		}
+		go job.RunFollowUp(jobID, text, b.JobsDB, b.API, agentCfg)
+		b.send(chatID, "Got it, continuing work on the issue...")
 	case "idle":
 		if isIssueURL(text) {
 			b.processIssue(chatID, text, "")
@@ -193,6 +203,11 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 	}
 	if issueID == "" {
 		b.send(chatID, "Failed to parse issue ID from fetched issue.")
+		return
+	}
+
+	if existing := storage.FindActiveJobByIssue(b.JobsDB, chatID, issueURL); existing != nil {
+		b.send(chatID, fmt.Sprintf("⚠️ Job #%d is already working on this issue (status: %s).", existing.ID, existing.Status))
 		return
 	}
 

@@ -2,10 +2,12 @@ package agent
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 type Config struct {
@@ -76,6 +78,31 @@ Additional instructions from the user:
 Apply these changes to the existing code. Commit all changes.
 Do NOT open pull requests — only make and commit code changes.
 `, userText)
+}
+
+// ParseOutput extracts the human-readable text from a claude/opencode JSON result.
+// Falls back to the raw string if it is not valid JSON.
+func ParseOutput(output string) string {
+	var envelope struct {
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &envelope); err == nil && envelope.Result != "" {
+		return strings.TrimSpace(envelope.Result)
+	}
+	return strings.TrimSpace(output)
+}
+
+// IsQuestion returns true when the agent's last non-empty line ends with "?",
+// indicating it needs user input before proceeding.
+func IsQuestion(text string) bool {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return strings.HasSuffix(line, "?")
+		}
+	}
+	return false
 }
 
 func WritePrompt(workspacePath, content string) (string, error) {

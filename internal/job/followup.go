@@ -6,10 +6,11 @@ import (
 	"log"
 	"os"
 
-	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/git"
+	"github.com/jullury/akama/internal/provider"
 	"github.com/jullury/akama/internal/storage"
 )
 
@@ -35,9 +36,31 @@ func RunFollowUp(jobID int64, userText string, jobsDB *sql.DB, bot *tgbotapi.Bot
 		return
 	}
 
-	if err := git.CommitPush(j.WorkspacePath, j.BranchName, j.GitToken); err != nil {
+	branchName := j.BranchName
+	if branchName == "" {
+		branchName = fmt.Sprintf("akama/issue-%s", j.IssueID)
+	}
+
+	if err := git.CommitPush(j.WorkspacePath, branchName, j.GitToken); err != nil {
 		failFollowUp(jobsDB, bot, j, fmt.Sprintf("commit/push: %v", err))
 		return
+	}
+
+	// awaiting_input means no PR was created yet — create it now.
+	if j.Status == "awaiting_input" || j.PRURL == "" {
+		var prURL string
+		switch j.Provider {
+		case "github":
+			prURL, err = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, fmt.Sprintf("Fixes %s", j.IssueURL))
+		case "gitlab":
+			prURL, err = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, fmt.Sprintf("Fixes %s", j.IssueURL))
+		}
+		if err != nil {
+			failFollowUp(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err))
+			return
+		}
+		storage.SetJobPRCreated(jobsDB, jobID, branchName, prURL)
+		j.PRURL = prURL
 	}
 
 	storage.SetJobStatus(jobsDB, jobID, "pr_created")
