@@ -75,5 +75,8 @@ func StopDaemon(pidPath string) error {
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
 		return fmt.Errorf("send SIGTERM: %w", err)
 	}
-	return RemovePID(pidPath)
+	// Do NOT remove the PID file here. The daemon removes it via defer on exit.
+	// Removing it early would allow a new daemon to start before this one finishes
+	// its graceful shutdown (job drain), causing two instances to poll Telegram simultaneously.
+	return nil
 }

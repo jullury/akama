@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -21,15 +22,15 @@ import (
 
 var wg sync.WaitGroup
 
-func Run(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
+func Run(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runJob(jobID, jobsDB, bot, agentCfg, workspaceDir)
+		runJob(ctx, jobID, jobsDB, bot, agentCfg, workspaceDir)
 	}()
 }
 
-func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
+func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
 	j, err := storage.GetJob(jobsDB, jobID)
 	if err != nil {
 		log.Printf("get job %d: %v", jobID, err)
@@ -68,7 +69,9 @@ func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.C
 
 	notify(bot, j.ChatID, fmt.Sprintf("🔍 [%s] %s — cloning repo for: %s...", j.Provider, repoName, j.IssueTitle))
 
-	if err := git.Clone(j.RepoURL, j.GitToken, workspacePath); err != nil {
+	if err := withRetry(ctx, "git clone", 3, func() error {
+		return git.Clone(j.RepoURL, j.GitToken, workspacePath)
+	}); err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), workspacePath)
 		return
 	}
@@ -82,11 +85,12 @@ func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.C
 		return
 	}
 
-	rawOutput, err := agent.Run(j.Agent, j.AgentModel, workspacePath, promptPath, agentCfg)
+	rawOutput, err := agent.Run(ctx, j.Agent, j.AgentModel, workspacePath, promptPath, agentCfg)
 	if err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", err), workspacePath)
 		return
 	}
+	storage.SetJobAgentOutput(jobsDB, jobID, rawOutput)
 
 	agentText := agent.ParseOutput(rawOutput)
 
@@ -110,24 +114,30 @@ func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.C
 
 	notify(bot, j.ChatID, fmt.Sprintf("📦 [%s] %s — committing and pushing changes...", j.Provider, repoName))
 
-	branchName := fmt.Sprintf("fix/issue-%s", j.IssueID)
-	commitMsg := agent.BuildCommitMessage(agentText)
-	if err := git.CommitPush(workspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
+	commitMsg, prBody := agent.GenerateSummary(ctx, j.Agent, j.AgentModel, workspacePath, j.IssueURL, agentCfg)
+	branchName := agent.BranchFromCommit(commitMsg, fmt.Sprintf("fix/issue-%s", j.IssueID))
+	if err := withRetry(ctx, "git push", 3, func() error {
+		return git.CommitPush(workspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg)
+	}); err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("commit/push: %v", err), workspacePath)
 		return
 	}
 
 	notify(bot, j.ChatID, fmt.Sprintf("🔗 [%s] %s — creating pull request...", j.Provider, repoName))
-
-	prBody := agent.BuildPRDescription(agentText, j.IssueURL)
 	var prURL string
-	switch j.Provider {
-	case "github":
-		prURL, err = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
-	case "gitlab":
-		prURL, err = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
-	}
-	if err != nil {
+	if err := withRetry(ctx, "create PR", 3, func() error {
+		var e error
+		switch j.Provider {
+		case "github":
+			prURL, e = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
+		case "gitlab":
+			prURL, e = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
+		}
+		if e != nil && provider.IsPRAlreadyExists(e) {
+			prURL, e = provider.FindExistingPR(j.RepoURL, j.GitToken, branchName, j.Provider)
+		}
+		return e
+	}); err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err), workspacePath)
 		return
 	}

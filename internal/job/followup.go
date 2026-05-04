@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -14,7 +15,7 @@ import (
 	"github.com/jullury/akama/internal/storage"
 )
 
-func RunFollowUp(jobID int64, userText string, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config) {
+func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config) {
 	j, err := storage.GetJob(jobsDB, jobID)
 	if err != nil {
 		log.Printf("get job %d: %v", jobID, err)
@@ -40,7 +41,7 @@ func RunFollowUp(jobID int64, userText string, jobsDB *sql.DB, bot *tgbotapi.Bot
 		return
 	}
 
-	rawOutput, err := agent.Run(j.Agent, j.AgentModel, j.WorkspacePath, promptPath, agentCfg)
+	_, err = agent.Run(ctx, j.Agent, j.AgentModel, j.WorkspacePath, promptPath, agentCfg)
 	if err != nil {
 		failFollowUp(jobsDB, bot, j, fmt.Sprintf("agent run: %v", err))
 		return
@@ -51,23 +52,30 @@ func RunFollowUp(jobID int64, userText string, jobsDB *sql.DB, bot *tgbotapi.Bot
 		branchName = fmt.Sprintf("fix/issue-%s", j.IssueID)
 	}
 
-	commitMsg := agent.BuildCommitMessage(agent.ParseOutput(rawOutput))
-	if err := git.CommitPush(j.WorkspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
+	commitMsg, prBody := agent.GenerateSummary(ctx, j.Agent, j.AgentModel, j.WorkspacePath, j.IssueURL, agentCfg)
+	if err := withRetry(ctx, "git push", 3, func() error {
+		return git.CommitPush(j.WorkspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg)
+	}); err != nil {
 		failFollowUp(jobsDB, bot, j, fmt.Sprintf("commit/push: %v", err))
 		return
 	}
 
 	// awaiting_input means no PR was created yet — create it now.
 	if j.Status == "awaiting_input" || j.PRURL == "" {
-		prBody := agent.BuildPRDescription(agent.ParseOutput(rawOutput), j.IssueURL)
 		var prURL string
-		switch j.Provider {
-		case "github":
-			prURL, err = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
-		case "gitlab":
-			prURL, err = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
-		}
-		if err != nil {
+		if err := withRetry(ctx, "create PR", 3, func() error {
+			var e error
+			switch j.Provider {
+			case "github":
+				prURL, e = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
+			case "gitlab":
+				prURL, e = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
+			}
+			if e != nil && provider.IsPRAlreadyExists(e) {
+				prURL, e = provider.FindExistingPR(j.RepoURL, j.GitToken, branchName, j.Provider)
+			}
+			return e
+		}); err != nil {
 			failFollowUp(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err))
 			return
 		}

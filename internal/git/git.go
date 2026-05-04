@@ -26,8 +26,10 @@ func Clone(repoURL, token, destPath string) error {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone: %w\n%s", err, output)
 	}
-	// Safety net: ensure .git-askpass is never committed if code regresses
-	appendIfMissing(filepath.Join(destPath, ".gitignore"), ".git-askpass")
+	// Ensure internal akama files are never committed
+	gitignore := filepath.Join(destPath, ".gitignore")
+	appendIfMissing(gitignore, ".git-askpass")
+	appendIfMissing(gitignore, ".akama-prompt.txt")
 	return nil
 }
 

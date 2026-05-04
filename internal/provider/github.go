@@ -166,7 +166,7 @@ func FetchGitHubIssue(repoURL, token string) (*GitHubIssue, error) {
 }
 
 func CreateGitHubPR(repoURL, token, title, branch, body string) (string, error) {
-	owner, repo, _, err := parseGitHubIssueURL(repoURL)
+	owner, repo, err := parseRepoURL(repoURL)
 	if err != nil {
 		return "", err
 	}
@@ -210,22 +210,67 @@ func CreateGitHubPR(repoURL, token, title, branch, body string) (string, error) 
 	return pr.HTMLURL, nil
 }
 
-func parseGitHubIssueURL(issueURL string) (owner, repo string, issueNum int, err error) {
-	issueURL = strings.TrimSuffix(issueURL, ".git")
-	// Extract repo URL (strip the issue path like /issues/1)
-	repoURL := issueURL
-	if idx := strings.Index(issueURL, "/issues/"); idx != -1 {
-		repoURL = issueURL[:idx]
+// IsPRAlreadyExists returns true when the provider rejected PR creation because one exists.
+func IsPRAlreadyExists(err error) bool {
+	if err == nil {
+		return false
 	}
-	// repoURL is now like "https://github.com/jullury/owasp-top10-2021"
-	parts := strings.Split(repoURL, "/")
+	msg := err.Error()
+	return strings.Contains(msg, "already exists") || strings.Contains(msg, "422")
+}
+
+// FindExistingPR fetches the URL of an open PR/MR for the given branch.
+func FindExistingPR(repoURL, token, branch, providerName string) (string, error) {
+	switch providerName {
+	case "github":
+		return findGitHubPR(repoURL, token, branch)
+	case "gitlab":
+		return findGitLabMR(repoURL, token, branch)
+	}
+	return "", fmt.Errorf("unsupported provider: %s", providerName)
+}
+
+func findGitHubPR(repoURL, token, branch string) (string, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls?head=%s:%s&state=open", owner, repo, owner, branch)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("find PR: %w", err)
+	}
+	defer resp.Body.Close()
+	var prs []GitHubPR
+	if err := json.NewDecoder(resp.Body).Decode(&prs); err != nil || len(prs) == 0 {
+		return "", fmt.Errorf("no open PR found for branch %s", branch)
+	}
+	return prs[0].HTMLURL, nil
+}
+
+// parseRepoURL extracts owner and repo from a plain repo URL
+// (e.g. https://github.com/owner/repo or https://github.com/owner/repo/issues/1).
+func parseRepoURL(rawURL string) (owner, repo string, err error) {
+	rawURL = strings.TrimSuffix(rawURL, ".git")
+	if idx := strings.Index(rawURL, "/issues/"); idx != -1 {
+		rawURL = rawURL[:idx]
+	}
+	parts := strings.Split(rawURL, "/")
 	if len(parts) < 2 {
-		err = fmt.Errorf("invalid GitHub URL: %s", repoURL)
+		return "", "", fmt.Errorf("invalid repo URL: %s", rawURL)
+	}
+	return parts[len(parts)-2], parts[len(parts)-1], nil
+}
+
+func parseGitHubIssueURL(issueURL string) (owner, repo string, issueNum int, err error) {
+	owner, repo, err = parseRepoURL(issueURL)
+	if err != nil {
 		return
 	}
-	// Last two segments are owner and repo
-	owner = parts[len(parts)-2]
-	repo = parts[len(parts)-1]
+	issueURL = strings.TrimSuffix(issueURL, ".git")
 
 	// Parse the issue number from the original URL
 	issueParts := strings.Split(issueURL, "/issues/")

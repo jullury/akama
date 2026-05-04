@@ -72,8 +72,9 @@ func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
 		agentCfg := &agent.Config{
 			AnthropicAPIKey: b.Config.AnthropicAPIKey,
 			OpenAIAPIKey:    b.Config.OpenAIAPIKey,
+			TimeoutMins:     b.Config.AgentTimeoutMins,
 		}
-		go job.RunFollowUp(j.ID, msg.Text, b.JobsDB, b.API, agentCfg)
+		go job.RunFollowUp(b.ctx, j.ID, msg.Text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, fmt.Sprintf("[%s] Updating...", j.Provider))
 	}
 }
@@ -150,8 +151,9 @@ func (b *Bot) handleText(chatID int64, text string) {
 		agentCfg := &agent.Config{
 			AnthropicAPIKey: b.Config.AnthropicAPIKey,
 			OpenAIAPIKey:    b.Config.OpenAIAPIKey,
+			TimeoutMins:     b.Config.AgentTimeoutMins,
 		}
-		go job.RunFollowUp(jobID, text, b.JobsDB, b.API, agentCfg)
+		go job.RunFollowUp(b.ctx, jobID, text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, "Got it, continuing work on the issue...")
 	case "idle":
 		if isIssueURL(text) {
@@ -267,7 +269,7 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 		AnthropicAPIKey: b.Config.AnthropicAPIKey,
 		OpenAIAPIKey:    b.Config.OpenAIAPIKey,
 	}
-	job.Run(jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
+	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
 }
 
 func (b *Bot) send(chatID int64, text string) {

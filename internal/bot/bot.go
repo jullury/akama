@@ -14,6 +14,7 @@ type Bot struct {
 	API    *tgbotapi.BotAPI
 	JobsDB *sql.DB
 	Config *config.Config
+	ctx    context.Context
 }
 
 func New(token string) (*Bot, error) {
@@ -36,6 +37,7 @@ func New(token string) (*Bot, error) {
 }
 
 func (b *Bot) RunCtx(ctx context.Context) {
+	b.ctx = ctx
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	u.AllowedUpdates = []string{"message", "callback_query"}

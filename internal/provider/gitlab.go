@@ -141,7 +141,7 @@ func FetchGitLabIssue(repoURL, token string) (*GitLabIssue, error) {
 }
 
 func CreateGitLabMR(repoURL, token, title, branch, body string) (string, error) {
-	projectPath, _, err := parseGitLabIssueURL(repoURL)
+	projectPath, err := gitLabProjectPath(repoURL)
 	if err != nil {
 		return "", err
 	}
@@ -183,6 +183,40 @@ func CreateGitLabMR(repoURL, token, title, branch, body string) (string, error) 
 		return "", fmt.Errorf("decode MR: %w", err)
 	}
 	return mr.WebURL, nil
+}
+
+func findGitLabMR(repoURL, token, branch string) (string, error) {
+	projectPath, err := gitLabProjectPath(repoURL)
+	if err != nil {
+		return "", err
+	}
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/merge_requests?source_branch=%s&state=opened", encodedPath, branch)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("find MR: %w", err)
+	}
+	defer resp.Body.Close()
+	var mrs []GitLabMR
+	if err := json.NewDecoder(resp.Body).Decode(&mrs); err != nil || len(mrs) == 0 {
+		return "", fmt.Errorf("no open MR found for branch %s", branch)
+	}
+	return mrs[0].WebURL, nil
+}
+
+// gitLabProjectPath extracts the owner/repo path from a plain repo URL or issue URL.
+func gitLabProjectPath(rawURL string) (string, error) {
+	rawURL = strings.TrimSuffix(rawURL, ".git")
+	if idx := strings.Index(rawURL, "/issues/"); idx != -1 {
+		rawURL = rawURL[:idx]
+	}
+	path := strings.TrimPrefix(rawURL, "https://gitlab.com/")
+	if path == rawURL {
+		return "", fmt.Errorf("invalid GitLab URL: %s", rawURL)
+	}
+	return path, nil
 }
 
 func parseGitLabIssueURL(repoURL string) (projectPath string, issueIID int, err error) {

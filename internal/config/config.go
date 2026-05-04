@@ -10,24 +10,26 @@ import (
 )
 
 type Config struct {
-	TelegramToken   string `yaml:"telegram_token"`
-	AnthropicAPIKey string `yaml:"anthropic_api_key"`
-	OpenAIAPIKey    string `yaml:"openai_api_key"`
-	DefaultAgent    string `yaml:"default_agent"`
-	DefaultModel    string `yaml:"default_model"`
-	WorkspaceDir    string `yaml:"workspace_dir"`
-	DBPath          string `yaml:"db_path"`
-	LogPath         string `yaml:"log_path"`
-	PIDPath         string `yaml:"pid_path"`
+	TelegramToken    string `yaml:"telegram_token"`
+	AnthropicAPIKey  string `yaml:"anthropic_api_key"`
+	OpenAIAPIKey     string `yaml:"openai_api_key"`
+	DefaultAgent     string `yaml:"default_agent"`
+	DefaultModel     string `yaml:"default_model"`
+	AgentTimeoutMins int    `yaml:"agent_timeout_mins"`
+	WorkspaceDir     string `yaml:"workspace_dir"`
+	DBPath           string `yaml:"db_path"`
+	LogPath          string `yaml:"log_path"`
+	PIDPath          string `yaml:"pid_path"`
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		DefaultAgent: "claude",
-		WorkspaceDir: "~/.akama/workspaces",
-		DBPath:       "~/.akama/akama.db",
-		LogPath:      "~/.akama/akama.log",
-		PIDPath:      "~/.akama/akama.pid",
+		DefaultAgent:     "claude",
+		AgentTimeoutMins: 30,
+		WorkspaceDir:     "~/.akama/workspaces",
+		DBPath:           "~/.akama/akama.db",
+		LogPath:          "~/.akama/akama.log",
+		PIDPath:          "~/.akama/akama.pid",
 	}
 }
 

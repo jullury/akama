@@ -102,6 +102,11 @@ func FindActiveJobByIssue(db *sql.DB, chatID int64, issueURL string) *Job {
 	return j
 }
 
+func SetJobAgentOutput(db *sql.DB, id int64, output string) error {
+	_, err := db.Exec(`UPDATE jobs SET agent_output = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, output, id)
+	return err
+}
+
 func SetJobAwaitingInput(db *sql.DB, id int64, agentOutput string) error {
 	_, err := db.Exec(`UPDATE jobs SET status = 'awaiting_input', agent_output = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		agentOutput, id)

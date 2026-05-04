@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/jullury/akama/internal/config"
 	"github.com/jullury/akama/internal/daemon"
@@ -37,5 +38,18 @@ func runStop(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("akama daemon stopped (pid %d)\n", pid)
+	fmt.Printf("akama daemon stopping (pid %d), waiting...\n", pid)
+	deadline := time.After(35 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			fmt.Fprintln(os.Stderr, "timed out waiting for daemon to exit")
+			os.Exit(1)
+		case <-time.After(300 * time.Millisecond):
+			if !daemon.IsRunning(cfg.PIDPath) {
+				fmt.Println("akama daemon stopped")
+				return
+			}
+		}
+	}
 }

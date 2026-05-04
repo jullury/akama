@@ -8,25 +8,36 @@ Akama is a Go CLI that acts as an AI coding agent orchestration system. A Telegr
 
 ## Build and Run
 
+OAuth credentials are baked in at compile time via `-ldflags`. Always build through `make`:
+
 ```bash
-go build -o akama .          # compile
-./akama init                 # first-run interactive setup → ~/.akama/config.yaml
-./akama start                # fork daemon to background
-./akama stop                 # send SIGTERM to daemon
-./akama status               # check if running + active job count
-./akama logs                 # tail ~/.akama/akama.log
+make build          # build with OAuth creds from .env
+make start          # build + stop any running instance + start daemon
+make clean          # remove binary
+go build ./...      # quick compile check (no OAuth creds)
 ```
 
-No test suite exists yet. Build verification: `go build ./...`
+`.env` file must contain `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET`.
+
+CLI subcommands (normal mode):
+```bash
+./akama init        # interactive setup → ~/.akama/config.yaml
+./akama start       # fork daemon to background
+./akama stop        # SIGTERM daemon, blocks until it exits (up to 35s)
+./akama status      # check if running + active job count
+./akama logs        # tail ~/.akama/akama.log
+```
+
+No test suite exists. Build verification: `go build ./...`
 
 ## Architecture
 
 The binary has two modes, detected in `main.go` before cobra runs:
 
-- **Normal mode** (`cmd.Execute()`): handles `init`, `start`, `stop`, `status`, `logs` subcommands.
-- **Daemon mode** (`runDaemon()` in `main.go`): triggered when `os.Args` contains `--daemon`. This is the re-exec'd child process launched by `akama start`. It loads config, opens SQLite, creates the bot, and blocks on `bot.RunCtx(ctx)`.
+- **Normal mode** (`cmd.Execute()`): handles `init`, `start`, `stop`, `status`, `logs`.
+- **Daemon mode** (`runDaemon()` in `main.go`): triggered when `os.Args` contains `--daemon`. Loads config, opens SQLite, calls `storage.RecoverInterruptedJobs` (marks stale `running`/`awaiting_input` jobs as failed), creates the bot, blocks on `bot.RunCtx(ctx)`.
 
-`akama start` forks itself via `daemon.ForkDaemon`, redirecting stdout/stderr to `~/.akama/akama.log`. The daemon writes its own PID file on startup (not the parent) to avoid race conditions between fork and PID write.
+`akama start` forks itself via `daemon.ForkDaemon`. The daemon writes its own PID file; `akama stop` sends SIGTERM and polls until the PID file is gone (the daemon removes it via `defer` on clean exit) — this prevents a race where `make start` would launch a second instance while the first is still draining.
 
 ## Request Flow
 
@@ -34,87 +45,105 @@ The binary has two modes, detected in `main.go` before cobra runs:
 Telegram update
   └── bot.RunCtx (long-polling, AllowedUpdates: message + callback_query)
         ├── Message  → router.handleMessage → command switch or handleText (state machine)
-        └── Callback → router.handleCallback → startDeviceFlow (OAuth) or other
+        └── Callback → router.handleCallback → startDeviceFlow (OAuth) or config field setter
 ```
 
-**`/connect` OAuth device flow** (GitHub or GitLab):
+**`/connect` OAuth device flow:**
 1. User taps provider button → `startDeviceFlow` calls GitHub/GitLab device code endpoint
-2. Bot sends user a short code + URL; a goroutine polls for token approval
+2. Bot sends short code + URL; goroutine polls for token approval
 3. On approval: token stored in conversation state (`await_repo`), user prompted for repo URL
-4. User sends repo URL → connection saved to `connections` table, state reset to `idle`
+4. User sends repo URL → saved to `connections` table, state reset to `idle`
 
 **Issue job flow** (triggered when user sends a GitHub/GitLab issue URL in `idle` state):
 ```
 router.processIssue
-  → look up token from connections table
+  → FindActiveJobByIssue — block duplicate submissions
   → fetch issue title/body from provider API
   → storage.CreateJob
-  → go job.Run(jobID, ...)          ← goroutine tracked by sync.WaitGroup
-        git.Clone → agent.Run → git.CommitPush → provider.CreatePR/MR
+  → job.Run(ctx, jobID, ...)           ← goroutine tracked by sync.WaitGroup
+        git.Clone (retry ×3)
+        agent.Run(ctx, ...)            ← exec.CommandContext — killed on ctx cancel
+        if agent output ends with "?":
+            SetJobAwaitingInput, set conversation state await_agent_input, return
+        git.CommitPush (retry ×3)
+        provider.CreatePR/MR (retry ×3, handles "already exists")
         → Telegram notification with PR URL
-        → storage.SetJobNotifMsgID   ← enables reply-threading
+        → storage.SetJobNotifMsgID     ← enables reply-threading
 ```
 
-**Follow-up** (user replies to a PR notification message):
+**Agent question flow** (`awaiting_input` status):
+- Conversation state set to `await_agent_input` with `{job_id}` in data
+- Any plain-text message (not just a quoted reply) routes to `RunFollowUp`
+- Commands (`/connect`, `/config`, etc.) still work — they're dispatched before `handleText`
+- On daemon restart: `RecoverInterruptedJobs` resets `await_agent_input` conversation state
+
+**Follow-up** (user replies to a PR notification message, or answers agent question):
 ```
-router.handleReply
-  → storage.GetJobByNotifMsgID(replyMsgID)
-  → go job.RunFollowUp(jobID, userText, ...)
-        agent.Run in existing workspace → git.CommitPush → Telegram update
-        → storage.SetJobNotifMsgID (new message ID for next follow-up)
+router.handleReply / handleText(await_agent_input)
+  → job.RunFollowUp(ctx, jobID, userText, ...)
+        agent.Run → git.CommitPush
+        if status was awaiting_input: also CreatePR/MR
+        → Telegram update with PR URL
 ```
 
 ## Key Design Decisions
 
-**GIT_ASKPASS for tokens**: `git.Clone` and `git.CommitPush` write a temporary executable script that echoes the token, set as `GIT_ASKPASS`. Tokens are never injected into the git remote URL (would appear in `ps aux` and git logs).
+**GIT_ASKPASS**: `writeAskpass` uses `os.CreateTemp("", "git-askpass-*")` — file lands in OS temp dir, never inside the repo. Git identity (`user.name`/`user.email`) is only set if the user has configured it via `/config`; otherwise git falls back to system config.
 
-**Daemon self-check**: `runDaemon()` calls `daemon.IsRunning(pidPath)` before writing its own PID. A second instance launched while one is running logs a fatal error and exits — prevents duplicate Telegram polling sessions (which cause `409 Conflict` from Telegram).
+**No bot identity in repo**: Agent prompts forbid mentioning AI/bots in code comments. Branch names and commit messages are derived from the actual changes (see below), not hardcoded.
+
+**Commit message, branch name, and PR description** are generated by a second focused agent call (`agent.GenerateSummary`) after the main fix is complete:
+1. `git diff HEAD` is run in Go and passed to the agent with a minimal prompt
+2. Agent outputs `COMMIT_MESSAGE: <text>` and `PR_DESCRIPTION: <text>` — both parsed from the response
+3. `agent.BranchFromCommit` converts the commit message to a branch name: `feat: implement OWASP 2025 top 10` → `feat/implement-owasp-2025-top-10`; falls back to `fix/issue-X` if unparseable
+4. Raw agent output is saved to `jobs.agent_output` for debugging
+
+**Agent execution**:
+- `claude`: `claude -p <promptFile> --dangerously-skip-permissions --output-format json` — outputs a single JSON envelope `{"result":"..."}`
+- `opencode`: reads prompt file content, passes as message string arg with `--dir <workspacePath> --dangerously-skip-permissions --format json` — outputs NDJSON event stream; `agent.ParseOutput` collects text from `"text"` events and `message.content[].text` blocks
+- Both use `exec.CommandContext` so the subprocess is killed when the daemon context is cancelled (SIGTERM) or the per-job timeout (`agent_timeout_mins`, default 30) expires.
+
+**Retry logic** (`internal/job/retry.go`): `withRetry(ctx, label, 3, fn)` retries git clone, push, and PR creation with 5s/15s/45s backoff. Returns immediately on context cancellation. PR creation handles "already exists" by fetching the existing PR URL via `provider.FindExistingPR`.
+
+**Daemon self-check**: `runDaemon()` calls `daemon.IsRunning(pidPath)` before writing its PID — prevents duplicate Telegram polling sessions (which cause `409 Conflict`).
 
 **Conversation state machine** (`conversations` table, `data` column is JSON):
-- `idle` — default; handles issue URLs and commands
-- `await_repo` — after OAuth approval; expects a repo URL; `data` contains `{provider, token}`
-- No `await_token` state — tokens come from OAuth device flow, not manual PAT entry
-
-**Job `sync.WaitGroup`** in `internal/job/runner.go`: `job.Run` increments a package-level WaitGroup. `job.WaitForJobs(30)` in `runDaemon` drains it with a 30-second timeout during graceful shutdown.
+- `idle` — default
+- `await_repo` — after OAuth approval; `data`: `{provider, token}`
+- `await_agent_input` — agent asked a question pre-commit; `data`: `{job_id}`
+- `await_config` — user tapped a `/config` inline button; `data`: `{field: "git_name"|"git_email"|"model"}`
 
 ## Config (`~/.akama/config.yaml`)
 
-All paths support `~/` expansion (handled in `config.expandHome()`). Key fields:
-
 ```yaml
 telegram_token: ""
-anthropic_api_key: ""        # for claude agent
-openai_api_key: ""           # for opencode agent
-default_agent: "claude"      # claude | opencode
-github_client_id: ""         # OAuth App for /connect device flow
-github_client_secret: ""
-gitlab_client_id: ""
-gitlab_client_secret: ""
+anthropic_api_key: ""
+openai_api_key: ""
+default_agent: "claude"          # claude | opencode
+default_model: ""
+agent_timeout_mins: 30           # kill agent subprocess after this many minutes
 workspace_dir: "~/.akama/workspaces"
-db_path: "~/.akama/akama.db"
-log_path: "~/.akama/akama.log"
-pid_path: "~/.akama/akama.pid"
+db_path:        "~/.akama/akama.db"
+log_path:       "~/.akama/akama.log"
+pid_path:       "~/.akama/akama.pid"
 ```
 
-GitHub OAuth App: enable **Device Flow** at `github.com/settings/developers`.
-GitLab Application: tick **Use Device Authorization Grant** at `gitlab.com/-/user_settings/applications`.
+OAuth client IDs/secrets are **not** in config.yaml — they are baked in at build time via `make build` from `.env`.
 
 ## SQLite Schema
 
-Auto-migrated by `storage.Open()`. Three tables:
+Auto-migrated by `storage.Open()`. Four tables:
 
-- **`jobs`**: one row per issue fix job; `status` follows `pending → running → pr_created ⇄ updating → done/failed`; `notification_msg_id` is the Telegram message ID of the PR notification, used to match reply messages to jobs.
-- **`conversations`**: one row per chat; `state` + `data` (JSON) drive the multi-turn connect/issue flow.
-- **`connections`**: saved `(chat_id, provider, repo_url, git_token)` tuples; queried by `FindConnectionByRepo` to resolve tokens when an issue URL is sent.
+- **`jobs`**: one row per issue fix job; `status`: `pending → running → pr_created ⇄ updating → done/failed`; also `awaiting_input` when agent asks a question before committing. `notification_msg_id` links reply messages to jobs.
+- **`conversations`**: one row per chat; `state` + `data` (JSON) drive the multi-turn flow.
+- **`connections`**: `(chat_id, provider, repo_url, git_token)` — queried by `FindConnectionByRepo`.
+- **`user_config`**: per-chat `(git_name, git_email, agent_model)` set via `/config` command.
 
 ## Telegram Library
 
-Uses `github.com/go-telegram-bot-api/telegram-bot-api/v5`. Key v5 differences from v4:
+Uses `github.com/go-telegram-bot-api/telegram-bot-api/v5`. Key v5 notes:
 - `GetUpdatesChan` returns only `UpdatesChannel` (no error)
-- Webhook deletion: `api.Request(tgbotapi.DeleteWebhookConfig{})` (no `RemoveWebhook`)
-- Callback acknowledgement: `api.Request(tgbotapi.NewCallback(query.ID, ""))` (no `AnswerCallbackQuery`)
-- `AllowedUpdates` field on `UpdateConfig` — must explicitly include `"callback_query"` or inline button taps are silently dropped
-
-## Agent Execution
-
-`internal/agent/runner.go` execs either `claude` or `opencode` from `PATH` with `--dangerously-skip-permissions`. The agent binary must be installed locally. `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` are injected into the subprocess environment from config.
+- Webhook deletion: `api.Request(tgbotapi.DeleteWebhookConfig{})`
+- Callback acknowledgement: `api.Request(tgbotapi.NewCallback(query.ID, ""))`
+- `AllowedUpdates` must explicitly include `"callback_query"` or inline button taps are silently dropped
+- `Bot.ctx` is set in `RunCtx` and threaded through to all job goroutines
