@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/go-telegram-bot-api/telegram-bot-api"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/job"
@@ -75,19 +75,33 @@ func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
 }
 
 func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
+	// Answer first — must happen regardless of outcome so Telegram clears the spinner.
+	defer func() {
+		if _, err := b.API.Request(tgbotapi.NewCallback(query.ID, "")); err != nil {
+			log.Printf("callback: answer query: %v", err)
+		}
+	}()
+
+	if query.Message == nil {
+		log.Printf("callback: no message attached")
+		return
+	}
 	chatID := query.Message.Chat.ID
 	data := query.Data
+	log.Printf("callback: chatID=%d data=%q", chatID, data)
 
-	switch {
-	case data == "connect:github":
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo", map[string]interface{}{"provider": "github"})
-		b.send(chatID, "Send the GitHub repository URL.")
-	case data == "connect:gitlab":
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo", map[string]interface{}{"provider": "gitlab"})
-		b.send(chatID, "Send the GitLab repository URL.")
+	switch data {
+	case "connect:github", "connect:gitlab":
+		p := strings.TrimPrefix(data, "connect:")
+		if err := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo", map[string]interface{}{"provider": p}); err != nil {
+			log.Printf("callback: set state: %v", err)
+			b.send(chatID, "Internal error, please try again.")
+			return
+		}
+		b.send(chatID, fmt.Sprintf("Send the %s repository URL (e.g. https://%s.com/owner/repo):", strings.Title(p), p))
+	default:
+		log.Printf("callback: unhandled data: %q", data)
 	}
-
-	b.API.AnswerCallbackQuery(tgbotapi.NewCallback(query.ID, ""))
 }
 
 func (b *Bot) handleText(chatID int64, text string) {
@@ -105,16 +119,30 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, "Send an issue URL or use /connect to add a repository.")
 		}
 	case "await_repo":
-		providerName := conv.Data["provider"].(string)
-		storage.SaveConnection(b.JobsDB, chatID, providerName, text, "")
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_token", conv.Data)
-		b.send(chatID, fmt.Sprintf("Send your %s personal access token.", strings.Title(providerName)))
+		providerName, _ := conv.Data["provider"].(string)
+		if providerName == "" {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "Something went wrong. Use /connect to start over.")
+			return
+		}
+		nextData := map[string]interface{}{"provider": providerName, "repo_url": text}
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_token", nextData)
+		b.send(chatID, fmt.Sprintf("Send your %s personal access token (PAT):", strings.Title(providerName)))
 	case "await_token":
-		providerName := conv.Data["provider"].(string)
-		repoURL := conv.Data["repo_url"].(string)
-		storage.SaveConnection(b.JobsDB, chatID, providerName, repoURL, text)
+		providerName, _ := conv.Data["provider"].(string)
+		repoURL, _ := conv.Data["repo_url"].(string)
+		if providerName == "" || repoURL == "" {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "Something went wrong. Use /connect to start over.")
+			return
+		}
+		if err := storage.SaveConnection(b.JobsDB, chatID, providerName, repoURL, text); err != nil {
+			log.Printf("save connection: %v", err)
+			b.send(chatID, "Failed to save connection. Please try again.")
+			return
+		}
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
-		b.send(chatID, "Connected! Send an issue URL.")
+		b.send(chatID, fmt.Sprintf("Connected to %s/%s! Send an issue URL to start a job.", providerName, repoURL))
 	}
 }
 
@@ -192,8 +220,9 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 }
 
 func (b *Bot) send(chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	b.API.Send(msg)
+	if _, err := b.API.Send(tgbotapi.NewMessage(chatID, text)); err != nil {
+		log.Printf("send to %d: %v", chatID, err)
+	}
 }
 
 func isIssueURL(text string) bool {

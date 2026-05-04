@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/go-telegram-bot-api/telegram-bot-api"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/jullury/akama/internal/storage"
 )

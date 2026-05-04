@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,16 @@ func DefaultConfig() *Config {
 
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
+	
+	// Expand ~ in path
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, fmt.Errorf("get home dir: %w", err)
+		}
+		path = filepath.Join(home, path[2:])
+	}
+	
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

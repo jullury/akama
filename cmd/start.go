@@ -37,10 +37,5 @@ func runStart(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if err := daemon.WritePID(cfg.PIDPath, pid); err != nil {
-		fmt.Fprintf(os.Stderr, "Write PID: %v\n", err)
-		os.Exit(1)
-	}
-
 	fmt.Printf("akama daemon started (pid %d)\n", pid)
 }

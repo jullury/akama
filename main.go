@@ -12,6 +12,7 @@ import (
 	"github.com/jullury/akama/cmd"
 	"github.com/jullury/akama/internal/bot"
 	"github.com/jullury/akama/internal/config"
+	"github.com/jullury/akama/internal/daemon"
 	"github.com/jullury/akama/internal/job"
 	"github.com/jullury/akama/internal/storage"
 )
@@ -32,14 +33,28 @@ func main() {
 func runDaemon() {
 	home, _ := os.UserHomeDir()
 	cfgPath := filepath.Join(home, ".akama", "config.yaml")
+
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Fatalf("Load config: %v", err)
 	}
 
+	// Write PID file from the daemon process itself so there is no
+	// race between the parent's IsRunning check and fork.
+	pidPath := cfg.PIDPath
+	if strings.HasPrefix(pidPath, "~/") {
+		pidPath = filepath.Join(home, pidPath[2:])
+	}
+	if daemon.IsRunning(pidPath) {
+		log.Fatalf("Another akama daemon is already running; run 'akama stop' first")
+	}
+	if err := daemon.WritePID(pidPath, os.Getpid()); err != nil {
+		log.Fatalf("Write PID: %v", err)
+	}
+	defer daemon.RemovePID(pidPath)
+
 	dbPath := cfg.DBPath
 	if strings.HasPrefix(dbPath, "~/") {
-		home, _ := os.UserHomeDir()
 		dbPath = filepath.Join(home, dbPath[2:])
 	}
 	db, err := storage.Open(dbPath)

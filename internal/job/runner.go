@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-telegram-bot-api/telegram-bot-api"
+	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/git"
