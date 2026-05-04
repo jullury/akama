@@ -4,90 +4,117 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What Akama Is
 
-Akama is an AI coding agent orchestration system. It fetches issues from GitHub/GitLab/Trello, runs `opencode` or `claude` CLI to fix them in a cloned workspace, pushes a branch, creates a PR, and notifies the user via Telegram — all triggered through a Telegram bot.
+Akama is a Go CLI that acts as an AI coding agent orchestration system. A Telegram bot receives commands, fetches issues from GitHub/GitLab, runs `claude` or `opencode` locally to fix them in a cloned workspace, pushes a branch, creates a PR/MR, and notifies the user via Telegram.
 
-**n8n is the orchestration backbone.** All workflow logic lives in n8n JSON workflows. There is no custom application binary.
-
-## Stack
-
-- **n8n** (self-hosted) — workflow engine, exposes web UI at `:5678`
-- **PostgreSQL 16** — n8n state + custom `akama_jobs` / `akama_conversations` tables
-- **worker container** — Alpine with openssh-server, `opencode` and `claude` CLI pre-installed, exposes SSH on `:2222`; n8n connects via SSH to run agent commands
-- **Shell scripts** in `scripts/` — git clone/push helpers and agent runner, called from n8n "Execute Command" (SSH) nodes
-
-## Architecture: Two Containers
-
-The `docker-compose.yml` defines three services:
-
-| Service | Image | Role |
-|---|---|---|
-| `postgres` | postgres:16-alpine | shared DB for n8n + Akama tables |
-| `n8n` | built from `Dockerfile` | n8n + git + entrypoint that auto-imports workflows |
-| `worker` | built from `Dockerfile.worker` | opencode + claude + SSH server; executes agent work |
-
-n8n does NOT run agents directly — it SSH-executes `run-agent.sh` on the `worker` container.
-
-Workflows are auto-imported at startup: `entrypoint.sh` calls `n8n import:workflow` for every JSON in `/workflows/` before launching `n8n start`.
-
-## Workflow Design
-
-```
-01-telegram-handler   ← main bot entry point (Telegram webhook)
-02-run-job            ← clone → agent → push → PR → notify (called async by 01)
-03-follow-up          ← re-run agent on existing workspace (called by 01 on reply)
-04-setup-db           ← one-time manual run to create custom Postgres tables
-```
-
-**Job state machine:** `pending → running → pr_created ⇄ updating → done / failed`
-
-Workspaces live at `/workspaces/{job_id}` and are deleted only on `done` or `failed`.
-
-Token security: git tokens are passed to scripts via a temporary `GIT_ASKPASS` script, never injected into the URL.
-
-## Setup
+## Build and Run
 
 ```bash
-cp .env.example .env
-# Fill in: N8N_ENCRYPTION_KEY (openssl rand -hex 32), WEBHOOK_URL, ANTHROPIC_API_KEY
-docker compose up --build
+go build -o akama .          # compile
+./akama init                 # first-run interactive setup → ~/.akama/config.yaml
+./akama start                # fork daemon to background
+./akama stop                 # send SIGTERM to daemon
+./akama status               # check if running + active job count
+./akama logs                 # tail ~/.akama/akama.log
 ```
 
-After first startup:
-1. Open `http://localhost:5678`, complete n8n account setup
-2. Add credentials via n8n UI: Telegram Bot, GitHub PAT, Akama DB (`host=postgres`, `db/user/pw=akama`)
-3. Run Workflow 04 manually once to create `akama_jobs` / `akama_conversations` tables
-4. Activate all workflows (Telegram webhook registers automatically)
+No test suite exists yet. Build verification: `go build ./...`
 
-For dev/local testing, WEBHOOK_URL must be a publicly reachable URL (e.g. via ngrok).
+## Architecture
 
-## Rebuilding
+The binary has two modes, detected in `main.go` before cobra runs:
 
-```bash
-docker compose up --build          # rebuild all images
-docker compose build worker        # rebuild worker only (agent version updates)
-docker compose logs -f n8n         # watch n8n logs
-docker compose exec worker ssh     # not needed; SSH is for n8n→worker communication
+- **Normal mode** (`cmd.Execute()`): handles `init`, `start`, `stop`, `status`, `logs` subcommands.
+- **Daemon mode** (`runDaemon()` in `main.go`): triggered when `os.Args` contains `--daemon`. This is the re-exec'd child process launched by `akama start`. It loads config, opens SQLite, creates the bot, and blocks on `bot.RunCtx(ctx)`.
+
+`akama start` forks itself via `daemon.ForkDaemon`, redirecting stdout/stderr to `~/.akama/akama.log`. The daemon writes its own PID file on startup (not the parent) to avoid race conditions between fork and PID write.
+
+## Request Flow
+
+```
+Telegram update
+  └── bot.RunCtx (long-polling, AllowedUpdates: message + callback_query)
+        ├── Message  → router.handleMessage → command switch or handleText (state machine)
+        └── Callback → router.handleCallback → startDeviceFlow (OAuth) or other
 ```
 
-## Pinned Agent Versions
+**`/connect` OAuth device flow** (GitHub or GitLab):
+1. User taps provider button → `startDeviceFlow` calls GitHub/GitLab device code endpoint
+2. Bot sends user a short code + URL; a goroutine polls for token approval
+3. On approval: token stored in conversation state (`await_repo`), user prompted for repo URL
+4. User sends repo URL → connection saved to `connections` table, state reset to `idle`
 
-Agent versions are baked into `Dockerfile.worker` at build time — no runtime drift:
-
-```dockerfile
-ARG OPENCODE_VERSION=1.1.4
-ARG CLAUDECODE_VERSION=2.1.116
+**Issue job flow** (triggered when user sends a GitHub/GitLab issue URL in `idle` state):
+```
+router.processIssue
+  → look up token from connections table
+  → fetch issue title/body from provider API
+  → storage.CreateJob
+  → go job.Run(jobID, ...)          ← goroutine tracked by sync.WaitGroup
+        git.Clone → agent.Run → git.CommitPush → provider.CreatePR/MR
+        → Telegram notification with PR URL
+        → storage.SetJobNotifMsgID   ← enables reply-threading
 ```
 
-To upgrade, change the ARG and rebuild the worker image.
+**Follow-up** (user replies to a PR notification message):
+```
+router.handleReply
+  → storage.GetJobByNotifMsgID(replyMsgID)
+  → go job.RunFollowUp(jobID, userText, ...)
+        agent.Run in existing workspace → git.CommitPush → Telegram update
+        → storage.SetJobNotifMsgID (new message ID for next follow-up)
+```
 
-## Custom Postgres Tables
+## Key Design Decisions
 
-`migrations/001_akama.sql` creates `akama_jobs` and `akama_conversations`. Run it by executing Workflow 04 in the n8n UI. The migration is idempotent (`CREATE TABLE IF NOT EXISTS`).
+**GIT_ASKPASS for tokens**: `git.Clone` and `git.CommitPush` write a temporary executable script that echoes the token, set as `GIT_ASKPASS`. Tokens are never injected into the git remote URL (would appear in `ps aux` and git logs).
 
-Key columns in `akama_jobs`: `status`, `workspace_path`, `notification_msg_id` (used for reply-threading in Workflow 03), `agent`, `agent_output`, `git_token`.
+**Daemon self-check**: `runDaemon()` calls `daemon.IsRunning(pidPath)` before writing its own PID. A second instance launched while one is running logs a fatal error and exits — prevents duplicate Telegram polling sessions (which cause `409 Conflict` from Telegram).
 
-## Modifying Workflows
+**Conversation state machine** (`conversations` table, `data` column is JSON):
+- `idle` — default; handles issue URLs and commands
+- `await_repo` — after OAuth approval; expects a repo URL; `data` contains `{provider, token}`
+- No `await_token` state — tokens come from OAuth device flow, not manual PAT entry
 
-Workflows are edited in the n8n UI, then exported as JSON back to `workflows/`. The n8n container mounts `/workflows/` from the image (baked in at build) — to pick up exported changes on the next restart, the image must be rebuilt or the JSON files must be updated before `docker compose up --build`.
+**Job `sync.WaitGroup`** in `internal/job/runner.go`: `job.Run` increments a package-level WaitGroup. `job.WaitForJobs(30)` in `runDaemon` drains it with a 30-second timeout during graceful shutdown.
 
-When editing workflow JSON directly, maintain the n8n JSON schema (nodes array with `id`, `type`, `parameters`, `position`).
+## Config (`~/.akama/config.yaml`)
+
+All paths support `~/` expansion (handled in `config.expandHome()`). Key fields:
+
+```yaml
+telegram_token: ""
+anthropic_api_key: ""        # for claude agent
+openai_api_key: ""           # for opencode agent
+default_agent: "claude"      # claude | opencode
+github_client_id: ""         # OAuth App for /connect device flow
+github_client_secret: ""
+gitlab_client_id: ""
+gitlab_client_secret: ""
+workspace_dir: "~/.akama/workspaces"
+db_path: "~/.akama/akama.db"
+log_path: "~/.akama/akama.log"
+pid_path: "~/.akama/akama.pid"
+```
+
+GitHub OAuth App: enable **Device Flow** at `github.com/settings/developers`.
+GitLab Application: tick **Use Device Authorization Grant** at `gitlab.com/-/user_settings/applications`.
+
+## SQLite Schema
+
+Auto-migrated by `storage.Open()`. Three tables:
+
+- **`jobs`**: one row per issue fix job; `status` follows `pending → running → pr_created ⇄ updating → done/failed`; `notification_msg_id` is the Telegram message ID of the PR notification, used to match reply messages to jobs.
+- **`conversations`**: one row per chat; `state` + `data` (JSON) drive the multi-turn connect/issue flow.
+- **`connections`**: saved `(chat_id, provider, repo_url, git_token)` tuples; queried by `FindConnectionByRepo` to resolve tokens when an issue URL is sent.
+
+## Telegram Library
+
+Uses `github.com/go-telegram-bot-api/telegram-bot-api/v5`. Key v5 differences from v4:
+- `GetUpdatesChan` returns only `UpdatesChannel` (no error)
+- Webhook deletion: `api.Request(tgbotapi.DeleteWebhookConfig{})` (no `RemoveWebhook`)
+- Callback acknowledgement: `api.Request(tgbotapi.NewCallback(query.ID, ""))` (no `AnswerCallbackQuery`)
+- `AllowedUpdates` field on `UpdateConfig` — must explicitly include `"callback_query"` or inline button taps are silently dropped
+
+## Agent Execution
+
+`internal/agent/runner.go` execs either `claude` or `opencode` from `PATH` with `--dangerously-skip-permissions`. The agent binary must be installed locally. `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` are injected into the subprocess environment from config.

@@ -1,12 +1,95 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 )
+
+type GitLabDeviceCode struct {
+	DeviceCode      string `json:"device_code"`
+	UserCode        string `json:"user_code"`
+	VerificationURI string `json:"verification_uri"`
+	ExpiresIn       int    `json:"expires_in"`
+	Interval        int    `json:"interval"`
+}
+
+// StartGitLabDeviceFlow initiates GitLab device flow.
+// Requires a GitLab Application with device flow / native app option enabled.
+func StartGitLabDeviceFlow(clientID string) (*GitLabDeviceCode, error) {
+	body, _ := json.Marshal(map[string]string{
+		"client_id": clientID,
+		"scope":     "api",
+	})
+	req, err := http.NewRequest("POST", "https://gitlab.com/oauth/authorize_device", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("device code request: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+
+	var dc GitLabDeviceCode
+	if err := json.Unmarshal(raw, &dc); err != nil {
+		return nil, fmt.Errorf("decode device code: %w", err)
+	}
+	if dc.DeviceCode == "" {
+		return nil, fmt.Errorf("empty device code from GitLab: %s", raw)
+	}
+	return &dc, nil
+}
+
+// PollGitLabToken polls for the access token after the user authorizes.
+func PollGitLabToken(clientID, clientSecret, deviceCode string) (string, error, int) {
+	body, _ := json.Marshal(map[string]string{
+		"client_id":     clientID,
+		"client_secret": clientSecret,
+		"device_code":   deviceCode,
+		"grant_type":    "urn:ietf:params:oauth:grant-type:device_code",
+	})
+	req, err := http.NewRequest("POST", "https://gitlab.com/oauth/token", bytes.NewReader(body))
+	if err != nil {
+		return "", err, 0
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("poll token: %w", err), 0
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		AccessToken string `json:"access_token"`
+		Error       string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode token response: %w", err), 0
+	}
+	switch result.Error {
+	case "":
+		if result.AccessToken == "" {
+			return "", fmt.Errorf("empty access token in response"), 0
+		}
+		return result.AccessToken, nil, 0
+	case "authorization_pending", "slow_down":
+		return "", ErrAuthPending, 0
+	case "expired_token":
+		return "", ErrAuthExpired, 0
+	default:
+		return "", fmt.Errorf("GitLab OAuth error: %s", result.Error), 0
+	}
+}
 
 type GitLabIssue struct {
 	Title       string `json:"title"`

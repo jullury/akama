@@ -5,10 +5,12 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
-	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/jullury/akama/internal/agent"
+	"github.com/jullury/akama/internal/config"
 	"github.com/jullury/akama/internal/job"
 	"github.com/jullury/akama/internal/provider"
 	"github.com/jullury/akama/internal/storage"
@@ -91,14 +93,10 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 	log.Printf("callback: chatID=%d data=%q", chatID, data)
 
 	switch data {
-	case "connect:github", "connect:gitlab":
-		p := strings.TrimPrefix(data, "connect:")
-		if err := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo", map[string]interface{}{"provider": p}); err != nil {
-			log.Printf("callback: set state: %v", err)
-			b.send(chatID, "Internal error, please try again.")
-			return
-		}
-		b.send(chatID, fmt.Sprintf("Send the %s repository URL (e.g. https://%s.com/owner/repo):", strings.Title(p), p))
+	case "connect:github":
+		b.startDeviceFlow(chatID, "github")
+	case "connect:gitlab":
+		b.startDeviceFlow(chatID, "gitlab")
 	default:
 		log.Printf("callback: unhandled data: %q", data)
 	}
@@ -119,30 +117,22 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, "Send an issue URL or use /connect to add a repository.")
 		}
 	case "await_repo":
+		// Device flow already obtained the token; user is now supplying the repo URL.
 		providerName, _ := conv.Data["provider"].(string)
-		if providerName == "" {
+		token, _ := conv.Data["token"].(string)
+		if providerName == "" || token == "" {
 			storage.ResetConversation(b.JobsDB, chatID, "telegram")
 			b.send(chatID, "Something went wrong. Use /connect to start over.")
 			return
 		}
-		nextData := map[string]interface{}{"provider": providerName, "repo_url": text}
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_token", nextData)
-		b.send(chatID, fmt.Sprintf("Send your %s personal access token (PAT):", strings.Title(providerName)))
-	case "await_token":
-		providerName, _ := conv.Data["provider"].(string)
-		repoURL, _ := conv.Data["repo_url"].(string)
-		if providerName == "" || repoURL == "" {
-			storage.ResetConversation(b.JobsDB, chatID, "telegram")
-			b.send(chatID, "Something went wrong. Use /connect to start over.")
-			return
-		}
-		if err := storage.SaveConnection(b.JobsDB, chatID, providerName, repoURL, text); err != nil {
+		repoURL := strings.TrimSpace(text)
+		if err := storage.SaveConnection(b.JobsDB, chatID, providerName, repoURL, token); err != nil {
 			log.Printf("save connection: %v", err)
 			b.send(chatID, "Failed to save connection. Please try again.")
 			return
 		}
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
-		b.send(chatID, fmt.Sprintf("Connected to %s/%s! Send an issue URL to start a job.", providerName, repoURL))
+		b.send(chatID, fmt.Sprintf("Connected! Send a %s issue URL to start a job.", providerName))
 	}
 }
 
@@ -196,14 +186,14 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 	j := &storage.Job{
 		ChatID:     chatID,
 		IssueID:    issueID,
-		IssueTitle:  title,
-		IssueBody:   body,
-		IssueURL:    issueURL,
-		RepoURL:     extractRepoURL(issueURL),
-		Provider:    providerName,
-		GitToken:    token,
-		Agent:       b.Config.DefaultAgent,
-		AgentModel:  b.Config.DefaultModel,
+		IssueTitle: title,
+		IssueBody:  body,
+		IssueURL:   issueURL,
+		RepoURL:    extractRepoURL(issueURL),
+		Provider:   providerName,
+		GitToken:   token,
+		Agent:      b.Config.DefaultAgent,
+		AgentModel: b.Config.DefaultModel,
 	}
 
 	jobID, err := storage.CreateJob(b.JobsDB, j)
@@ -222,6 +212,132 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 func (b *Bot) send(chatID int64, text string) {
 	if _, err := b.API.Send(tgbotapi.NewMessage(chatID, text)); err != nil {
 		log.Printf("send to %d: %v", chatID, err)
+	}
+}
+
+func (b *Bot) startDeviceFlow(chatID int64, p string) {
+	var (
+		deviceCode      string
+		userCode        string
+		verificationURI string
+		interval        int
+		pollFn          func(clientID, clientSecret, deviceCode string) (string, error, int)
+		clientID        string
+		clientSecret    string
+	)
+
+	switch p {
+	case "github":
+		clientID = config.GitHubClientID
+		clientSecret = config.GitHubClientSecret
+		if clientID == "" {
+			b.send(chatID, "GitHub OAuth App not configured. Rebuild with GitHub credentials.")
+			return
+		}
+		dc, err := provider.StartGitHubDeviceFlow(clientID)
+		if err != nil {
+			log.Printf("github device flow: %v", err)
+			b.send(chatID, "Failed to start GitHub authorization. Please try again.")
+			return
+		}
+		deviceCode = dc.DeviceCode
+		userCode = dc.UserCode
+		verificationURI = dc.VerificationURI
+		interval = dc.Interval
+		if interval < 5 {
+			interval = 5
+		}
+		pollFn = provider.PollGitHubToken
+	case "gitlab":
+		clientID = config.GitLabClientID
+		clientSecret = config.GitLabClientSecret
+		if clientID == "" {
+			b.send(chatID, "GitLab OAuth App not configured. Rebuild with GitLab credentials.")
+			return
+		}
+		dc, err := provider.StartGitLabDeviceFlow(clientID)
+		if err != nil {
+			log.Printf("gitlab device flow: %v", err)
+			b.send(chatID, "Failed to start GitLab authorization. Please try again.")
+			return
+		}
+		deviceCode = dc.DeviceCode
+		userCode = dc.UserCode
+		verificationURI = dc.VerificationURI
+		interval = dc.Interval
+		if interval < 5 {
+			interval = 5
+		}
+		pollFn = provider.PollGitLabToken
+	default:
+		b.send(chatID, "Unknown provider.")
+		return
+	}
+
+	b.send(chatID, fmt.Sprintf(
+		"Open %s and enter the code:\n\n`%s`\n\nI'll notify you once you've authorized.",
+		verificationURI, userCode,
+	))
+
+	go b.pollDeviceAuth(chatID, p, clientID, clientSecret, deviceCode, interval, pollFn)
+}
+
+func (b *Bot) pollDeviceAuth(chatID int64, p, clientID, clientSecret, deviceCode string, intervalSec int, pollFn func(string, string, string) (string, error, int)) {
+	log.Printf("[pollDeviceAuth] Starting poll for chatID=%d, provider=%s, interval=%ds", chatID, p, intervalSec)
+	interval := intervalSec
+	deadline := time.NewTimer(15 * time.Minute)
+	defer deadline.Stop()
+
+	pollCount := 0
+	for {
+		select {
+		case <-deadline.C:
+			log.Printf("[pollDeviceAuth] Authorization timed out for chatID=%d", chatID)
+			b.send(chatID, "Authorization timed out. Use /connect to try again.")
+			return
+		default:
+			pollCount++
+			log.Printf("[pollDeviceAuth] Poll attempt #%d for chatID=%d (interval=%ds)", pollCount, chatID, interval)
+			token, err, newInterval := pollFn(clientID, clientSecret, deviceCode)
+
+			// Update interval if GitHub sent slow_down with new interval
+			if newInterval > 0 && newInterval != interval {
+				log.Printf("[pollDeviceAuth] Updating interval from %ds to %ds", interval, newInterval)
+				interval = newInterval
+			}
+
+			if err == nil {
+				// Authorized — store token in conversation state, ask for repo URL.
+				log.Printf("[pollDeviceAuth] Authorization successful for chatID=%d, storing token", chatID)
+				data := map[string]interface{}{"provider": p, "token": token}
+				if err := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo", data); err != nil {
+					log.Printf("[pollDeviceAuth] Failed to store state for chatID=%d: %v", chatID, err)
+					b.send(chatID, "Internal error storing authorization. Use /connect to try again.")
+					return
+				}
+				log.Printf("[pollDeviceAuth] State stored successfully for chatID=%d, sending success message", chatID)
+				b.send(chatID, fmt.Sprintf("✅ %s authorized! Now send the repository URL (e.g. https://%s.com/owner/repo):", strings.Title(p), p))
+				log.Printf("[pollDeviceAuth] Success message sent for chatID=%d", chatID)
+				return
+			}
+
+			if err == provider.ErrAuthPending {
+				log.Printf("[pollDeviceAuth] Poll #%d: still pending", pollCount)
+			} else if err == provider.ErrAuthExpired {
+				log.Printf("[pollDeviceAuth] Poll #%d: expired token for chatID=%d", pollCount, chatID)
+				b.send(chatID, "Authorization code expired. Use /connect to try again.")
+				return
+			} else {
+				log.Printf("[pollDeviceAuth] Poll #%d error for chatID=%d: %v", pollCount, chatID, err)
+				b.send(chatID, fmt.Sprintf("Authorization failed: %v\n\nUse /connect to try again.", err))
+				return
+			}
+
+			// Wait for the interval before next poll
+			log.Printf("[pollDeviceAuth] Waiting %ds before next poll", interval)
+			time.Sleep(time.Duration(interval) * time.Second)
+			// Continue to next iteration to poll again
+		}
 	}
 }
 
