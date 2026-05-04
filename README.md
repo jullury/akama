@@ -14,7 +14,7 @@ Akama is an AI coding agent orchestration system controlled via Telegram. Send i
 ### One-line install (macOS and Linux)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/jullury/akama/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jullury/akama/refs/heads/main/install.sh | sh
 ```
 
 This downloads the latest binary for your OS and architecture to `/usr/local/bin/akama`.
