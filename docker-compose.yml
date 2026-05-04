@@ -31,6 +31,7 @@ services:
       DB_POSTGRESDB_DATABASE: akama
       DB_POSTGRESDB_USER: akama
       DB_POSTGRESDB_PASSWORD: akama
+      DB_POSTGRESDB_SSL_ENABLED: false
       # Security
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
       # Webhook URL for Telegram (must be publicly reachable, e.g. via ngrok in dev)
@@ -42,6 +43,10 @@ services:
       AGENT_HOME: /data/home
       # Telegram bot token (auto-imported as n8n credential on startup)
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      # Auto-configure Telegram credential (no manual UI setup needed)
+      CREDENTIALS_OVERWRITE_DATA: '{"telegramApi":{"accessToken":"${TELEGRAM_BOT_TOKEN}"}}'
+      # n8n API key for workflow activation — create in Settings > API after first login
+      N8N_API_KEY: ${N8N_API_KEY}
       # SSH credentials for worker access (used by workflows)
       SSH_USER: ${SSH_USER:-root}
       SSH_PASSWORD: ${SSH_PASSWORD}

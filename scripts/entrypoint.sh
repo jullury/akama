@@ -60,5 +60,58 @@ else
   echo "No workflows directory or no JSON files found, skipping import."
 fi
 
+# Activate workflows via n8n public API once n8n is ready.
+# Requires N8N_API_KEY — create one in n8n Settings > API after first login.
+# Uses node (always available) — no curl/wget needed.
+if [ -n "$N8N_API_KEY" ]; then
+  node -e "
+const http = require('http');
+const fs   = require('fs');
+
+function req(path, method, body) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : '';
+    const headers = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload),
+      'X-N8N-API-KEY': process.env.N8N_API_KEY,
+    };
+    const r = http.request({ hostname: 'localhost', port: 5678, path, method, headers }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => resolve({ status: res.statusCode, body: d }));
+    });
+    r.on('error', reject);
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+async function wait() {
+  for (;;) {
+    try { const h = await req('/healthz', 'GET'); if (h.status === 200) return; } catch (_) {}
+    await new Promise(r => setTimeout(r, 2000));
+  }
+}
+
+(async () => {
+  await wait();
+  console.log('[setup] n8n ready, activating workflows...');
+
+  const files = fs.readdirSync('/workflows')
+    .filter(f => f.endsWith('.json') && !/^04-/.test(f));
+
+  for (const file of files) {
+    const wf = JSON.parse(fs.readFileSync('/workflows/' + file, 'utf8'));
+    if (!wf.id) continue;
+    const r = await req('/api/v1/workflows/' + wf.id + '/activate', 'POST', {});
+    console.log('[setup] activate', file, ':', r.status);
+  }
+
+  console.log('[setup] done');
+})().catch(e => console.error('[setup] error:', e.message));
+" &
+fi
+
 # Start n8n
 exec n8n start

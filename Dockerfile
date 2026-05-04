@@ -5,6 +5,7 @@ FROM n8nio/n8n:latest
 
 USER root
 
+
 COPY --from=git-stage /usr/bin/git /usr/bin/git
 COPY --from=git-stage /bin/bash /bin/bash
 COPY --from=git-stage /usr/lib/ /usr/lib/
