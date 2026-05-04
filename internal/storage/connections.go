@@ -41,6 +41,16 @@ func DeleteAllConnections(db *sql.DB, chatID int64) error {
 	return err
 }
 
+func GetConnectionByID(db *sql.DB, id int64) (*Connection, error) {
+	row := db.QueryRow(`SELECT id, chat_id, provider, repo_url, git_token FROM connections WHERE id = ?`, id)
+	c := &Connection{}
+	err := row.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return c, err
+}
+
 func FindConnectionByRepo(db *sql.DB, chatID int64, repoURL string) (*Connection, error) {
 	row := db.QueryRow(`SELECT id, chat_id, provider, repo_url, git_token FROM connections WHERE chat_id = ? AND repo_url = ?`,
 		chatID, repoURL)

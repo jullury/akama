@@ -63,12 +63,13 @@ Commands:
 /connections - List saved connections
 /disconnect - Remove all connections
 /config - Set git user, email and AI model
+/newissue - Create and immediately fix a new issue
 /issues - List open PR jobs
 /status - Show recent jobs
 /done <id> - Mark job as done
 /cancel - Reset conversation state
 
-Send an issue URL to get started!`
+Send an existing issue URL, or use /newissue to create one.`
 	b.send(chatID, msg)
 }
 
@@ -105,6 +106,25 @@ func (b *Bot) handleConfig(chatID int64) {
 	)
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ReplyMarkup = keyboard
+	b.API.Send(msg)
+}
+
+func (b *Bot) handleNewIssue(chatID int64) {
+	conns, err := storage.ListConnections(b.JobsDB, chatID)
+	if err != nil || len(conns) == 0 {
+		b.send(chatID, "No repositories connected. Use /connect to add one first.")
+		return
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, c := range conns {
+		label := fmt.Sprintf("[%s] %s", c.Provider, c.RepoURL)
+		data := fmt.Sprintf("newissue:conn:%d", c.ID)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, data),
+		))
+	}
+	msg := tgbotapi.NewMessage(chatID, "Select the repository for the new issue:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
 	b.API.Send(msg)
 }
 

@@ -108,6 +108,46 @@ type GitLabMRRequest struct {
 	Description    string `json:"description"`
 }
 
+type GitLabIssueRequest struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+type GitLabIssueResponse struct {
+	WebURL string `json:"web_url"`
+	IID    int    `json:"iid"`
+}
+
+func CreateGitLabIssue(repoURL, token, title, body string) (string, error) {
+	projectPath, err := gitLabProjectPath(repoURL)
+	if err != nil {
+		return "", err
+	}
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/issues", encodedPath)
+	data, _ := json.Marshal(GitLabIssueRequest{Title: title, Description: body})
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(data)))
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create issue: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitLab API error %d: %s", resp.StatusCode, b)
+	}
+	var issue GitLabIssueResponse
+	if err := json.NewDecoder(resp.Body).Decode(&issue); err != nil {
+		return "", fmt.Errorf("decode issue: %w", err)
+	}
+	return issue.WebURL, nil
+}
+
 func FetchGitLabIssue(repoURL, token string) (*GitLabIssue, error) {
 	projectPath, issueIID, err := parseGitLabIssueURL(repoURL)
 	if err != nil {

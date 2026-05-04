@@ -131,6 +131,46 @@ type GitHubPRRequest struct {
 	Body  string `json:"body"`
 }
 
+type GitHubIssueRequest struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+type GitHubIssueResponse struct {
+	HTMLURL string `json:"html_url"`
+	Number  int    `json:"number"`
+}
+
+func CreateGitHubIssue(repoURL, token, title, body string) (string, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues", owner, repo)
+	data, _ := json.Marshal(GitHubIssueRequest{Title: title, Body: body})
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(data)))
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create issue: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, b)
+	}
+	var issue GitHubIssueResponse
+	if err := json.NewDecoder(resp.Body).Decode(&issue); err != nil {
+		return "", fmt.Errorf("decode issue: %w", err)
+	}
+	return issue.HTMLURL, nil
+}
+
 func FetchGitHubIssue(repoURL, token string) (*GitHubIssue, error) {
 	owner, repo, issueNum, err := parseGitHubIssueURL(repoURL)
 	if err != nil {

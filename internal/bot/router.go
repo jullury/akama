@@ -36,6 +36,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		b.handleStart(chatID)
 	case strings.HasPrefix(text, "/config"):
 		b.handleConfig(chatID)
+	case strings.HasPrefix(text, "/newissue"):
+		b.handleNewIssue(chatID)
 	case strings.HasPrefix(text, "/connect"):
 		b.handleConnect(chatID)
 	case strings.HasPrefix(text, "/connections"):
@@ -127,6 +129,23 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		msg.ReplyMarkup = keyboard
 		b.API.Send(msg)
 	default:
+		if connIDStr, ok := strings.CutPrefix(data, "newissue:conn:"); ok {
+			var connID int64
+			fmt.Sscanf(connIDStr, "%d", &connID)
+			conn, err := storage.GetConnectionByID(b.JobsDB, connID)
+			if err != nil || conn == nil {
+				b.send(chatID, "Repository not found.")
+				return
+			}
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issue_desc",
+				map[string]interface{}{
+					"repo_url": conn.RepoURL,
+					"provider": conn.Provider,
+					"token":    conn.GitToken,
+				})
+			b.send(chatID, fmt.Sprintf("Describe the issue for *%s*:\n\nFirst line = title, rest = description.", conn.RepoURL))
+			return
+		}
 		if rest, ok := strings.CutPrefix(data, "config:model:page:"); ok {
 			// format: config:model:page:<agentName>:<page>
 			parts := strings.SplitN(rest, ":", 2)
@@ -167,6 +186,37 @@ func (b *Bot) handleText(chatID int64, text string) {
 	}
 
 	switch conv.State {
+	case "await_issue_desc":
+		repoURL, _ := conv.Data["repo_url"].(string)
+		providerName, _ := conv.Data["provider"].(string)
+		token, _ := conv.Data["token"].(string)
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+		lines := strings.SplitN(strings.TrimSpace(text), "\n", 2)
+		title := strings.TrimSpace(lines[0])
+		body := ""
+		if len(lines) > 1 {
+			body = strings.TrimSpace(lines[1])
+		}
+		if title == "" {
+			b.send(chatID, "Issue title cannot be empty. Use /newissue to try again.")
+			return
+		}
+
+		var issueURL string
+		var err error
+		switch providerName {
+		case "github":
+			issueURL, err = provider.CreateGitHubIssue(repoURL, token, title, body)
+		case "gitlab":
+			issueURL, err = provider.CreateGitLabIssue(repoURL, token, title, body)
+		}
+		if err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to create issue: %v", err))
+			return
+		}
+		b.send(chatID, fmt.Sprintf("Issue created: %s\n\nProcessing it now...", issueURL))
+		b.processIssue(chatID, issueURL, token)
 	case "await_config":
 		field, _ := conv.Data["field"].(string)
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
