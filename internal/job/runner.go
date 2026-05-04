@@ -49,13 +49,14 @@ func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.C
 		return
 	}
 
-	msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("[%s] Working on: %s...", j.Provider, j.IssueTitle))
-	bot.Send(msg)
+	notify(bot, j.ChatID, fmt.Sprintf("🔍 [%s] Cloning repo for: %s...", j.Provider, j.IssueTitle))
 
 	if err := git.Clone(j.RepoURL, j.GitToken, workspacePath); err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), workspacePath)
 		return
 	}
+
+	notify(bot, j.ChatID, fmt.Sprintf("🤖 Running AI agent on: %s", j.IssueTitle))
 
 	prompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody)
 	promptPath, err := agent.WritePrompt(workspacePath, prompt)
@@ -70,11 +71,15 @@ func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.C
 		return
 	}
 
+	notify(bot, j.ChatID, "📦 Committing and pushing changes...")
+
 	branchName := fmt.Sprintf("akama/issue-%s", j.IssueID)
 	if err := git.CommitPush(workspacePath, branchName, j.GitToken); err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("commit/push: %v", err), workspacePath)
 		return
 	}
+
+	notify(bot, j.ChatID, "🔗 Creating pull request...")
 
 	var prURL string
 	switch j.Provider {
@@ -92,13 +97,17 @@ func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.C
 		log.Printf("set pr_created: %v", err)
 	}
 
-	msg = tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("[%s] PR ready — %s\n\nReply for follow-up or /done %d", j.Provider, prURL, jobID))
+	msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("[%s] PR ready — %s\n\nReply for follow-up or /done %d", j.Provider, prURL, jobID))
 	sent, _ := bot.Send(msg)
 	if sent.MessageID != 0 {
 		storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
 	}
 
 	os.Remove(promptPath)
+}
+
+func notify(bot *tgbotapi.BotAPI, chatID int64, text string) {
+	bot.Send(tgbotapi.NewMessage(chatID, text))
 }
 
 func failJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, workspacePath string) {

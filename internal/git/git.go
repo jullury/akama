@@ -16,8 +16,7 @@ func Clone(repoURL, token, destPath string) error {
 	if err := os.MkdirAll(parentDir, 0755); err != nil {
 		return fmt.Errorf("mkdir parent: %w", err)
 	}
-	// Write askpass to parent dir so destPath stays absent for git clone
-	askpassPath, err := writeAskpass(token, parentDir)
+	askpassPath, err := writeAskpass(token)
 	if err != nil {
 		return err
 	}
@@ -27,11 +26,13 @@ func Clone(repoURL, token, destPath string) error {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone: %w\n%s", err, output)
 	}
+	// Safety net: ensure .git-askpass is never committed if code regresses
+	appendIfMissing(filepath.Join(destPath, ".gitignore"), ".git-askpass")
 	return nil
 }
 
 func CommitPush(repoPath, branchName, token string) error {
-	askpassPath, err := writeAskpass(token, repoPath)
+	askpassPath, err := writeAskpass(token)
 	if err != nil {
 		return err
 	}
@@ -58,13 +59,36 @@ func CommitPush(repoPath, branchName, token string) error {
 	return nil
 }
 
-func writeAskpass(token, workDir string) (string, error) {
-	path := filepath.Join(workDir, ".git-askpass")
-	script := fmt.Sprintf("#!/bin/sh\necho '%s'\n", token)
-	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+func writeAskpass(token string) (string, error) {
+	f, err := os.CreateTemp("", "git-askpass-*")
+	if err != nil {
 		return "", fmt.Errorf("write askpass: %w", err)
 	}
-	return path, nil
+	if err := f.Chmod(0700); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", fmt.Errorf("chmod askpass: %w", err)
+	}
+	if _, err := fmt.Fprintf(f, "#!/bin/sh\necho '%s'\n", token); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", fmt.Errorf("write askpass: %w", err)
+	}
+	f.Close()
+	return f.Name(), nil
+}
+
+func appendIfMissing(path, line string) {
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), line) {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, line)
 }
 
 func newCommand(workDir, askpassPath string, name string, args ...string) *exec.Cmd {
