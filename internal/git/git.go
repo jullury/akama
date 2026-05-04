@@ -9,16 +9,21 @@ import (
 )
 
 func Clone(repoURL, token, destPath string) error {
-	if err := os.MkdirAll(destPath, 0755); err != nil {
-		return fmt.Errorf("mkdir: %w", err)
+	if err := os.RemoveAll(destPath); err != nil {
+		return fmt.Errorf("remove existing dir: %w", err)
 	}
-	askpassPath, err := writeAskpass(token, destPath)
+	parentDir := filepath.Dir(destPath)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return fmt.Errorf("mkdir parent: %w", err)
+	}
+	// Write askpass to parent dir so destPath stays absent for git clone
+	askpassPath, err := writeAskpass(token, parentDir)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(askpassPath)
 
-	cmd := newCommand(destPath, askpassPath, "git", "clone", "--depth=1", repoURL, destPath)
+	cmd := newCommand(parentDir, askpassPath, "git", "clone", "--depth=1", repoURL, destPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone: %w\n%s", err, output)
 	}
