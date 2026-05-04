@@ -1,389 +1,171 @@
-# Akama — Implementation Plan (n8n edition)
+# Akama — Go CLI Plan
 
 ## What It Does
 
-Akama is an orchestration system that fetches issues from code/project trackers, runs an AI coding agent (opencode or claude) to fix them autonomously in a cloned workspace, creates a PR, and communicates with the user via Telegram.
+Akama is an AI coding agent orchestration system. It receives issues (GitHub/GitLab) via a Telegram bot, runs `claude` or `opencode` locally to fix them, pushes a branch, creates a PR, and notifies the user via Telegram — all from a single Go binary.
 
-**n8n is the orchestration backbone.** All workflow logic lives in n8n — no custom Go binary. The deliverable is a `docker compose` stack: a custom n8n image (with git + opencode pre-installed) + PostgreSQL.
+This replaces the previous Docker/n8n implementation with a self-contained CLI that runs directly on the host machine. No Docker, no n8n, no webhook server required.
 
-Configuration (API keys, tokens, agent choice) is done entirely through the n8n web UI — no terminal wizard.
+---
+
+## CLI Commands
+
+```
+akama init      # interactive first-run setup → ~/.akama/config.yaml
+akama start     # fork daemon to background, returns to shell immediately
+akama stop      # send SIGTERM to daemon via PID file
+akama status    # show running/stopped + active job count
+akama logs      # tail ~/.akama/akama.log (Ctrl-C to exit)
+```
 
 ---
 
 ## Architecture
 
 ```
-docker compose
-  ├── n8n          ← custom image: n8n + git + opencode (pinned)
-  └── postgres     ← n8n's own DB + custom job/conversation tables
-
-n8n workflows (imported from JSON):
-  01-telegram-handler   ← Telegram webhook: routes commands + messages
-  02-run-job            ← clone → opencode → push → PR → notify
-  03-follow-up          ← re-runs opencode on existing workspace
-  04-setup-db           ← one-time: creates custom Postgres tables
+akama (binary)
+  ├── init     → prompt for config → write ~/.akama/config.yaml + migrate SQLite DB
+  ├── start    → re-exec self as background daemon
+  │               ├── Telegram long-polling loop       (mirrors workflow 01)
+  │               ├── job goroutines (per job)          (mirrors workflow 02)
+  │               └── follow-up goroutines (per reply)  (mirrors workflow 03)
+  ├── stop     → SIGTERM via PID file
+  ├── status   → PID liveness + DB job count
+  └── logs     → tail ~/.akama/akama.log
 ```
 
 ---
 
-## Tech Stack
-
-| Layer | Choice |
-|---|---|
-| Orchestration | n8n (self-hosted, `n8nio/n8n` base) |
-| Database | PostgreSQL 16 — n8n's own + custom tables |
-| Telegram | n8n built-in Telegram node (webhook mode) |
-| GitHub / GitLab | n8n built-in GitHub / GitLab nodes |
-| Trello | n8n built-in Trello node |
-| Git operations | Shell scripts via n8n "Execute Command" node |
-| AI agent (default) | `opencode` CLI — pre-installed in Docker image |
-| AI agent (alt) | `claude` CLI — pre-installed in Docker image |
-| Agent auth | Env vars passed to n8n container (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) |
-
----
-
-## Project Structure
+## Project Layout
 
 ```
 akama/
-├── Dockerfile                     # n8n + git + opencode + claude (pinned versions)
-├── docker-compose.yml             # n8n + postgres
-├── .env.example                   # N8N_ENCRYPTION_KEY, DB vars, ANTHROPIC_API_KEY etc.
-├── scripts/
-│   ├── git-clone.sh              # GIT_ASKPASS clone: git clone --depth=1
-│   ├── git-commit-push.sh        # stage + commit + force-push (GIT_ASKPASS)
-│   └── run-agent.sh              # opencode or claude subprocess with HOME=/data/home
-├── migrations/
-│   └── 001_akama.sql             # custom tables: jobs, conversations
-└── workflows/
-    ├── 01-telegram-handler.json  # main bot entry point
-    ├── 02-run-job.json           # job execution sub-workflow
-    ├── 03-follow-up.json         # follow-up / updating cycle
-    └── 04-setup-db.json          # one-time DB init (run manually once)
+├── main.go
+├── go.mod
+├── go.sum
+├── cmd/
+│   ├── root.go           ← cobra root; loads config path flag
+│   ├── init.go           ← interactive setup wizard
+│   ├── start.go          ← fork daemon; return immediately
+│   ├── stop.go           ← SIGTERM via PID file
+│   ├── status.go         ← daemon liveness + job count
+│   └── logs.go           ← tail log file
+└── internal/
+    ├── config/
+    │   └── config.go     ← Config struct, load/save ~/.akama/config.yaml
+    ├── storage/
+    │   ├── db.go         ← open SQLite + run schema migration
+    │   ├── jobs.go       ← Job struct + CRUD
+    │   ├── conversations.go ← Conversation state CRUD
+    │   └── connections.go   ← saved repo connections CRUD
+    ├── daemon/
+    │   └── daemon.go     ← re-exec fork, PID file read/write, IsRunning
+    ├── git/
+    │   └── git.go        ← Clone, CommitPush via GIT_ASKPASS
+    ├── agent/
+    │   └── runner.go     ← exec claude / opencode with prompt file
+    ├── provider/
+    │   ├── github.go     ← fetch issue, create PR
+    │   └── gitlab.go     ← fetch issue, create MR
+    ├── bot/
+    │   ├── bot.go        ← Telegram API init + RunCtx (long-polling)
+    │   ├── router.go     ← dispatch messages/callbacks to handlers
+    │   └── commands.go   ← /start /connect /disconnect /issues /status /done /cancel
+    └── job/
+        ├── runner.go     ← workflow 02: clone → agent → push → PR → notify
+        └── followup.go   ← workflow 03: re-run agent on existing workspace
+```
+
+Files to remove from the repo:
+- `docker-compose.yml`
+- `Dockerfile`
+- `Dockerfile.worker`
+- `scripts/` (entire directory)
+- `workflows/` (entire directory)
+- `.env.example`
+
+`migrations/001_akama.sql` can be kept as schema reference; the SQLite schema lives in `storage/db.go`.
+
+---
+
+## Dependencies
+
+```
+github.com/spf13/cobra                            ← CLI framework
+github.com/go-telegram-bot-api/telegram-bot-api/v5 ← Telegram long-polling
+modernc.org/sqlite                                ← SQLite, pure Go (no CGO)
+golang.org/x/term                                 ← password prompt in init
+gopkg.in/yaml.v3                                  ← config file
 ```
 
 ---
 
-## Docker Setup
+## Config File: `~/.akama/config.yaml`
 
-### Dockerfile
-
-```dockerfile
-FROM n8nio/n8n:latest
-
-USER root
-
-# Install git (n8n base is Alpine-based)
-RUN apk add --no-cache git bash
-
-# Install pinned agent versions via npm (npm is available in the n8n image)
-ARG OPENCODE_VERSION=0.3.14
-ARG CLAUDECODE_VERSION=1.0.17
-RUN npm install -g opencode-ai@${OPENCODE_VERSION} \
-    && npm install -g @anthropic-ai/claude-code@${CLAUDECODE_VERSION}
-
-# Copy helper scripts
-COPY scripts/ /usr/local/bin/akama-scripts/
-RUN chmod +x /usr/local/bin/akama-scripts/*.sh
-
-USER node
-
-VOLUME ["/home/node/.n8n", "/workspaces", "/data/home"]
-```
-
-### docker-compose.yml
+Created by `akama init`. All paths support `~/` expansion.
 
 ```yaml
-services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: akama
-      POSTGRES_PASSWORD: akama
-      POSTGRES_DB: akama
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U akama"]
-      interval: 5s
-      retries: 5
-
-  n8n:
-    build: .
-    restart: unless-stopped
-    ports:
-      - "5678:5678"           # n8n web UI
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      # n8n DB (n8n's own state)
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: akama
-      DB_POSTGRESDB_USER: akama
-      DB_POSTGRESDB_PASSWORD: akama
-      # Security
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-      # Webhook URL for Telegram (must be publicly reachable, e.g. via ngrok in dev)
-      WEBHOOK_URL: ${WEBHOOK_URL}
-      # Agent API keys (passed through to shell scripts)
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      # Agent HOME dir for opencode/claude config persistence
-      AGENT_HOME: /data/home
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - workspaces:/workspaces
-      - agent_home:/data/home
-
-volumes:
-  postgres_data:
-  n8n_data:
-  workspaces:
-  agent_home:
-```
-
-### .env.example
-
-```bash
-# Required
-N8N_ENCRYPTION_KEY=        # generate: openssl rand -hex 32
-WEBHOOK_URL=               # public URL where n8n is reachable (e.g. https://akama.example.com)
-ANTHROPIC_API_KEY=         # for opencode/claude with Anthropic models
-OPENAI_API_KEY=            # optional: for OpenAI models
+telegram_token: ""
+anthropic_api_key: ""
+openai_api_key: ""        # optional; required for opencode
+default_agent: "claude"   # claude | opencode
+default_model: ""         # passed to agent -m flag; empty = agent default
+workspace_dir: "~/.akama/workspaces"
+db_path: "~/.akama/akama.db"
+log_path: "~/.akama/akama.log"
+pid_path: "~/.akama/akama.pid"
 ```
 
 ---
 
-## Custom Postgres Tables (`migrations/001_akama.sql`)
+## SQLite Schema (`internal/storage/db.go`)
 
-n8n uses the same Postgres instance for its own tables. Akama's custom tables coexist in the same DB.
+Auto-applied on `storage.Open()`. Idempotent (`CREATE TABLE IF NOT EXISTS`).
 
 ```sql
-CREATE TABLE IF NOT EXISTS akama_jobs (
-    id                 BIGSERIAL PRIMARY KEY,
-    chat_id            TEXT   NOT NULL,
-    platform           TEXT   NOT NULL DEFAULT 'telegram',
-    provider           TEXT   NOT NULL,  -- 'github' | 'gitlab' | 'trello'
-    repo_url           TEXT   NOT NULL,
-    issue_id           TEXT   NOT NULL,
-    issue_title        TEXT   NOT NULL,
-    issue_body         TEXT   NOT NULL DEFAULT '',
-    status             TEXT   NOT NULL DEFAULT 'pending'
-                       CHECK (status IN ('pending','running','pr_created','updating','done','failed')),
-    branch_name        TEXT   NOT NULL DEFAULT '',
-    pr_url             TEXT   NOT NULL DEFAULT '',
-    workspace_path     TEXT   NOT NULL DEFAULT '',
-    notification_msg_id TEXT  NOT NULL DEFAULT '',
-    agent              TEXT   NOT NULL DEFAULT 'opencode',
-    agent_model        TEXT   NOT NULL DEFAULT '',
-    agent_output       TEXT   NOT NULL DEFAULT '',
-    error_msg          TEXT   NOT NULL DEFAULT '',
-    git_token          TEXT   NOT NULL DEFAULT '',
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS jobs (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id             INTEGER NOT NULL,
+    issue_id            TEXT    NOT NULL DEFAULT '',
+    issue_title         TEXT    NOT NULL DEFAULT '',
+    issue_body          TEXT    NOT NULL DEFAULT '',
+    issue_url           TEXT    NOT NULL DEFAULT '',
+    repo_url            TEXT    NOT NULL DEFAULT '',
+    provider            TEXT    NOT NULL DEFAULT '',   -- github | gitlab
+    git_token           TEXT    NOT NULL DEFAULT '',
+    agent               TEXT    NOT NULL DEFAULT 'claude',
+    agent_model         TEXT    NOT NULL DEFAULT '',
+    status              TEXT    NOT NULL DEFAULT 'pending',
+    workspace_path      TEXT    NOT NULL DEFAULT '',
+    branch_name         TEXT    NOT NULL DEFAULT '',
+    pr_url              TEXT    NOT NULL DEFAULT '',
+    notification_msg_id INTEGER NOT NULL DEFAULT 0,
+    error_msg           TEXT    NOT NULL DEFAULT '',
+    agent_output        TEXT    NOT NULL DEFAULT '',
+    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS akama_conversations (
-    chat_id     TEXT NOT NULL,
-    platform    TEXT NOT NULL DEFAULT 'telegram',
-    state       TEXT NOT NULL DEFAULT 'idle',
-    data        JSONB NOT NULL DEFAULT '{}',
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+CREATE TABLE IF NOT EXISTS conversations (
+    chat_id    INTEGER NOT NULL,
+    platform   TEXT    NOT NULL DEFAULT 'telegram',
+    state      TEXT    NOT NULL DEFAULT 'idle',
+    data       TEXT    NOT NULL DEFAULT '{}',  -- JSON object
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (chat_id, platform)
 );
 
-CREATE INDEX IF NOT EXISTS idx_akama_jobs_chat ON akama_jobs(chat_id, platform, status);
-CREATE INDEX IF NOT EXISTS idx_akama_jobs_notif ON akama_jobs(notification_msg_id);
-```
+CREATE TABLE IF NOT EXISTS connections (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id    INTEGER NOT NULL,
+    provider   TEXT    NOT NULL DEFAULT '',
+    repo_url   TEXT    NOT NULL DEFAULT '',
+    git_token  TEXT    NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
-**Token storage:** PATs are stored in n8n's encrypted credential store (via the n8n UI). The `git_token` column is a fallback; prefer credential vault references where possible.
-
----
-
-## Shell Scripts (`scripts/`)
-
-### `git-clone.sh`
-
-Token is passed via a temporary `GIT_ASKPASS` script — never injected into the URL (avoids leaking in `ps aux`).
-
-```bash
-#!/bin/bash
-# Usage: git-clone.sh <repo_url> <token> <dest_path>
-set -euo pipefail
-REPO_URL=$1; TOKEN=$2; DEST=$3
-
-ASKPASS=$(mktemp /tmp/akama-askpass-XXXXXX)
-chmod 700 "$ASKPASS"
-printf '#!/bin/sh\necho "%s"\n' "$TOKEN" > "$ASKPASS"
-trap "rm -f $ASKPASS" EXIT
-
-GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 git clone --depth=1 "$REPO_URL" "$DEST"
-```
-
-### `git-commit-push.sh`
-
-```bash
-#!/bin/bash
-# Usage: git-commit-push.sh <workspace> <branch> <token> [commit_msg]
-set -euo pipefail
-WORKSPACE=$1; BRANCH=$2; TOKEN=$3; MSG=${4:-"fix: apply akama agent changes"}
-
-ASKPASS=$(mktemp /tmp/akama-askpass-XXXXXX)
-chmod 700 "$ASKPASS"
-printf '#!/bin/sh\necho "%s"\n' "$TOKEN" > "$ASKPASS"
-trap "rm -f $ASKPASS" EXIT
-
-git -C "$WORKSPACE" add -A
-git -C "$WORKSPACE" -c user.email=akama@bot -c user.name=Akama commit -m "$MSG" --allow-empty
-GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
-  git -C "$WORKSPACE" push origin "$BRANCH" --force-with-lease
-```
-
-### `run-agent.sh`
-
-```bash
-#!/bin/bash
-# Usage: run-agent.sh <agent> <model> <workspace> <prompt_file>
-set -euo pipefail
-AGENT=$1; MODEL=$2; WORKSPACE=$3; PROMPT_FILE=$4
-
-export HOME="${AGENT_HOME:-/data/home}"
-export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-
-PROMPT=$(cat "$PROMPT_FILE")
-
-case "$AGENT" in
-  opencode)
-    opencode run "$PROMPT" \
-      --dangerously-skip-permissions \
-      --format json \
-      --dir "$WORKSPACE" \
-      -m "$MODEL"
-    ;;
-  claudecode)
-    cd "$WORKSPACE"
-    claude -p "$PROMPT" \
-      --dangerously-skip-permissions \
-      --output-format json
-    ;;
-  *)
-    echo "Unknown agent: $AGENT" >&2; exit 1 ;;
-esac
-```
-
----
-
-## n8n Credentials Setup (via UI)
-
-After `docker compose up`, open `http://localhost:5678` and add credentials:
-
-| Credential name | Type | Fields |
-|---|---|---|
-| `GitHub PAT` | GitHub API | Personal Access Token |
-| `GitLab PAT` | GitLab API | Personal Access Token |
-| `Trello` | Trello API | API Key + Token |
-| `Telegram Bot` | Telegram API | Bot Token |
-| `Akama DB` | PostgreSQL | host=postgres, db=akama, user=akama, pw=akama |
-
----
-
-## n8n Workflow Design
-
-### Workflow 01: Telegram Handler (`01-telegram-handler.json`)
-
-**Trigger:** Telegram Trigger node (webhook mode)
-
-```
-Telegram Trigger
-  └── Switch (message type)
-        ├── /start       → send welcome + command list
-        ├── /connect     → start connection flow (state = await_provider)
-        ├── /connections → list saved connections
-        ├── /disconnect  → remove connection
-        ├── /issues      → fetch issues → inline keyboard (max 10)
-        ├── /status      → query akama_jobs for recent jobs
-        ├── /done        → update job status='done', delete workspace
-        ├── /cancel      → reset conversation state
-        └── plain text   → check conversation state
-              ├── await_* states → advance /connect flow (read/write akama_conversations)
-              ├── reply to PR msg → call Workflow 03 (follow-up)
-              └── no context → show help
-```
-
-**Issue selection callback:** user taps issue → insert `akama_jobs` (status=pending) → call Workflow 02 async → reply "Starting work on: {title}..."
-
-### Workflow 02: Run Job (`02-run-job.json`)
-
-**Trigger:** Called by Workflow 01 via "Execute Workflow" (async, receives job ID)
-
-```
-Read job from akama_jobs
-Update status = 'running'
-Send Telegram: "[org/repo] Working on: {title}..."
-Execute Command: git-clone.sh {repo_url} {token} /workspaces/{job_id}
-Update job: workspace_path
-Write prompt to /tmp/prompt-{job_id}.txt
-Execute Command: run-agent.sh {agent} {model} /workspaces/{job_id} /tmp/prompt-{job_id}.txt
-Execute Command: git-commit-push.sh /workspaces/{job_id} akama/issue-{issue_id} {token}
-GitHub/GitLab node: list PRs on branch → create if none (FindOrCreate)
-Update job: status='pr_created', pr_url, branch_name, agent_output
-Send Telegram: "[org/repo] PR ready — {title}\n{pr_url}\n\nReply for follow-up or /done {job_id}"
-Update job: notification_msg_id = sent message ID
-[on error] → status='failed', send error via Telegram, rm -rf workspace
-```
-
-### Workflow 03: Follow-up (`03-follow-up.json`)
-
-**Trigger:** Called by Workflow 01 when reply to PR notification detected
-
-```
-Query akama_jobs WHERE notification_msg_id = {reply_msg_id}
-Update status = 'updating'
-Write follow-up prompt to /tmp/prompt-{job_id}.txt
-Execute Command: run-agent.sh (reuses existing workspace — no re-clone)
-Execute Command: git-commit-push.sh (force-with-lease, PR link unchanged)
-Update status = 'pr_created', agent_output
-Send Telegram: "[org/repo] Updated — {pr_url}\n\nReply for more or /done {job_id}"
-Update notification_msg_id
-```
-
-### Workflow 04: Setup DB (`04-setup-db.json`)
-
-**Trigger:** Manual (run once after first `docker compose up`)
-
-```
-Postgres node: execute migrations/001_akama.sql
-Send response: "Akama tables created successfully"
-```
-
----
-
-## Prompt Template
-
-Written to `/tmp/prompt-{job_id}.txt` by an n8n "Set" node:
-
-```
-You are fixing an issue in the current repository.
-
-Issue Title: {issue_title}
-Issue URL:   {issue_url}
-
-Description:
-{issue_body}   ← truncated to 8000 chars if needed
-
-Instructions:
-- Read the codebase to understand the context.
-- Implement the minimal fix for this issue.
-- Commit all changes with a descriptive message.
-- Do NOT open pull requests — just commit.
-[if follow_up]
-Additional instructions from the user:
-{follow_up_text}
+CREATE INDEX IF NOT EXISTS idx_jobs_chat  ON jobs(chat_id, status);
+CREATE INDEX IF NOT EXISTS idx_jobs_notif ON jobs(notification_msg_id);
 ```
 
 ---
@@ -392,113 +174,301 @@ Additional instructions from the user:
 
 ```
 pending → running → pr_created ⇄ updating → done
-                 ↘ failed (workspace deleted)
+                 ↘ failed   (workspace deleted on failure)
 ```
 
-Workspace at `/workspaces/{job_id}` is deleted only on `done` or `failed`.
+Workspace at `{workspace_dir}/{job_id}` is deleted only on `done` or `failed`.
 
 ---
 
-## Follow-up Routing
-
-In Workflow 01, when a plain-text message arrives:
+## `akama init` — Interactive Setup
 
 ```
-IF message.reply_to_message.message_id IS SET:
-    SELECT * FROM akama_jobs WHERE notification_msg_id = '{reply_id}'
-    found → call Workflow 03
-    not found → ignore
+1. Check ~/.akama/config.yaml exists → prompt to overwrite
+2. Prompt: Telegram bot token     [required, password input]
+3. Prompt: Anthropic API key      [required for claude, password input]
+4. Prompt: OpenAI API key         [optional, password input]
+5. Prompt: Default agent          [select: claude / opencode]
+6. Prompt: Workspace directory    [default: ~/.akama/workspaces]
+7. Write config to ~/.akama/config.yaml (chmod 600)
+8. Open SQLite DB + run migration
+9. Print: "Config saved. Run `akama start` to start the bot."
+```
 
-ELSE:
-    SELECT * FROM akama_jobs WHERE chat_id='{id}' AND status='pr_created'
-    0 jobs → show help
-    1 job  → call Workflow 03
-    2+ jobs → send inline keyboard "Which repo? Reply to the PR notification directly."
+Password prompts use `golang.org/x/term.ReadPassword` so the token is hidden.
+
+---
+
+## Daemon Model (`internal/daemon/daemon.go`)
+
+### `akama start` (parent process)
+
+1. Load config; check PID file — error if already running
+2. Open log file (`~/.akama/akama.log`) for append
+3. Re-exec self: `exec.Command(os.Args[0], "start", "--daemon")` with:
+   - `Stdout` / `Stderr` → log file
+   - `Stdin` → nil
+   - `SysProcAttr.Setsid = true` (detach from terminal)
+4. Write `cmd.Process.Pid` to `~/.akama/akama.pid`
+5. Print: `"akama daemon started (pid XXXX)"`; parent exits
+
+### Child process (`--daemon` flag)
+
+`main.go` scans `os.Args` for `--daemon` before cobra runs. If found, calls `runDaemon()` directly:
+
+1. Load config, open SQLite DB
+2. Create Telegram bot client
+3. Set up `context.WithCancel`; install `SIGTERM`/`SIGINT` handler → `cancel()`
+4. Call `bot.RunCtx(ctx)` — blocks until context cancelled
+5. Wait for in-flight job goroutines (`sync.WaitGroup`), timeout 30s
+6. Exit 0
+
+### `akama stop`
+
+1. Read PID from `~/.akama/akama.pid`
+2. `kill -TERM <pid>`
+3. Remove PID file
+4. Print: `"akama daemon stopped (pid XXXX)"`
+
+### `akama status`
+
+1. Read PID file; send `kill -0` to check liveness
+2. Query DB: `SELECT COUNT(*) FROM jobs WHERE status IN ('pending','running','updating')`
+3. Print: `"running (pid XXXX), N active jobs"` or `"stopped"`
+
+### `akama logs`
+
+1. Open `~/.akama/akama.log`
+2. Seek to last 4 KB; print existing lines
+3. Poll for new bytes every 200ms; print as they arrive
+4. Exit on SIGINT (Ctrl-C)
+
+---
+
+## Telegram Handler (`internal/bot/`)
+
+Long-polling via `go-telegram-bot-api`. All updates handled in `bot.RunCtx(ctx)`.
+
+### Message routing (`router.go`)
+
+```
+Incoming message
+  └── Has ReplyToMessage?
+        YES → look up job by notification_msg_id
+              found (status pr_created|updating) → go followup.RunFollowUp(...)
+        NO  → dispatch by text:
+              /start          → handleStart
+              /connect        → handleConnect (send inline keyboard: GitHub | GitLab)
+              /connections    → list saved connections
+              /disconnect     → delete all connections for chat_id
+              /issues         → list open pr_created jobs
+              /status         → list last 5 jobs
+              /done <id>      → set job status = done
+              /cancel         → reset conversation state to idle
+              other text      → handleText (state machine)
+
+Inline keyboard callback
+  connect:github → state = await_repo, data.provider = github
+  connect:gitlab → state = await_repo, data.provider = gitlab
+```
+
+### Conversation state machine (`handleText` in `router.go`)
+
+```
+idle        + issue URL   → fetch issue → create job → go job.Run(...)
+await_repo  + repo URL    → save repo URL → state = await_token
+await_token + PAT         → save connection → state = idle → "Connected! Send an issue URL."
+```
+
+Issue URL detection: any word in the message containing `github.com/.../issues/` or `gitlab.com/.../issues/`.
+
+---
+
+## Job Runner (`internal/job/runner.go`) — mirrors Workflow 02
+
+Runs as `go job.Run(jobID, jobs, bot, cfg)` goroutine. Uses `wg.Add(1)` / `wg.Done()` for graceful shutdown.
+
+```
+1.  jobs.Get(jobID)
+2.  jobs.SetRunning(jobID, workspacePath)
+3.  bot.Send: "[provider] Working on: {title}..."
+4.  os.MkdirAll(workspacePath)
+5.  git.Clone(repo_url, token, workspacePath)
+6.  os.WriteFile(promptPath, buildPrompt(title, url, body))
+7.  agent.Run(agent, model, workspacePath, promptPath, agentCfg)
+         ↳ on error → fail(jobs, bot, job, err, workspacePath); return
+8.  git.CommitPush(workspacePath, "akama/issue-{issueID}", token)
+9.  provider.CreatePR / provider.CreateMR  (detect from repo_url)
+10. jobs.SetPRCreated(jobID, branch, prURL)
+11. bot.Send: "PR ready — {title}\n{prURL}\n\nReply for follow-up or /done {id}"
+12. jobs.SetNotifMsgID(jobID, sent.MessageID)
+
+on fail:
+    jobs.SetFailed(jobID, errMsg)
+    bot.Send: "❌ Job {id} failed: {errMsg}"
+    os.RemoveAll(workspacePath)
+```
+
+### Prompt template
+
+```
+You are fixing an issue in the current repository.
+
+Issue Title: {title}
+Issue URL:   {url}
+Description:
+{body}  ← truncated to 8000 chars
+
+Implement a complete fix. Make all necessary code changes.
+Do NOT create pull requests or push branches — that is handled separately.
 ```
 
 ---
 
-## Telegram /connect Flow
+## Follow-up Runner (`internal/job/followup.go`) — mirrors Workflow 03
 
-State tracked in `akama_conversations.state` + `data` JSONB.
+Triggered by `router.go` when user replies to a PR notification.
 
-**GitHub / GitLab:**
 ```
-/connect → [GitHub][GitLab][Trello]       state=await_provider
-tap GitHub → "Paste repo URL:"            state=await_repo_url
-URL → "Paste PAT (repo+PR scopes):"      state=await_token
-token → validate → store in n8n vault
-       → "Connected: org/repo (GitHub, branch: main)"
-                                          state=idle
+1.  jobs.Get(jobID)  (found via notification_msg_id lookup)
+2.  jobs.SetStatus(jobID, "updating")
+3.  os.WriteFile(promptPath, buildFollowUpPrompt(userText))
+4.  agent.Run(agent, model, job.WorkspacePath, promptPath, agentCfg)
+         ↳ on error → failFollowUp(...)
+5.  git.CommitPush(job.WorkspacePath, job.BranchName, token)
+6.  jobs.SetStatus(jobID, "pr_created")
+7.  bot.Send: "[provider] Updated — {prURL}\n\nReply for more or /done {id}"
+8.  jobs.SetNotifMsgID(jobID, sent.MessageID)  ← enables chained follow-ups
 ```
 
-**Trello:**
+### Follow-up prompt template
+
 ```
-tap Trello → "Paste Trello API key:"      state=await_trello_apikey
-→ "Paste Trello OAuth token:"             state=await_trello_token
-→ "Paste board ID:"                       state=await_board
-→ "Paste target git repo URL:"            state=await_repo_url
-→ "Paste PAT for that repo:"              state=await_repo_token
-→ store → "Connected!"                    state=idle
+You are continuing work on the same repository.
+Additional instructions from the user:
+
+{userText}
+
+Apply these changes to the existing code. Commit all changes.
+Do NOT open pull requests — only make and commit code changes.
 ```
 
 ---
 
-## Pinned Agent Versions
+## Agent Runner (`internal/agent/runner.go`)
 
-Versions are baked into the Docker image at build time:
-
-```dockerfile
-ARG OPENCODE_VERSION=0.3.14
-ARG CLAUDECODE_VERSION=1.0.17
+```go
+// claude:   claude -p <prompt> --dangerously-skip-permissions --output-format json
+// opencode: opencode run <prompt> --dangerously-skip-permissions --format json [-m model]
+// Env: ANTHROPIC_API_KEY, OPENAI_API_KEY (from config)
+// Returns: combined stdout+stderr as string
 ```
 
-Updating requires rebuilding the image — no runtime version drift possible.
+Both agents run with `cmd.Dir = workspacePath` so they operate on the cloned repo.
 
 ---
 
-## First-Time Setup
+## Git Operations (`internal/git/git.go`)
 
-1. `docker compose up --build`
-2. Open `http://localhost:5678`, complete n8n account setup
-3. Add credentials via n8n UI (Telegram Bot, GitHub PAT, Akama DB, etc.)
-4. Import workflow JSONs from `workflows/` via Settings → Workflows → Import
-5. Run Workflow 04 manually once to create custom Postgres tables
-6. Activate all workflows (Telegram webhook registered automatically)
+**Clone** — uses a temp `GIT_ASKPASS` script that echoes the token (same pattern as the old `git-clone.sh`; token never injected into URL):
+
+```bash
+#!/bin/sh
+echo '<token>'
+```
+
+```go
+cmd = exec.Command("git", "clone", "--depth=1", repoURL, destPath)
+cmd.Env = append(os.Environ(), "GIT_ASKPASS="+askpassPath, "GIT_TERMINAL_PROMPT=0")
+```
+
+**CommitPush:**
+
+```go
+git -C workspace config user.email akama@bot
+git -C workspace config user.name Akama
+git -C workspace add -A
+git -C workspace commit --allow-empty -m "fix: apply akama agent changes"
+git -C workspace checkout -B <branch>
+GIT_ASKPASS=<script> git -C workspace push origin <branch> --force-with-lease
+```
+
+---
+
+## Provider API Calls (`internal/provider/`)
+
+### GitHub (`github.go`)
+
+```
+FetchIssue:  GET  https://api.github.com/repos/{owner}/{repo}/issues/{number}
+             → title, body, number
+CreatePR:    POST https://api.github.com/repos/{owner}/{repo}/pulls
+             Authorization: Bearer {token}
+             body: { title, head, base:"main", body }
+             → html_url
+```
+
+### GitLab (`gitlab.go`)
+
+```
+FetchIssue:  GET  https://gitlab.com/api/v4/projects/{url-encoded-path}/issues/{iid}
+             PRIVATE-TOKEN: {token}
+             → title, description, iid
+CreateMR:    POST https://gitlab.com/api/v4/projects/{url-encoded-path}/merge_requests
+             PRIVATE-TOKEN: {token}
+             body: { title, source_branch, target_branch:"main", description }
+             → web_url
+```
+
+Provider detection: repo URL contains `github.com` → GitHub; `gitlab.com` → GitLab.
 
 ---
 
 ## Implementation Order
 
-| Step | Deliverable |
-|---|---|
-| 1 | `Dockerfile` — n8n + git + opencode + claude (pinned) |
-| 2 | `docker-compose.yml` + `.env.example` |
-| 3 | `migrations/001_akama.sql` |
-| 4 | `scripts/git-clone.sh` |
-| 5 | `scripts/git-commit-push.sh` |
-| 6 | `scripts/run-agent.sh` |
-| 7 | `workflows/04-setup-db.json` |
-| 8 | `workflows/02-run-job.json` |
-| 9 | `workflows/03-follow-up.json` |
-| 10 | `workflows/01-telegram-handler.json` |
+| # | File(s) | Notes |
+|---|---|---|
+| 1 | `go.mod` | module `github.com/jullury/akama`, go 1.23 |
+| 2 | `internal/config/config.go` | Config struct, Load, Save, ExpandHome |
+| 3 | `internal/storage/db.go` | Open, migrate |
+| 4 | `internal/storage/jobs.go` | Job struct, CRUD methods |
+| 5 | `internal/storage/conversations.go` | Get, Set, Reset |
+| 6 | `internal/storage/connections.go` | Save, List, DeleteAll, FindByRepo |
+| 7 | `internal/git/git.go` | Clone, CommitPush, writeAskpass, DetectProvider, OwnerRepo |
+| 8 | `internal/agent/runner.go` | Run |
+| 9 | `internal/provider/github.go` | FetchIssue, CreatePR |
+| 10 | `internal/provider/gitlab.go` | FetchIssue, CreateMR |
+| 11 | `internal/daemon/daemon.go` | Start, Stop, IsRunning, WritePID, ReadPID |
+| 12 | `internal/job/runner.go` | Run goroutine |
+| 13 | `internal/job/followup.go` | RunFollowUp goroutine |
+| 14 | `internal/bot/bot.go` | New, RunCtx |
+| 15 | `internal/bot/router.go` | route, handleCallback, handleText |
+| 16 | `internal/bot/commands.go` | command handlers, saveConnection |
+| 17 | `cmd/root.go` | cobra root |
+| 18 | `cmd/init.go` | runInit |
+| 19 | `cmd/start.go` | runStart |
+| 20 | `cmd/stop.go` | runStop |
+| 21 | `cmd/status.go` | runStatus |
+| 22 | `cmd/logs.go` | runLogs (tail) |
+| 23 | `main.go` | --daemon check, cmd.Execute() |
 
 ---
 
 ## Verification Checklist
 
-- [ ] `docker compose up --build` — postgres healthy, n8n reachable at `:5678`
-- [ ] `opencode --version` in n8n container shows pinned version
-- [ ] `claude --version` in n8n container shows pinned version
-- [ ] Workflow 04 creates `akama_jobs` + `akama_conversations` tables
-- [ ] Telegram bot responds to `/start`
-- [ ] `/connect github` → multi-step flow, credential saved in n8n vault
-- [ ] `/issues` shows real issues as inline keyboard
-- [ ] Tapping an issue → Workflow 02 runs, opencode commits, PR created
-- [ ] Telegram notified: `[org/repo] PR ready — {title}\n{pr_url}`
-- [ ] Reply to PR notification → Workflow 03 runs, force-pushes, same PR URL
-- [ ] `/done {id}` → job=done, workspace deleted
-- [ ] Failed job → status=failed, workspace deleted, error sent via Telegram
-- [ ] GIT_ASKPASS used — token not visible in `ps aux`
-- [ ] n8n container restart → workflows re-activate, volumes intact
-- [ ] `claudecode` path works via `run-agent.sh`
+- [ ] `go build ./...` — clean compile
+- [ ] `./akama init` — prompts complete, `~/.akama/config.yaml` written, DB migrated
+- [ ] `./akama start` — returns to shell immediately, PID file written
+- [ ] `./akama status` — prints `running (pid XXXX), 0 active jobs`
+- [ ] `./akama logs` — shows `polling started as @<botname>`; Ctrl-C exits
+- [ ] Telegram `/start` → welcome message received
+- [ ] Telegram `/connect` → inline buttons appear
+- [ ] Select GitHub → send repo URL → send PAT → `"Connected! Send an issue URL."`
+- [ ] Send GitHub issue URL → bot replies `"Working on: {title}..."` → job runs
+- [ ] After job: bot sends PR URL notification
+- [ ] Reply to PR notification → follow-up runs, PR updates (same URL)
+- [ ] `/done {id}` → job marked done
+- [ ] `/status` → last 5 jobs listed
+- [ ] `./akama stop` → daemon exits cleanly; `./akama status` shows `stopped`
+- [ ] Failed job → `status=failed`, workspace deleted, error sent to Telegram
+- [ ] GIT_ASKPASS used — token not visible in process list
