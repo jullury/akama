@@ -66,6 +66,14 @@ func migrate(db *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_jobs_chat  ON jobs(chat_id, status);
 	CREATE INDEX IF NOT EXISTS idx_jobs_notif ON jobs(notification_msg_id);
+
+	CREATE TABLE IF NOT EXISTS user_config (
+		chat_id      INTEGER PRIMARY KEY,
+		git_name     TEXT    NOT NULL DEFAULT '',
+		git_email    TEXT    NOT NULL DEFAULT '',
+		agent_model  TEXT    NOT NULL DEFAULT '',
+		updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	_, err := db.Exec(schema)
 	return err

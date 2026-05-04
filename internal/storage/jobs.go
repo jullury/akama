@@ -77,6 +77,24 @@ func SetJobPRCreated(db *sql.DB, id int64, branch, prURL string) error {
 	return err
 }
 
+// RecoverInterruptedJobs marks jobs left in running/awaiting_input as failed
+// (they were orphaned by a daemon restart) and resets any blocked conversation states.
+func RecoverInterruptedJobs(db *sql.DB) error {
+	rows, err := db.Query(`SELECT chat_id FROM jobs WHERE status = 'awaiting_input'`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var chatID int64
+		if rows.Scan(&chatID) == nil {
+			ResetConversation(db, chatID, "telegram")
+		}
+	}
+	_, err = db.Exec(`UPDATE jobs SET status = 'failed', error_msg = 'interrupted by daemon restart', updated_at = CURRENT_TIMESTAMP WHERE status IN ('running','awaiting_input')`)
+	return err
+}
+
 func FindActiveJobByIssue(db *sql.DB, chatID int64, issueURL string) *Job {
 	row := db.QueryRow(`SELECT * FROM jobs WHERE chat_id = ? AND issue_url = ? AND status IN ('pending','running','awaiting_input') ORDER BY created_at DESC LIMIT 1`,
 		chatID, issueURL)

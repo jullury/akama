@@ -63,6 +63,10 @@ func runDaemon() {
 	}
 	defer db.Close()
 
+	if err := storage.RecoverInterruptedJobs(db); err != nil {
+		log.Printf("recover interrupted jobs: %v", err)
+	}
+
 	b, err := bot.New(cfg.TelegramToken)
 	if err != nil {
 		log.Fatalf("Create bot: %v", err)

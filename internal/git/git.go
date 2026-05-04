@@ -31,7 +31,14 @@ func Clone(repoURL, token, destPath string) error {
 	return nil
 }
 
-func CommitPush(repoPath, branchName, token string) error {
+func CommitPush(repoPath, branchName, token, gitName, gitEmail string) error {
+	if gitName == "" {
+		gitName = "Akama"
+	}
+	if gitEmail == "" {
+		gitEmail = "akama@bot"
+	}
+
 	askpassPath, err := writeAskpass(token)
 	if err != nil {
 		return err
@@ -39,8 +46,8 @@ func CommitPush(repoPath, branchName, token string) error {
 	defer os.Remove(askpassPath)
 
 	cmds := [][]string{
-		{"git", "-C", repoPath, "config", "user.email", "akama@bot"},
-		{"git", "-C", repoPath, "config", "user.name", "Akama"},
+		{"git", "-C", repoPath, "config", "user.email", gitEmail},
+		{"git", "-C", repoPath, "config", "user.name", gitName},
 		{"git", "-C", repoPath, "add", "-A"},
 		{"git", "-C", repoPath, "commit", "--allow-empty", "-m", "fix: apply akama agent changes"},
 		{"git", "-C", repoPath, "checkout", "-B", branchName},
