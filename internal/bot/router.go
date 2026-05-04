@@ -145,9 +145,14 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 
 	var token string
 	if gitToken == "" {
-		conn, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, extractRepoURL(issueURL))
+		lookupURL := extractRepoURL(issueURL)
+		log.Printf("[processIssue] Looking up connection for chatID=%d, repoURL=%q", chatID, lookupURL)
+		conn, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, lookupURL)
 		if conn != nil {
+			log.Printf("[processIssue] Found connection, token prefix: %s...", conn.GitToken[:10])
 			token = conn.GitToken
+		} else {
+			log.Printf("[processIssue] No connection found for repoURL=%q", lookupURL)
 		}
 	} else {
 		token = gitToken

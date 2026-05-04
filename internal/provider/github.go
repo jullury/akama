@@ -145,12 +145,14 @@ func FetchGitHubIssue(repoURL, token string) (*GitHubIssue, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
+	log.Printf("[FetchGitHubIssue] Fetching %s with token prefix: %s...", url, token[:10])
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch issue: %w", err)
 	}
 	defer resp.Body.Close()
 
+	log.Printf("[FetchGitHubIssue] Response status: %d", resp.StatusCode)
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, body)
@@ -208,19 +210,27 @@ func CreateGitHubPR(repoURL, token, title, branch, body string) (string, error) 
 	return pr.HTMLURL, nil
 }
 
-func parseGitHubIssueURL(repoURL string) (owner, repo string, issueNum int, err error) {
-	repoURL = strings.TrimSuffix(repoURL, ".git")
+func parseGitHubIssueURL(issueURL string) (owner, repo string, issueNum int, err error) {
+	issueURL = strings.TrimSuffix(issueURL, ".git")
+	// Extract repo URL (strip the issue path like /issues/1)
+	repoURL := issueURL
+	if idx := strings.Index(issueURL, "/issues/"); idx != -1 {
+		repoURL = issueURL[:idx]
+	}
+	// repoURL is now like "https://github.com/jullury/owasp-top10-2021"
 	parts := strings.Split(repoURL, "/")
 	if len(parts) < 2 {
 		err = fmt.Errorf("invalid GitHub URL: %s", repoURL)
 		return
 	}
+	// Last two segments are owner and repo
 	owner = parts[len(parts)-2]
 	repo = parts[len(parts)-1]
 
-	issueParts := strings.Split(repoURL, "/issues/")
+	// Parse the issue number from the original URL
+	issueParts := strings.Split(issueURL, "/issues/")
 	if len(issueParts) != 2 {
-		err = fmt.Errorf("invalid issue URL: %s", repoURL)
+		err = fmt.Errorf("invalid issue URL: %s", issueURL)
 		return
 	}
 	fmt.Sscanf(issueParts[1], "%d", &issueNum)
