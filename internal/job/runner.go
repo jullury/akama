@@ -152,6 +152,9 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
 	}
 
+	storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
+		map[string]interface{}{"job_id": jobID})
+
 	os.Remove(promptPath)
 }
 
