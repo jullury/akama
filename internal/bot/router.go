@@ -107,9 +107,54 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_config", map[string]interface{}{"field": "git_email"})
 		b.send(chatID, "Enter your git commit email:")
 	case "config:model":
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_config", map[string]interface{}{"field": "model"})
-		b.send(chatID, "Enter the AI model to use (e.g. claude-sonnet-4-6):")
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Claude", "config:model:claude"),
+				tgbotapi.NewInlineKeyboardButtonData("OpenCode", "config:model:opencode"),
+			),
+		)
+		msg := tgbotapi.NewMessage(chatID, "Select AI provider:")
+		msg.ReplyMarkup = keyboard
+		b.API.Send(msg)
+	case "config:model:claude":
+		keyboard, title := buildModelKeyboard("claude", 0)
+		msg := tgbotapi.NewMessage(chatID, title)
+		msg.ReplyMarkup = keyboard
+		b.API.Send(msg)
+	case "config:model:opencode":
+		keyboard, title := buildModelKeyboard("opencode", 0)
+		msg := tgbotapi.NewMessage(chatID, title)
+		msg.ReplyMarkup = keyboard
+		b.API.Send(msg)
 	default:
+		if rest, ok := strings.CutPrefix(data, "config:model:page:"); ok {
+			// format: config:model:page:<agentName>:<page>
+			parts := strings.SplitN(rest, ":", 2)
+			if len(parts) == 2 {
+				agentName := parts[0]
+				var page int
+				fmt.Sscanf(parts[1], "%d", &page)
+				keyboard, title := buildModelKeyboard(agentName, page)
+				msg := tgbotapi.NewMessage(chatID, title)
+				msg.ReplyMarkup = keyboard
+				b.API.Send(msg)
+			}
+			return
+		}
+		if model, ok := strings.CutPrefix(data, "config:model:set:"); ok {
+			cfg, _ := storage.GetUserConfig(b.JobsDB, chatID)
+			if cfg == nil {
+				cfg = &storage.UserConfig{ChatID: chatID}
+			}
+			cfg.AgentModel = model
+			if err := storage.SetUserConfig(b.JobsDB, cfg); err != nil {
+				log.Printf("set user config: %v", err)
+				b.send(chatID, "Failed to save model.")
+			} else {
+				b.send(chatID, fmt.Sprintf("AI model set to: %s", model))
+			}
+			return
+		}
 		log.Printf("callback: unhandled data: %q", data)
 	}
 }

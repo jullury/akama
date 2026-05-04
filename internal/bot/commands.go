@@ -5,10 +5,53 @@ import (
 	"os"
 	"strings"
 
-	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/storage"
 )
+
+const modelsPerPage = 8
+
+func buildModelKeyboard(agentName string, page int) (tgbotapi.InlineKeyboardMarkup, string) {
+	models := agent.FetchModels(agentName)
+	total := len(models)
+	start := page * modelsPerPage
+	if start >= total {
+		start = 0
+		page = 0
+	}
+	end := start + modelsPerPage
+	if end > total {
+		end = total
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, m := range models[start:end] {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(m, "config:model:set:"+m),
+		))
+	}
+
+	// Navigation row
+	var navRow []tgbotapi.InlineKeyboardButton
+	if page > 0 {
+		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData(
+			"← Back", fmt.Sprintf("config:model:page:%s:%d", agentName, page-1),
+		))
+	}
+	if end < total {
+		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData(
+			"Next →", fmt.Sprintf("config:model:page:%s:%d", agentName, page+1),
+		))
+	}
+	if len(navRow) > 0 {
+		rows = append(rows, navRow)
+	}
+
+	title := fmt.Sprintf("Select %s model (page %d/%d):", agentName, page+1, (total+modelsPerPage-1)/modelsPerPage)
+	return tgbotapi.NewInlineKeyboardMarkup(rows...), title
+}
 
 func (b *Bot) handleStart(chatID int64) {
 	msg := `Welcome to Akama!

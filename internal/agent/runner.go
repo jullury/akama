@@ -208,6 +208,56 @@ func slugify(s string) string {
 	return strings.TrimRight(b.String(), "-")
 }
 
+// FetchModels returns the available models for the given agent by running its
+// listing command. Falls back to hardcoded defaults if the command fails.
+func FetchModels(agentName string) []string {
+	switch agentName {
+	case "claude":
+		return fetchClaudeModels()
+	case "opencode":
+		return fetchOpencodeModels()
+	}
+	return nil
+}
+
+func fetchClaudeModels() []string {
+	cmd := exec.Command("claude", "-p", "/model", "--output-format", "text")
+	out, err := cmd.Output()
+	if err == nil {
+		if models := parseModelLines(string(out)); len(models) > 0 {
+			return models
+		}
+	}
+	return []string{"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"}
+}
+
+func fetchOpencodeModels() []string {
+	cmd := exec.Command("opencode", "models")
+	out, err := cmd.Output()
+	if err == nil {
+		if models := parseModelLines(string(out)); len(models) > 0 {
+			return models
+		}
+	}
+	return []string{
+		"anthropic/claude-sonnet-4-6",
+		"anthropic/claude-haiku-4-5",
+		"openai/gpt-4o",
+		"openai/gpt-4o-mini",
+	}
+}
+
+func parseModelLines(output string) []string {
+	var models []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.ContainsAny(line, " \t") {
+			models = append(models, line)
+		}
+	}
+	return models
+}
+
 func gitDiff(workspacePath string) string {
 	// Try staged changes first, fall back to unstaged, then stat only
 	for _, args := range [][]string{
