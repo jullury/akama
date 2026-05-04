@@ -125,7 +125,7 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, "Something went wrong. Use /connect to start over.")
 			return
 		}
-		repoURL := strings.TrimSpace(text)
+		repoURL := extractRepoURL(strings.TrimSpace(text))
 		if err := storage.SaveConnection(b.JobsDB, chatID, providerName, repoURL, token); err != nil {
 			log.Printf("save connection: %v", err)
 			b.send(chatID, "Failed to save connection. Please try again.")
@@ -145,7 +145,7 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 
 	var token string
 	if gitToken == "" {
-		conn, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, issueURL)
+		conn, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, extractRepoURL(issueURL))
 		if conn != nil {
 			token = conn.GitToken
 		}
@@ -163,15 +163,19 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 
 	switch providerName {
 	case "github":
-		issue, err := provider.FetchGitHubIssue(issueURL, token)
-		if err == nil {
+		issue, e := provider.FetchGitHubIssue(issueURL, token)
+		if e != nil {
+			err = e
+		} else {
 			title = issue.Title
 			body = issue.Body
 			issueID = fmt.Sprintf("%d", issue.Number)
 		}
 	case "gitlab":
-		issue, err := provider.FetchGitLabIssue(issueURL, token)
-		if err == nil {
+		issue, e := provider.FetchGitLabIssue(issueURL, token)
+		if e != nil {
+			err = e
+		} else {
 			title = issue.Title
 			body = issue.Description
 			issueID = fmt.Sprintf("%d", issue.IID)
@@ -180,6 +184,10 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 
 	if err != nil {
 		b.send(chatID, fmt.Sprintf("Failed to fetch issue: %v", err))
+		return
+	}
+	if issueID == "" {
+		b.send(chatID, "Failed to parse issue ID from fetched issue.")
 		return
 	}
 

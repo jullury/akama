@@ -4,12 +4,14 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/git"
@@ -34,7 +36,14 @@ func runJob(jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.C
 		return
 	}
 
-	workspacePath := filepath.Join(workspaceDir, fmt.Sprintf("%d", jobID))
+	repoPath, _ := url.Parse(j.RepoURL)
+	parts := strings.Split(strings.Trim(repoPath.Path, "/"), "/")
+	var workspacePath string
+	if len(parts) >= 2 {
+		workspacePath = filepath.Join(workspaceDir, j.Provider, parts[0], parts[1], j.IssueID)
+	} else {
+		workspacePath = filepath.Join(workspaceDir, fmt.Sprintf("%d", jobID))
+	}
 	if err := storage.SetJobRunning(jobsDB, jobID, workspacePath); err != nil {
 		log.Printf("set running: %v", err)
 		return
