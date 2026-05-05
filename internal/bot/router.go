@@ -85,7 +85,7 @@ func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
 		return
 	}
 
-	if j.Status == "pr_created" {
+	if j.Status == "pr_created" || j.Status == "updating" {
 		agentCfg := &agent.Config{
 			APIKeys:      b.Config.APIKeys,
 			TimeoutMins:   b.Config.AgentTimeoutMins,
@@ -93,7 +93,7 @@ func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
 		go job.RunFollowUp(b.ctx, j.ID, msg.Text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, fmt.Sprintf("[%s] Updating...", j.Provider))
 	} else {
-		b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created'. Current status: %s", j.Status))
+		b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created' or 'updating'. Current status: %s", j.Status))
 	}
 }
 
@@ -284,8 +284,8 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, "Job not found.")
 			return
 		}
-		if j.Status != "pr_created" {
-			b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created'. Current status: %s", j.Status))
+		if j.Status != "pr_created" && j.Status != "updating" {
+			b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created' or 'updating'. Current status: %s", j.Status))
 			return
 		}
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", conv.Data)

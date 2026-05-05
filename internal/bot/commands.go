@@ -79,7 +79,7 @@ Jobs
 /cancel <id> — cancel a running job
 /done <id> — mark job done and clean up workspace
 /done all — clean up all completed and failed jobs
-/followup <id> — continue working on a job with status 'pr_created'
+/followup <id> — continue working on a job with status 'pr_created' or 'updating'
 
 Settings
 /config — set git name, email and AI model
@@ -427,8 +427,8 @@ func (b *Bot) handleFollowUp(chatID int64, text string) {
 		return
 	}
 
-	if j.Status != "pr_created" {
-		b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created'. Current status: %s", j.Status))
+	if j.Status != "pr_created" && j.Status != "updating" {
+		b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created' or 'updating'. Current status: %s", j.Status))
 		return
 	}
 
