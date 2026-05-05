@@ -305,7 +305,7 @@ func (b *Bot) handleLogs(chatID int64, text string) {
 		return
 	}
 
-	output := agent.ParseOutput(j.AgentOutput)
+	output := agent.ParseOutput(j.Agent, j.AgentOutput)
 	if output == "" {
 		output = j.AgentOutput
 	}
@@ -339,9 +339,8 @@ func (b *Bot) handleRetry(chatID int64, text string) {
 	}
 
 	agentCfg := &agent.Config{
-		AnthropicAPIKey: b.Config.AnthropicAPIKey,
-		OpenAIAPIKey:    b.Config.OpenAIAPIKey,
-		TimeoutMins:     b.Config.AgentTimeoutMins,
+		APIKeys:     b.Config.APIKeys,
+		TimeoutMins: b.Config.AgentTimeoutMins,
 	}
 	b.send(chatID, fmt.Sprintf("Retrying job #%d: %s", jobID, j.IssueTitle))
 	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)

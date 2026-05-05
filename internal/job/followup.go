@@ -41,12 +41,24 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 		return
 	}
 
+	var followUpOutput string
 	if err := withRetry(ctx, "agent run", 3, func() error {
-		_, e := agent.Run(ctx, j.Agent, j.AgentModel, j.WorkspacePath, promptPath, agentCfg)
+		var e error
+		followUpOutput, e = agent.Run(ctx, j.Agent, j.AgentModel, j.WorkspacePath, promptPath, agentCfg)
 		return e
 	}); err != nil {
 		failFollowUp(jobsDB, bot, j, fmt.Sprintf("agent run: %v", err))
 		return
+	}
+
+	followUpText := agent.ParseOutput(j.Agent, followUpOutput)
+	if followUpText != "" {
+		outputMsg := followUpText
+		const maxFollowUpLen = 4000
+		if len(outputMsg) > maxFollowUpLen {
+			outputMsg = outputMsg[:maxFollowUpLen] + "\n...[truncated]"
+		}
+		notify(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:\n\n%s", j.Provider, outputMsg))
 	}
 
 	branchName := j.BranchName
