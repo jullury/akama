@@ -45,6 +45,9 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	if userCfg != nil {
 		gitName = userCfg.GitName
 		gitEmail = userCfg.GitEmail
+		if userCfg.Agent != "" {
+			j.Agent = userCfg.Agent
+		}
 		if userCfg.AgentModel != "" {
 			j.AgentModel = userCfg.AgentModel
 		}

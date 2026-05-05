@@ -87,13 +87,17 @@ func (b *Bot) handleConfig(chatID int64) {
 	if gitEmail == "" {
 		gitEmail = "(not set — default: akama@bot)"
 	}
+	agentDisplay := cfg.Agent
+	if agentDisplay == "" {
+		agentDisplay = fmt.Sprintf("(not set — using %s)", b.Config.DefaultAgent)
+	}
 	model := cfg.AgentModel
 	if model == "" {
-		model = fmt.Sprintf("(not set — using %s)", b.Config.DefaultAgent)
+		model = "(not set — using default)"
 	}
 
-	text := fmt.Sprintf("Current settings:\n\nGit Name:  %s\nGit Email: %s\nAI Model:  %s\n\nWhat would you like to change?",
-		gitName, gitEmail, model)
+	text := fmt.Sprintf("Current settings:\n\nGit Name:  %s\nGit Email: %s\nAgent:     %s\nAI Model:  %s\n\nWhat would you like to change?",
+		gitName, gitEmail, agentDisplay, model)
 
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(

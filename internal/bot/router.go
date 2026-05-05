@@ -119,11 +119,23 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		msg.ReplyMarkup = keyboard
 		b.API.Send(msg)
 	case "config:model:claude":
+		cfg, _ := storage.GetUserConfig(b.JobsDB, chatID)
+		if cfg == nil {
+			cfg = &storage.UserConfig{ChatID: chatID}
+		}
+		cfg.Agent = "claude"
+		storage.SetUserConfig(b.JobsDB, cfg)
 		keyboard, title := buildModelKeyboard("claude", 0)
 		msg := tgbotapi.NewMessage(chatID, title)
 		msg.ReplyMarkup = keyboard
 		b.API.Send(msg)
 	case "config:model:opencode":
+		cfg, _ := storage.GetUserConfig(b.JobsDB, chatID)
+		if cfg == nil {
+			cfg = &storage.UserConfig{ChatID: chatID}
+		}
+		cfg.Agent = "opencode"
+		storage.SetUserConfig(b.JobsDB, cfg)
 		keyboard, title := buildModelKeyboard("opencode", 0)
 		msg := tgbotapi.NewMessage(chatID, title)
 		msg.ReplyMarkup = keyboard

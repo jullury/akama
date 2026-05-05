@@ -72,9 +72,14 @@ func migrate(db *sql.DB) error {
 		git_name     TEXT    NOT NULL DEFAULT '',
 		git_email    TEXT    NOT NULL DEFAULT '',
 		agent_model  TEXT    NOT NULL DEFAULT '',
+		agent        TEXT    NOT NULL DEFAULT '',
 		updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 	`
-	_, err := db.Exec(schema)
-	return err
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	// Add agent column to existing DBs that predate this migration.
+	db.Exec(`ALTER TABLE user_config ADD COLUMN agent TEXT NOT NULL DEFAULT ''`)
+	return nil
 }
