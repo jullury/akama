@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/jullury/akama/compare/v1.8.2...v1.9.0) (2026-05-05)
+
+
+### Features
+
+* paginate /status command with inline navigation ([750e32a](https://github.com/jullury/akama/commit/750e32a2ce39859555767787d6361512e0003774))
+
 ## [1.8.2](https://github.com/jullury/akama/compare/v1.8.1...v1.8.2) (2026-05-05)
 
 
