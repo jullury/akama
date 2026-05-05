@@ -1,3 +1,10 @@
+# [1.8.0](https://github.com/jullury/akama/compare/v1.7.0...v1.8.0) (2026-05-05)
+
+
+### Features
+
+* **bot:** show owner/repo in status output ([1fc3c4d](https://github.com/jullury/akama/commit/1fc3c4d285afd25cc98755d901f0bffb850a75c8))
+
 # [1.7.0](https://github.com/jullury/akama/compare/v1.6.2...v1.7.0) (2026-05-05)
 
 
