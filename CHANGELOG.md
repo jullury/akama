@@ -1,3 +1,11 @@
+# [1.2.0](https://github.com/jullury/akama/compare/v1.1.1...v1.2.0) (2026-05-05)
+
+
+### Features
+
+* add agent selection to user configuration ([ff233ad](https://github.com/jullury/akama/commit/ff233adc500bee8b26420400f7a90ed7b5987159))
+* auto-install claude and opencode agents during init ([57064fd](https://github.com/jullury/akama/commit/57064fd7cdac9e013914920623dfe9319c02e4af))
+
 ## [1.1.1](https://github.com/jullury/akama/compare/v1.1.0...v1.1.1) (2026-05-05)
 
 
