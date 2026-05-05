@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/jullury/akama/compare/v1.2.0...v1.2.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* **git:** refresh tracking ref before force-with-lease push ([652f0d9](https://github.com/jullury/akama/commit/652f0d9bf3c3159dab510a48452cdfc67b91270c))
+
 # [1.2.0](https://github.com/jullury/akama/compare/v1.1.1...v1.2.0) (2026-05-05)
 
 
