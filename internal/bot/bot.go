@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/jullury/akama/internal/config"
@@ -22,6 +24,9 @@ func New(token string) (*Bot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create bot: %w", err)
 	}
+	// Telegram's long-poll timeout is 60 s; give the HTTP client a 90 s hard cap
+	// so a dropped connection never hangs the bot indefinitely.
+	api.Client = &http.Client{Timeout: 90 * time.Second}
 	log.Printf("authorized on account %s", api.Self.UserName)
 
 	resp, err := api.Request(tgbotapi.DeleteWebhookConfig{DropPendingUpdates: false})

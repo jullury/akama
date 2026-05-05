@@ -363,6 +363,7 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 	agentCfg := &agent.Config{
 		AnthropicAPIKey: b.Config.AnthropicAPIKey,
 		OpenAIAPIKey:    b.Config.OpenAIAPIKey,
+		TimeoutMins:     b.Config.AgentTimeoutMins,
 	}
 	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
 }
@@ -440,6 +441,10 @@ func (b *Bot) startDeviceFlow(chatID int64, p string) {
 	go b.pollDeviceAuth(chatID, p, clientID, clientSecret, deviceCode, interval, pollFn)
 }
 
+// maxNetworkErrors is how many consecutive network failures are tolerated during
+// OAuth polling before aborting. Transient outages are retried silently.
+const maxNetworkErrors = 5
+
 func (b *Bot) pollDeviceAuth(chatID int64, p, clientID, clientSecret, deviceCode string, intervalSec int, pollFn func(string, string, string) (string, error, int)) {
 	log.Printf("[pollDeviceAuth] Starting poll for chatID=%d, provider=%s, interval=%ds", chatID, p, intervalSec)
 	interval := intervalSec
@@ -447,6 +452,7 @@ func (b *Bot) pollDeviceAuth(chatID int64, p, clientID, clientSecret, deviceCode
 	defer deadline.Stop()
 
 	pollCount := 0
+	networkErrCount := 0
 	for {
 		select {
 		case <-deadline.C:
@@ -458,14 +464,12 @@ func (b *Bot) pollDeviceAuth(chatID int64, p, clientID, clientSecret, deviceCode
 			log.Printf("[pollDeviceAuth] Poll attempt #%d for chatID=%d (interval=%ds)", pollCount, chatID, interval)
 			token, err, newInterval := pollFn(clientID, clientSecret, deviceCode)
 
-			// Update interval if GitHub sent slow_down with new interval
 			if newInterval > 0 && newInterval != interval {
 				log.Printf("[pollDeviceAuth] Updating interval from %ds to %ds", interval, newInterval)
 				interval = newInterval
 			}
 
 			if err == nil {
-				// Authorized — store token in conversation state, ask for repo URL.
 				log.Printf("[pollDeviceAuth] Authorization successful for chatID=%d, storing token", chatID)
 				data := map[string]interface{}{"provider": p, "token": token}
 				if err := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo", data); err != nil {
@@ -473,28 +477,31 @@ func (b *Bot) pollDeviceAuth(chatID int64, p, clientID, clientSecret, deviceCode
 					b.send(chatID, "Internal error storing authorization. Use /connect to try again.")
 					return
 				}
-				log.Printf("[pollDeviceAuth] State stored successfully for chatID=%d, sending success message", chatID)
 				b.send(chatID, fmt.Sprintf("✅ %s authorized! Now send the repository URL (e.g. https://%s.com/owner/repo):", strings.Title(p), p))
-				log.Printf("[pollDeviceAuth] Success message sent for chatID=%d", chatID)
 				return
 			}
 
-			if err == provider.ErrAuthPending {
+			switch err {
+			case provider.ErrAuthPending:
+				networkErrCount = 0
 				log.Printf("[pollDeviceAuth] Poll #%d: still pending", pollCount)
-			} else if err == provider.ErrAuthExpired {
-				log.Printf("[pollDeviceAuth] Poll #%d: expired token for chatID=%d", pollCount, chatID)
+			case provider.ErrAuthExpired:
+				log.Printf("[pollDeviceAuth] Poll #%d: expired for chatID=%d", pollCount, chatID)
 				b.send(chatID, "Authorization code expired. Use /connect to try again.")
 				return
-			} else {
-				log.Printf("[pollDeviceAuth] Poll #%d error for chatID=%d: %v", pollCount, chatID, err)
-				b.send(chatID, fmt.Sprintf("Authorization failed: %v\n\nUse /connect to try again.", err))
-				return
+			default:
+				// Treat as transient network error — retry up to maxNetworkErrors times.
+				networkErrCount++
+				log.Printf("[pollDeviceAuth] Poll #%d network error (%d/%d) for chatID=%d: %v",
+					pollCount, networkErrCount, maxNetworkErrors, chatID, err)
+				if networkErrCount >= maxNetworkErrors {
+					b.send(chatID, fmt.Sprintf("Authorization failed after %d network errors: %v\n\nUse /connect to try again.", maxNetworkErrors, err))
+					return
+				}
 			}
 
-			// Wait for the interval before next poll
 			log.Printf("[pollDeviceAuth] Waiting %ds before next poll", interval)
 			time.Sleep(time.Duration(interval) * time.Second)
-			// Continue to next iteration to poll again
 		}
 	}
 }

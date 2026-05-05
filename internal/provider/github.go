@@ -46,7 +46,7 @@ func StartGitHubDeviceFlow(clientID string) (*GitHubDeviceCode, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("device code request: %w", err)
 	}
@@ -80,7 +80,7 @@ func PollGitHubToken(clientID, clientSecret, deviceCode string) (string, error, 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("poll token: %w", err), 0
 	}
@@ -155,7 +155,7 @@ func CreateGitHubIssue(repoURL, token, title, body string) (string, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("create issue: %w", err)
 	}
@@ -186,7 +186,7 @@ func FetchGitHubIssue(repoURL, token string) (*GitHubIssue, error) {
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 
 	log.Printf("[FetchGitHubIssue] Fetching %s with token prefix: %s...", url, token[:10])
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch issue: %w", err)
 	}
@@ -232,7 +232,7 @@ func CreateGitHubPR(repoURL, token, title, branch, body string) (string, error) 
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("create PR: %w", err)
 	}
@@ -279,7 +279,7 @@ func findGitHubPR(repoURL, token, branch string) (string, error) {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("find PR: %w", err)
 	}

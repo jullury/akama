@@ -9,6 +9,7 @@ import (
 	"strings"
 )
 
+
 type GitLabDeviceCode struct {
 	DeviceCode      string `json:"device_code"`
 	UserCode        string `json:"user_code"`
@@ -31,7 +32,7 @@ func StartGitLabDeviceFlow(clientID string) (*GitLabDeviceCode, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("device code request: %w", err)
 	}
@@ -63,7 +64,7 @@ func PollGitLabToken(clientID, clientSecret, deviceCode string) (string, error, 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("poll token: %w", err), 0
 	}
@@ -132,7 +133,7 @@ func CreateGitLabIssue(repoURL, token, title, body string) (string, error) {
 	}
 	req.Header.Set("PRIVATE-TOKEN", token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("create issue: %w", err)
 	}
@@ -162,7 +163,7 @@ func FetchGitLabIssue(repoURL, token string) (*GitLabIssue, error) {
 	}
 	req.Header.Set("PRIVATE-TOKEN", token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch issue: %w", err)
 	}
@@ -207,7 +208,7 @@ func CreateGitLabMR(repoURL, token, title, branch, body string) (string, error) 
 	req.Header.Set("PRIVATE-TOKEN", token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("create MR: %w", err)
 	}
@@ -234,7 +235,7 @@ func findGitLabMR(repoURL, token, branch string) (string, error) {
 	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/merge_requests?source_branch=%s&state=opened", encodedPath, branch)
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("PRIVATE-TOKEN", token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("find MR: %w", err)
 	}
