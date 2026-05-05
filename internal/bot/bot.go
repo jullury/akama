@@ -38,6 +38,26 @@ func New(token string) (*Bot, error) {
 	}
 	log.Printf("webhook cleared")
 
+	commands := []tgbotapi.BotCommand{
+		{Command: "start", Description: "Welcome message"},
+		{Command: "connect", Description: "Connect repository account"},
+		{Command: "connections", Description: "List saved repo connections"},
+		{Command: "disconnect", Description: "Delete all connections for this chat"},
+		{Command: "config", Description: "Configure git name, email, and model"},
+		{Command: "newissue", Description: "Create a new issue"},
+		{Command: "issues", Description: "List completed issues"},
+		{Command: "queue", Description: "List pending and running jobs"},
+		{Command: "status", Description: "Show last 5 jobs"},
+		{Command: "done", Description: "Mark job done and clean up"},
+		{Command: "retry", Description: "Retry a failed job"},
+		{Command: "cancel", Description: "Reset conversation state"},
+	}
+
+	_, cmdErr := api.Request(tgbotapi.NewSetMyCommands(commands...))
+	if cmdErr != nil {
+		log.Printf("warning: failed to set commands: %v", cmdErr)
+	}
+
 	return &Bot{API: api}, nil
 }
 
