@@ -1,6 +1,6 @@
 .env
 ssh
 akama
-.akama.git-askpass
+.git-askpass
 .akama-prompt.txt
 node_modules

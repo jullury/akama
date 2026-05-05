@@ -114,7 +114,8 @@ func writeAskpass(token string) (string, error) {
 
 func appendIfMissing(path, line string) {
 	data, _ := os.ReadFile(path)
-	if strings.Contains(string(data), line) {
+	content := string(data)
+	if strings.Contains(content, line) {
 		return
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -122,6 +123,11 @@ func appendIfMissing(path, line string) {
 		return
 	}
 	defer f.Close()
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		if _, err := f.WriteString("\n"); err != nil {
+			return
+		}
+	}
 	fmt.Fprintln(f, line)
 }
 
