@@ -9,8 +9,39 @@ permissions:
   contents: write
 
 jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run semantic-release
+
+      - name: Get released version
+        id: get-version
+        run: |
+          git fetch --tags
+          version=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+          echo "version=$version" >> $GITHUB_OUTPUT
+
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: release
+    if: needs.release.outputs.version != ''
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -26,6 +57,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -36,41 +69,19 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
           go build \
             -ldflags "-s -w \
               -X github.com/jullury/akama/internal/config.GitHubClientID=${{ secrets.OAUTH_GITHUB_CLIENT_ID }} \
               -X github.com/jullury/akama/internal/config.GitHubClientSecret=${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }} \
               -X github.com/jullury/akama/internal/config.GitLabClientID=${{ secrets.OAUTH_GITLAB_CLIENT_ID }} \
-              -X github.com/jullury/akama/internal/config.GitLabClientSecret=${{ secrets.OAUTH_GITLAB_CLIENT_SECRET }}" \
+              -X github.com/jullury/akama/internal/config.GitLabClientSecret=${{ secrets.OAUTH_GITLAB_CLIENT_SECRET }} \
+              -X github.com/jullury/akama/internal/config.Version=$VERSION" \
             -o akama-${{ matrix.goos }}-${{ matrix.goarch }} .
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: akama-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: akama-${{ matrix.goos }}-${{ matrix.goarch }}
-
-  release:
-    name: Release
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Run semantic-release
+      - name: Upload binary to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run semantic-release
+          VERSION: ${{ needs.release.outputs.version }}
+        run: gh release upload "v$VERSION" "akama-${{ matrix.goos }}-${{ matrix.goarch }}" --clobber
