@@ -83,7 +83,7 @@ If you prefer to use your own OAuth app credentials, [build from source](#buildi
 
 ## Agent Auto-Installation
 
-`opencode` and `claudecode` are automatically installed on first use. Akama selects the best method based on your system:
+`opencode` and `claude` are automatically installed on first use. Akama selects the best method based on your system:
 
 | Method   | Requires      | When used                         |
 |----------|---------------|-----------------------------------|
@@ -91,7 +91,7 @@ If you prefer to use your own OAuth app credentials, [build from source](#buildi
 | npm      | `npm`         | Systems with Node.js installed    |
 | curl     | `curl`        | Fallback — direct binary download |
 
-No manual agent setup required.
+> **Note:** After auto-installation, you must manually complete the login/authentication for your chosen agent (`opencode` or `claude`) before running jobs. Model selection is handled entirely through Telegram via the `/config` command — no need to configure models manually.
 
 ---
 
