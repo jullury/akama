@@ -67,10 +67,14 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 	}
 
 	commitMsg, prBody := agent.GenerateSummary(ctx, j.Agent, j.AgentModel, j.WorkspacePath, j.IssueURL, agentCfg)
+	if err := git.Commit(j.WorkspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
+		failFollowUp(jobsDB, bot, j, fmt.Sprintf("git commit: %v", err))
+		return
+	}
 	if err := withRetry(ctx, "git push", 3, func() error {
-		return git.CommitPush(j.WorkspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg)
+		return git.Push(j.WorkspacePath, branchName, j.GitToken)
 	}); err != nil {
-		failFollowUp(jobsDB, bot, j, fmt.Sprintf("commit/push: %v", err))
+		failFollowUp(jobsDB, bot, j, fmt.Sprintf("git push: %v", err))
 		return
 	}
 

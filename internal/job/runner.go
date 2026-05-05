@@ -185,10 +185,14 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 
 	commitMsg, prBody := agent.GenerateSummary(ctx, j.Agent, j.AgentModel, workspacePath, j.IssueURL, agentCfg)
 	branchName := agent.BranchFromCommit(commitMsg, fmt.Sprintf("fix/issue-%s", j.IssueID))
+	if err := git.Commit(workspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
+		failJob(jobsDB, bot, j, fmt.Sprintf("git commit: %v", err), workspacePath)
+		return
+	}
 	if err := withRetry(ctx, "git push", 3, func() error {
-		return git.CommitPush(workspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg)
+		return git.Push(workspacePath, branchName, j.GitToken)
 	}); err != nil {
-		failJob(jobsDB, bot, j, fmt.Sprintf("commit/push: %v", err), workspacePath)
+		failJob(jobsDB, bot, j, fmt.Sprintf("git push: %v", err), workspacePath)
 		return
 	}
 

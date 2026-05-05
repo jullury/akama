@@ -38,19 +38,17 @@ func Clone(repoURL, token, destPath, branch string) error {
 	return nil
 }
 
-func CommitPush(repoPath, branchName, token, gitName, gitEmail, commitMsg string) error {
+// Commit stages all changes, commits, and switches to branchName. Call once.
+func Commit(repoPath, branchName, token, gitName, gitEmail, commitMsg string) error {
 	if commitMsg == "" {
 		commitMsg = "fix: apply changes"
 	}
-
 	askpassPath, err := writeAskpass(token)
 	if err != nil {
 		return err
 	}
 	defer os.Remove(askpassPath)
 
-	// Only override git identity if the user has explicitly configured it.
-	// If empty, git falls back to the system/global git config.
 	var cmds [][]string
 	if gitName != "" {
 		cmds = append(cmds, []string{"git", "-C", repoPath, "config", "user.name", gitName})
@@ -69,6 +67,16 @@ func CommitPush(repoPath, branchName, token, gitName, gitEmail, commitMsg string
 			return fmt.Errorf("%s: %w\n%s", strings.Join(args, " "), err, output)
 		}
 	}
+	return nil
+}
+
+// Push refreshes the remote tracking ref and force-pushes branchName. Safe to retry.
+func Push(repoPath, branchName, token string) error {
+	askpassPath, err := writeAskpass(token)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(askpassPath)
 
 	// Refresh the remote tracking ref so --force-with-lease has accurate state.
 	// Use an explicit refspec so refs/remotes/origin/<branch> is guaranteed to
@@ -83,6 +91,14 @@ func CommitPush(repoPath, branchName, token, gitName, gitEmail, commitMsg string
 		return fmt.Errorf("git push: %w\n%s", err, output)
 	}
 	return nil
+}
+
+// CommitPush is a convenience wrapper that commits once then pushes (not retried internally).
+func CommitPush(repoPath, branchName, token, gitName, gitEmail, commitMsg string) error {
+	if err := Commit(repoPath, branchName, token, gitName, gitEmail, commitMsg); err != nil {
+		return err
+	}
+	return Push(repoPath, branchName, token)
 }
 
 func writeAskpass(token string) (string, error) {
