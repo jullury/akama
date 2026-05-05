@@ -67,20 +67,20 @@ Send a GitHub or GitLab issue URL to start a job, or use these commands:
 Repository
 /connect — connect a repository via OAuth
 /connections — list saved connections
-/connection delete — delete a single connection
+/delete-connection — delete a single connection
 /disconnect — remove all connections
 
 Jobs
 /newissue — create and immediately fix a new issue
-/issues [status] — list jobs (filter: running, failed, pending, all)
+/issues — list jobs (then enter: running, failed, pending, all)
 /queue — show pending and running jobs
 /status — show recent jobs
-/logs <id> — view agent output for a job
-/retry <id> — retry a failed job
-/cancel <id> — cancel a running job
-/done <id> — mark job done and clean up workspace
+/logs — view agent output for a job (will prompt for ID)
+/retry — retry a failed job (will prompt for ID)
+/cancel — cancel a running job (will prompt for ID)
+/done — mark job done and clean up workspace (will prompt for ID)
 /done all — clean up all completed and failed jobs
-/followup <id> — continue working on a job with status 'pr_created' or 'updating'
+/followup — continue working on a job with status 'pr_created' or 'updating' (will prompt for ID)
 
 Settings
 /config — set git name, email and AI model
@@ -187,11 +187,7 @@ func (b *Bot) handleDisconnect(chatID int64) {
 	b.send(chatID, "All connections removed.")
 }
 
-func (b *Bot) handleConnection(chatID int64, text string) {
-	if !strings.HasPrefix(text, "/connection delete") {
-		b.send(chatID, "Usage: /connection delete")
-		return
-	}
+func (b *Bot) handleDeleteConnection(chatID int64) {
 	conns, err := storage.FindConnectionsByChat(b.JobsDB, chatID)
 	if err != nil {
 		b.send(chatID, fmt.Sprintf("Error: %v", err))
@@ -214,13 +210,7 @@ func (b *Bot) handleConnection(chatID int64, text string) {
 	b.API.Send(msg)
 }
 
-func (b *Bot) handleIssues(chatID int64, text string) {
-	parts := strings.Fields(text)
-	filterStatus := ""
-	if len(parts) > 1 {
-		filterStatus = strings.ToLower(parts[1])
-	}
-
+func (b *Bot) showIssues(chatID int64, filterStatus string) {
 	jobs, err := storage.ListJobsByChatID(b.JobsDB, chatID, 50)
 	if err != nil {
 		b.send(chatID, fmt.Sprintf("Error: %v", err))
@@ -253,7 +243,7 @@ func (b *Bot) handleIssues(chatID int64, text string) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("Jobs:\n")
+	sb.WriteString(fmt.Sprintf("Jobs (%s):\n", filterStatus))
 	for _, j := range filtered {
 		sb.WriteString(fmt.Sprintf("\n[#%d] %s — %s (%s)", j.ID, j.IssueTitle, j.Status, j.Provider))
 		if j.PRURL != "" {
@@ -296,11 +286,8 @@ func (b *Bot) handleQueue(chatID int64) {
 
 const jobsPerPage = 5
 
-func (b *Bot) handleStatus(chatID int64, text string) {
+func (b *Bot) handleStatus(chatID int64) {
 	page := 0
-	if strings.HasPrefix(text, "/status ") {
-		fmt.Sscanf(text, "/status %d", &page)
-	}
 
 	total, err := storage.CountAllJobs(b.JobsDB)
 	if err != nil {
@@ -354,13 +341,7 @@ func (b *Bot) handleStatus(chatID int64, text string) {
 	b.API.Send(msg)
 }
 
-func (b *Bot) handleLogs(chatID int64, text string) {
-	var jobID int64
-	if n, _ := fmt.Sscanf(text, "/logs %d", &jobID); n == 0 || jobID == 0 {
-		b.send(chatID, "Usage: /logs <job_id>")
-		return
-	}
-
+func (b *Bot) showLogs(chatID int64, jobID int64) {
 	j, err := storage.GetJob(b.JobsDB, jobID)
 	if err != nil || j == nil || j.ChatID != chatID {
 		b.send(chatID, "Job not found.")
@@ -387,13 +368,7 @@ func (b *Bot) handleLogs(chatID int64, text string) {
 	b.send(chatID, fmt.Sprintf("Job #%d output:\n\n%s", jobID, output))
 }
 
-func (b *Bot) handleRetry(chatID int64, text string) {
-	var jobID int64
-	if n, _ := fmt.Sscanf(text, "/retry %d", &jobID); n == 0 || jobID == 0 {
-		b.send(chatID, "Usage: /retry <job_id>")
-		return
-	}
-
+func (b *Bot) retryJob(chatID int64, jobID int64) {
 	j, err := storage.GetJob(b.JobsDB, jobID)
 	if err != nil || j == nil || j.ChatID != chatID {
 		b.send(chatID, "Job not found.")
@@ -417,52 +392,7 @@ func (b *Bot) handleRetry(chatID int64, text string) {
 	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
 }
 
-func (b *Bot) handleCancelJob(chatID int64, jobID int64) {
-	j, err := storage.GetJob(b.JobsDB, jobID)
-	if err != nil || j == nil || j.ChatID != chatID {
-		b.send(chatID, "Job not found.")
-		return
-	}
-	if j.Status != "running" && j.Status != "pending" && j.Status != "awaiting_input" {
-		b.send(chatID, fmt.Sprintf("Job #%d is not active (status: %s).", jobID, j.Status))
-		return
-	}
-	job.CancelJob(jobID)
-	storage.SetJobFailed(b.JobsDB, jobID, "cancelled by user")
-	storage.ResetConversation(b.JobsDB, chatID, "telegram")
-	b.send(chatID, fmt.Sprintf("Job #%d cancelled.", jobID))
-}
-
-func (b *Bot) handleDone(chatID int64, text string) {
-	arg := strings.TrimSpace(strings.TrimPrefix(text, "/done"))
-	if arg == "all" {
-		jobs, err := storage.ListJobsByChatID(b.JobsDB, chatID, 200)
-		if err != nil {
-			b.send(chatID, fmt.Sprintf("Error: %v", err))
-			return
-		}
-		count := 0
-		for _, j := range jobs {
-			if j.Status == "pr_created" || j.Status == "failed" || j.Status == "done" {
-				storage.SetJobStatus(b.JobsDB, j.ID, "done")
-				if j.WorkspacePath != "" {
-					os.RemoveAll(j.WorkspacePath)
-				}
-				count++
-			}
-		}
-		storage.ResetConversation(b.JobsDB, chatID, "telegram")
-		b.send(chatID, fmt.Sprintf("Cleaned up %d jobs.", count))
-		return
-	}
-
-	var jobID int64
-	fmt.Sscanf(text, "/done %d", &jobID)
-	if jobID == 0 {
-		b.send(chatID, "Usage: /done <job_id> or /done all")
-		return
-	}
-
+func (b *Bot) doneJob(chatID int64, jobID int64) {
 	j, err := storage.GetJob(b.JobsDB, jobID)
 	if err != nil {
 		b.send(chatID, fmt.Sprintf("Error: %v", err))
@@ -479,13 +409,27 @@ func (b *Bot) handleDone(chatID int64, text string) {
 	b.send(chatID, fmt.Sprintf("Job %d marked as done. Workspace cleaned up.", jobID))
 }
 
-func (b *Bot) handleFollowUp(chatID int64, text string) {
-	var jobID int64
-	if n, _ := fmt.Sscanf(text, "/followup %d", &jobID); n == 0 || jobID == 0 {
-		b.send(chatID, "Usage: /followup <job_id>")
+func (b *Bot) doneAll(chatID int64) {
+	jobs, err := storage.ListJobsByChatID(b.JobsDB, chatID, 200)
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Error: %v", err))
 		return
 	}
+	count := 0
+	for _, j := range jobs {
+		if j.Status == "pr_created" || j.Status == "failed" || j.Status == "done" {
+			storage.SetJobStatus(b.JobsDB, j.ID, "done")
+			if j.WorkspacePath != "" {
+				os.RemoveAll(j.WorkspacePath)
+			}
+			count++
+		}
+	}
+	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+	b.send(chatID, fmt.Sprintf("Cleaned up %d jobs.", count))
+}
 
+func (b *Bot) startFollowUp(chatID int64, jobID int64) {
 	j, err := storage.GetJob(b.JobsDB, jobID)
 	if err != nil || j == nil || j.ChatID != chatID {
 		b.send(chatID, "Job not found.")
@@ -499,4 +443,20 @@ func (b *Bot) handleFollowUp(chatID int64, text string) {
 
 	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", map[string]interface{}{"job_id": float64(jobID)})
 	b.send(chatID, fmt.Sprintf("Job #%d is ready for follow-up. Send your message to continue working on it.", jobID))
+}
+
+func (b *Bot) handleCancelJob(chatID int64, jobID int64) {
+	j, err := storage.GetJob(b.JobsDB, jobID)
+	if err != nil || j == nil || j.ChatID != chatID {
+		b.send(chatID, "Job not found.")
+		return
+	}
+	if j.Status != "running" && j.Status != "pending" && j.Status != "awaiting_input" {
+		b.send(chatID, fmt.Sprintf("Job #%d is not active (status: %s).", jobID, j.Status))
+		return
+	}
+	job.CancelJob(jobID)
+	storage.SetJobFailed(b.JobsDB, jobID, "cancelled by user")
+	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+	b.send(chatID, fmt.Sprintf("Job #%d cancelled.", jobID))
 }

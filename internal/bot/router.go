@@ -42,34 +42,34 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		b.handleNewIssue(chatID)
 	case strings.HasPrefix(text, "/connections"):
 		b.handleConnections(chatID)
-	case strings.HasPrefix(text, "/connection"):
-		b.handleConnection(chatID, text)
+	case strings.HasPrefix(text, "/delete-connection"):
+		b.handleDeleteConnection(chatID)
 	case strings.HasPrefix(text, "/connect"):
 		b.handleConnect(chatID)
 	case strings.HasPrefix(text, "/disconnect"):
 		b.handleDisconnect(chatID)
 	case strings.HasPrefix(text, "/issues"):
-		b.handleIssues(chatID, text)
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issues_filter", nil)
+		b.send(chatID, "Enter filter (running, failed, pending, all), or press Enter for open jobs:")
 	case strings.HasPrefix(text, "/queue"):
 		b.handleQueue(chatID)
 	case strings.HasPrefix(text, "/status"):
-		b.handleStatus(chatID, text)
+		b.handleStatus(chatID)
 	case strings.HasPrefix(text, "/logs"):
-		b.handleLogs(chatID, text)
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_logs", nil)
+		b.send(chatID, "Enter the job ID to view logs:")
 	case strings.HasPrefix(text, "/retry"):
-		b.handleRetry(chatID, text)
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_retry", nil)
+		b.send(chatID, "Enter the job ID to retry:")
 	case strings.HasPrefix(text, "/done"):
-		b.handleDone(chatID, text)
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_done", nil)
+		b.send(chatID, "Enter the job ID to mark as done, or type 'all' to clean up all completed jobs:")
 	case strings.HasPrefix(text, "/followup"):
-		b.handleFollowUp(chatID, text)
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup_id", nil)
+		b.send(chatID, "Enter the job ID for follow-up:")
 	case strings.HasPrefix(text, "/cancel"):
-		var jobID int64
-		if n, _ := fmt.Sscanf(text, "/cancel %d", &jobID); n == 1 && jobID != 0 {
-			b.handleCancelJob(chatID, jobID)
-		} else {
-			storage.ResetConversation(b.JobsDB, chatID, "telegram")
-			b.send(chatID, "Conversation reset.")
-		}
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		b.send(chatID, "Conversation reset.")
 	default:
 		b.handleText(chatID, text)
 	}
@@ -207,7 +207,7 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		if rest, ok := strings.CutPrefix(data, "status:page:"); ok {
 			var page int
 			fmt.Sscanf(rest, "%d", &page)
-			b.handleStatus(chatID, fmt.Sprintf("/status %d", page))
+			b.handleStatus(chatID)
 			return
 		}
 		if connIDStr, ok := strings.CutPrefix(data, "connection:delete:"); ok {
@@ -381,6 +381,62 @@ func (b *Bot) handleText(chatID int64, text string) {
 			log.Printf("[await_branch_confirm] Failed to persist branch: %v", err)
 		}
 		b.continueIssueProcessing(chatID, issueURL, gitToken, chosenBranch)
+	case "await_logs":
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		var jobID int64
+		fmt.Sscanf(text, "%d", &jobID)
+		if jobID == 0 {
+			b.send(chatID, "Invalid job ID. Use /logs to try again.")
+			return
+		}
+		b.showLogs(chatID, jobID)
+	case "await_retry":
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		var jobID int64
+		fmt.Sscanf(text, "%d", &jobID)
+		if jobID == 0 {
+			b.send(chatID, "Invalid job ID. Use /retry to try again.")
+			return
+		}
+		b.retryJob(chatID, jobID)
+	case "await_done":
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		if strings.TrimSpace(text) == "all" {
+			b.doneAll(chatID)
+			return
+		}
+		var jobID int64
+		fmt.Sscanf(text, "%d", &jobID)
+		if jobID == 0 {
+			b.send(chatID, "Invalid job ID. Use /done to try again.")
+			return
+		}
+		b.doneJob(chatID, jobID)
+	case "await_followup_id":
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		var jobID int64
+		fmt.Sscanf(text, "%d", &jobID)
+		if jobID == 0 {
+			b.send(chatID, "Invalid job ID. Use /followup to try again.")
+			return
+		}
+		b.startFollowUp(chatID, jobID)
+	case "await_cancel":
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		var jobID int64
+		fmt.Sscanf(text, "%d", &jobID)
+		if jobID == 0 {
+			b.send(chatID, "Invalid job ID. Use /cancel to try again.")
+			return
+		}
+		b.handleCancelJob(chatID, jobID)
+	case "await_issues_filter":
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		filterStatus := strings.ToLower(strings.TrimSpace(text))
+		if filterStatus == "" {
+			filterStatus = "open"
+		}
+		b.showIssues(chatID, filterStatus)
 	}
 }
 
