@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What Akama Is
 
-Akama is a Go CLI that acts as an AI coding agent orchestration system. A Telegram bot receives commands, fetches issues from GitHub/GitLab, runs `claude` or `opencode` locally to fix them in a cloned workspace, pushes a branch, creates a PR/MR, and notifies the user via Telegram.
+Akama is a Go CLI that acts as a coding agent orchestration system. A Telegram bot receives commands, fetches issues from GitHub/GitLab, runs `claude` or `opencode` locally to fix them in a cloned workspace, pushes a branch, creates a PR/MR, and notifies the user via Telegram.
 
 ## Build and Run
 
@@ -57,7 +57,7 @@ Telegram update
 - `/connect` — OAuth device flow (GitHub or GitLab inline button)
 - `/connections` — list saved repo connections
 - `/disconnect` — delete all connections for this chat
-- `/config` — inline keyboard to set git name, email, and AI model (model list from `agent.FetchModels`, paginated)
+- `/config` — inline keyboard to set git name, email, and model (model list from `agent.FetchModels`, paginated)
 - `/newissue` — pick a connected repo, then send issue title + body; bot creates the issue and immediately starts a job
 - `/issues` — list jobs with status `pr_created`
 - `/queue` — list jobs with status `pending` or `running`

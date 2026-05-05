@@ -11,7 +11,7 @@
   <a href="CODE_OF_CONDUCT.md"><img src="https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa" alt="Code of Conduct"></a>
 </p>
 
-Akama is an AI coding agent orchestration system controlled via Telegram. Send it a GitHub or GitLab issue URL — Akama clones the repo, runs an AI agent to fix the issue, pushes a branch, and opens a pull request, then notifies you when done.
+Akama is a coding agent orchestration system controlled via Telegram. Send it a GitHub or GitLab issue URL — Akama clones the repo, runs an agent to fix the issue, pushes a branch, and opens a pull request, then notifies you when done.
 
 ---
 
@@ -108,7 +108,7 @@ You will be prompted for:
 | Prompt              | Description                                                            |
 |---------------------|------------------------------------------------------------------------|
 | Telegram bot token  | Create a bot via [@BotFather](https://t.me/BotFather)                 |
-| AI agent            | `claude` (Anthropic API key) or `opencode` (OpenAI API key)           |
+| Agent             | `claude` (Anthropic API key) or `opencode` (OpenAI API key)           |
 | API key             | Key for the chosen agent                                               |
 | Workspace directory | Where repos are cloned — default: `~/.akama/workspaces`               |
 
@@ -163,11 +163,13 @@ Logs are written to `<log_dir>/logs/akama-YYYY-MM-DD.log`. Files are rotated dai
 | `/connect`    | Connect a GitHub or GitLab repository via OAuth  |
 | `/connections`| List saved repository connections                |
 | `/disconnect` | Remove all connections for this chat             |
-| `/config`     | Set git identity or override the AI model        |
+| `/config`     | Set git identity or override the model           |
 | `/newissue`   | Create a new issue and immediately start a job   |
 | `/issues`     | List jobs with a created PR                      |
+| `/queue`      | List jobs with status pending or running         |
 | `/status`     | Show the last 5 jobs                             |
 | `/done <id>`  | Mark a job done and clean up its workspace       |
+| `/retry <id>` | Reset a failed job to pending and requeue it     |
 | `/cancel`     | Reset conversation state to idle                 |
 
 **Fixing an issue:** paste a GitHub or GitLab issue URL into the chat while in `idle` state. Akama starts working on it immediately.

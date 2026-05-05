@@ -8,6 +8,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/jullury/akama/internal/agent"
+	"github.com/jullury/akama/internal/git"
 	"github.com/jullury/akama/internal/job"
 	"github.com/jullury/akama/internal/storage"
 )
@@ -278,7 +279,11 @@ func (b *Bot) handleStatus(chatID int64) {
 	var sb strings.Builder
 	sb.WriteString("Recent jobs:\n")
 	for _, j := range jobs {
-		sb.WriteString(fmt.Sprintf("- [#%d] %s - %s (%s)\n", j.ID, j.IssueTitle, j.Status, j.Provider))
+		repoDisplay := j.RepoURL
+		if owner, repo, err := git.OwnerRepo(j.RepoURL); err == nil {
+			repoDisplay = owner + "/" + repo
+		}
+		sb.WriteString(fmt.Sprintf("- [#%d] %s - %s - %s (%s)\n", j.ID, j.IssueTitle, repoDisplay, j.Status, j.Provider))
 	}
 	b.send(chatID, sb.String())
 }
