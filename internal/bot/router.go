@@ -34,6 +34,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	switch {
 	case strings.HasPrefix(text, "/start"):
 		b.handleStart(chatID)
+	case strings.HasPrefix(text, "/help"):
+		b.handleHelp(chatID)
 	case strings.HasPrefix(text, "/config"):
 		b.handleConfig(chatID)
 	case strings.HasPrefix(text, "/newissue"):
@@ -45,14 +47,25 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/disconnect"):
 		b.handleDisconnect(chatID)
 	case strings.HasPrefix(text, "/issues"):
-		b.handleIssues(chatID)
+		b.handleIssues(chatID, text)
+	case strings.HasPrefix(text, "/queue"):
+		b.handleQueue(chatID)
 	case strings.HasPrefix(text, "/status"):
 		b.handleStatus(chatID)
+	case strings.HasPrefix(text, "/logs"):
+		b.handleLogs(chatID, text)
+	case strings.HasPrefix(text, "/retry"):
+		b.handleRetry(chatID, text)
 	case strings.HasPrefix(text, "/done"):
 		b.handleDone(chatID, text)
 	case strings.HasPrefix(text, "/cancel"):
-		storage.ResetConversation(b.JobsDB, chatID, "telegram")
-		b.send(chatID, "Conversation reset.")
+		var jobID int64
+		if n, _ := fmt.Sscanf(text, "/cancel %d", &jobID); n == 1 && jobID != 0 {
+			b.handleCancelJob(chatID, jobID)
+		} else {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "Conversation reset.")
+		}
 	default:
 		b.handleText(chatID, text)
 	}

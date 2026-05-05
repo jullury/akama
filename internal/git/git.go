@@ -131,3 +131,13 @@ func OwnerRepo(repoURL string) (string, string, error) {
 	repo := parts[len(parts)-1]
 	return owner, repo, nil
 }
+
+// DiffStat returns a human-readable summary of changes since the previous commit.
+func DiffStat(repoPath string) string {
+	cmd := exec.Command("git", "-C", repoPath, "diff", "HEAD~1", "--stat", "--no-color")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
