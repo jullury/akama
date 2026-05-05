@@ -145,7 +145,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 				return
 			case <-ticker.C:
 				elapsed += 5
-				notify(bot, j.ChatID, fmt.Sprintf("⏳ [%s] Agent still working... (%d min elapsed)", j.Provider, elapsed))
+				notify(bot, j.ChatID, fmt.Sprintf("⏳ [%s] Agent still working... (%d min elapsed)", repoName, elapsed))
 			}
 		}
 	}()
