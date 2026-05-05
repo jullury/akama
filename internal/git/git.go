@@ -65,9 +65,12 @@ func CommitPush(repoPath, branchName, token, gitName, gitEmail, commitMsg string
 		}
 	}
 
-	// Refresh tracking ref so --force-with-lease has accurate remote state.
+	// Refresh the remote tracking ref so --force-with-lease has accurate state.
+	// Use an explicit refspec so refs/remotes/origin/<branch> is guaranteed to
+	// be updated (bare branch name may only write FETCH_HEAD on some git versions).
 	// Ignore error — branch may not exist on remote yet (first push).
-	fetchCmd := newCommand(repoPath, askpassPath, "git", "-C", repoPath, "fetch", "origin", branchName)
+	fetchCmd := newCommand(repoPath, askpassPath, "git", "-C", repoPath, "fetch", "origin",
+		"refs/heads/"+branchName+":refs/remotes/origin/"+branchName)
 	fetchCmd.CombinedOutput()
 
 	cmd := newCommand(repoPath, askpassPath, "git", "-C", repoPath, "push", "origin", branchName, "--force-with-lease")
