@@ -35,6 +35,18 @@ chmod +x akama-<os>-<arch>
 sudo mv akama-<os>-<arch> /usr/local/bin/akama
 ```
 
+## Agent Auto-Installation
+
+`opencode` and `claudecode` are automatically installed when first invoked, using the most appropriate method based on your system's available tools:
+
+| Installation Method | Required Dependency | When Used                          |
+|---------------------|--------------------|------------------------------------|
+| Homebrew            | `brew`             | macOS/Linux systems with Homebrew  |
+| npm                 | `npm` (Node.js)    | Systems with Node.js installed     |
+| curl                | `curl`             | Fallback for direct binary download|
+
+No manual setup of agents is required — Akama handles installation automatically.
+
 ## Setup
 
 Run the interactive setup wizard:
