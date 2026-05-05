@@ -290,10 +290,7 @@ func parseOpencodeOutput(output string) string {
 
 		// Skip step_start, step_finish, and other metadata events
 	}
-	if len(parts) > 0 {
-		return strings.TrimSpace(strings.Join(parts, "\n"))
-	}
-	return output
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func BuildPrompt(title, url, body string) string {

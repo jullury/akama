@@ -53,12 +53,7 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 
 	followUpText := agent.ParseOutput(j.Agent, followUpOutput)
 	if followUpText != "" {
-		outputMsg := followUpText
-		const maxFollowUpLen = 4000
-		if len(outputMsg) > maxFollowUpLen {
-			outputMsg = outputMsg[:maxFollowUpLen] + "\n...[truncated]"
-		}
-		notify(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:\n\n%s", j.Provider, outputMsg))
+		notifyChunked(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:", j.Provider), followUpText)
 	}
 
 	branchName := j.BranchName

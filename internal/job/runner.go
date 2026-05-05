@@ -172,13 +172,8 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		return
 	}
 
-	outputMsg := agentText
-	const maxAgentOutputLen = 4000
-	if len(outputMsg) > maxAgentOutputLen {
-		outputMsg = outputMsg[:maxAgentOutputLen] + "\n...[truncated]"
-	}
-	if outputMsg != "" {
-		notify(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:\n\n%s", j.Provider, outputMsg))
+	if agentText != "" {
+		notifyChunked(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:", j.Provider), agentText)
 	}
 
 	notify(bot, j.ChatID, fmt.Sprintf("📦 [%s] %s — committing and pushing changes...", j.Provider, repoName))
@@ -285,6 +280,37 @@ func pollCI(ctx context.Context, j *storage.Job, branch string, jobsDB *sql.DB, 
 
 func notify(bot *tgbotapi.BotAPI, chatID int64, text string) {
 	bot.Send(tgbotapi.NewMessage(chatID, text))
+}
+
+func notifyChunked(bot *tgbotapi.BotAPI, chatID int64, header, body string) {
+	const maxLen = 4000
+	prefix := header + "\n\n"
+	remaining := strings.TrimSpace(body)
+	first := true
+	for remaining != "" {
+		avail := maxLen
+		if first {
+			avail -= len(prefix)
+		}
+		var chunk string
+		if len(remaining) <= avail {
+			chunk = remaining
+			remaining = ""
+		} else {
+			cutAt := avail
+			if idx := strings.LastIndex(remaining[:cutAt], "\n"); idx > 0 {
+				cutAt = idx
+			}
+			chunk = remaining[:cutAt]
+			remaining = strings.TrimSpace(remaining[cutAt:])
+		}
+		text := chunk
+		if first {
+			text = prefix + chunk
+			first = false
+		}
+		notify(bot, chatID, text)
+	}
 }
 
 func failJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, workspacePath string) {
