@@ -5,21 +5,22 @@ import (
 )
 
 type Connection struct {
-	ID       int64
-	ChatID   int64
-	Provider string
-	RepoURL  string
-	GitToken string
+	ID            int64
+	ChatID        int64
+	Provider      string
+	RepoURL       string
+	GitToken      string
+	DefaultBranch string
 }
 
-func SaveConnection(db *sql.DB, chatID int64, provider, repoURL, gitToken string) error {
-	_, err := db.Exec(`INSERT INTO connections (chat_id, provider, repo_url, git_token) VALUES (?, ?, ?, ?)`,
-		chatID, provider, repoURL, gitToken)
+func SaveConnection(db *sql.DB, chatID int64, provider, repoURL, gitToken, defaultBranch string) error {
+	_, err := db.Exec(`INSERT INTO connections (chat_id, provider, repo_url, git_token, default_branch) VALUES (?, ?, ?, ?, ?)`,
+		chatID, provider, repoURL, gitToken, defaultBranch)
 	return err
 }
 
 func ListConnections(db *sql.DB, chatID int64) ([]*Connection, error) {
-	rows, err := db.Query(`SELECT id, chat_id, provider, repo_url, git_token FROM connections WHERE chat_id = ?`, chatID)
+	rows, err := db.Query(`SELECT id, chat_id, provider, repo_url, git_token, default_branch FROM connections WHERE chat_id = ?`, chatID)
 	if err != nil {
 		return nil, err
 	}
@@ -27,7 +28,7 @@ func ListConnections(db *sql.DB, chatID int64) ([]*Connection, error) {
 	var conns []*Connection
 	for rows.Next() {
 		c := &Connection{}
-		err := rows.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken)
+		err := rows.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken, &c.DefaultBranch)
 		if err != nil {
 			return nil, err
 		}
@@ -42,9 +43,9 @@ func DeleteAllConnections(db *sql.DB, chatID int64) error {
 }
 
 func GetConnectionByID(db *sql.DB, id int64) (*Connection, error) {
-	row := db.QueryRow(`SELECT id, chat_id, provider, repo_url, git_token FROM connections WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT id, chat_id, provider, repo_url, git_token, default_branch FROM connections WHERE id = ?`, id)
 	c := &Connection{}
-	err := row.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken)
+	err := row.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken, &c.DefaultBranch)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -52,10 +53,10 @@ func GetConnectionByID(db *sql.DB, id int64) (*Connection, error) {
 }
 
 func FindConnectionByRepo(db *sql.DB, chatID int64, repoURL string) (*Connection, error) {
-	row := db.QueryRow(`SELECT id, chat_id, provider, repo_url, git_token FROM connections WHERE chat_id = ? AND repo_url = ?`,
+	row := db.QueryRow(`SELECT id, chat_id, provider, repo_url, git_token, default_branch FROM connections WHERE chat_id = ? AND repo_url = ?`,
 		chatID, repoURL)
 	c := &Connection{}
-	err := row.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken)
+	err := row.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken, &c.DefaultBranch)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

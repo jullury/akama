@@ -25,3 +25,20 @@ func GetCIStatus(repoURL, token, branch, providerName string) (CIStatus, error) 
 	}
 	return CIStatus{State: "none"}, nil
 }
+
+// GetDefaultBranch returns the default branch for the given repository.
+// Falls back to "main" if the provider is unknown or the API call fails.
+func GetDefaultBranch(repoURL, token, providerName string) string {
+	var branch string
+	var err error
+	switch providerName {
+	case "github":
+		branch, err = GetGitHubDefaultBranch(repoURL, token)
+	case "gitlab":
+		branch, err = GetGitLabDefaultBranch(repoURL, token)
+	}
+	if err != nil || branch == "" {
+		return "main"
+	}
+	return branch
+}

@@ -25,28 +25,31 @@ type Job struct {
 	NotificationMsgID int64
 	ErrorMsg          string
 	AgentOutput       string
+	DefaultBranch     string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
 
 func CreateJob(db *sql.DB, j *Job) (int64, error) {
 	res, err := db.Exec(`
-		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, j.GitToken, j.Agent, j.AgentModel)
+		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, default_branch)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, j.GitToken, j.Agent, j.AgentModel, j.DefaultBranch)
 	if err != nil {
 		return 0, fmt.Errorf("create job: %w", err)
 	}
 	return res.LastInsertId()
 }
 
+const jobColumns = `id, chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, status, workspace_path, branch_name, pr_url, notification_msg_id, error_msg, agent_output, default_branch, created_at, updated_at`
+
 func GetJob(db *sql.DB, id int64) (*Job, error) {
-	row := db.QueryRow(`SELECT * FROM jobs WHERE id = ?`, id)
+	row := db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE id = ?`, id)
 	return scanJob(row)
 }
 
 func GetJobByNotifMsgID(db *sql.DB, notifMsgID int64) (*Job, error) {
-	row := db.QueryRow(`SELECT * FROM jobs WHERE notification_msg_id = ?`, notifMsgID)
+	row := db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE notification_msg_id = ?`, notifMsgID)
 	return scanJob(row)
 }
 
@@ -56,7 +59,7 @@ func scanJob(row *sql.Row) (*Job, error) {
 	err := row.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 		&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 		&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-		&j.AgentOutput, &createdAt, &updatedAt)
+		&j.AgentOutput, &j.DefaultBranch, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -92,11 +95,16 @@ func RecoverInterruptedJobs(db *sql.DB) error {
 		}
 	}
 	_, err = db.Exec(`UPDATE jobs SET status = 'failed', error_msg = 'interrupted by daemon restart', updated_at = CURRENT_TIMESTAMP WHERE status IN ('running','awaiting_input')`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Reset conversations stuck in await_branch_confirm (no job created yet)
+	db.Exec(`UPDATE conversations SET state = 'idle', data = '{}', updated_at = CURRENT_TIMESTAMP WHERE state = 'await_branch_confirm'`)
+	return nil
 }
 
 func FindActiveJobByIssue(db *sql.DB, chatID int64, issueURL string) *Job {
-	row := db.QueryRow(`SELECT * FROM jobs WHERE chat_id = ? AND issue_url = ? AND status IN ('pending','running','awaiting_input') ORDER BY created_at DESC LIMIT 1`,
+	row := db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE chat_id = ? AND issue_url = ? AND status IN ('pending','running','awaiting_input') ORDER BY created_at DESC LIMIT 1`,
 		chatID, issueURL)
 	j, _ := scanJob(row)
 	return j
@@ -131,6 +139,12 @@ func SetJobNotifMsgID(db *sql.DB, id int64, msgID int64) error {
 	return err
 }
 
+func CountJobsByRepo(db *sql.DB, chatID int64, repoURL string) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE chat_id = ? AND repo_url = ?`, chatID, repoURL).Scan(&count)
+	return count, err
+}
+
 func CountActiveJobs(db *sql.DB) (int, error) {
 	row := db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running', 'updating')`)
 	var count int
@@ -139,7 +153,7 @@ func CountActiveJobs(db *sql.DB) (int, error) {
 }
 
 func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
-	rows, err := db.Query(`SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?`, chatID, limit)
+	rows, err := db.Query(`SELECT `+jobColumns+` FROM jobs WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?`, chatID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +165,7 @@ func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &createdAt, &updatedAt)
+			&j.AgentOutput, &j.DefaultBranch, &createdAt, &updatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -163,7 +177,7 @@ func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
 }
 
 func ListJobs(db *sql.DB, limit int) ([]*Job, error) {
-	rows, err := db.Query(`SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
+	rows, err := db.Query(`SELECT `+jobColumns+` FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +189,7 @@ func ListJobs(db *sql.DB, limit int) ([]*Job, error) {
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &createdAt, &updatedAt)
+			&j.AgentOutput, &j.DefaultBranch, &createdAt, &updatedAt)
 		if err != nil {
 			return nil, err
 		}
