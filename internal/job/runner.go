@@ -172,6 +172,15 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		return
 	}
 
+	outputMsg := agentText
+	const maxAgentOutputLen = 4000
+	if len(outputMsg) > maxAgentOutputLen {
+		outputMsg = outputMsg[:maxAgentOutputLen] + "\n...[truncated]"
+	}
+	if outputMsg != "" {
+		notify(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:\n\n%s", j.Provider, outputMsg))
+	}
+
 	notify(bot, j.ChatID, fmt.Sprintf("📦 [%s] %s — committing and pushing changes...", j.Provider, repoName))
 
 	commitMsg, prBody := agent.GenerateSummary(ctx, j.Agent, j.AgentModel, workspacePath, j.IssueURL, agentCfg)
