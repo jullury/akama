@@ -93,7 +93,7 @@ download:
 	fmt.Println("Update installed successfully")
 
 	fmt.Println("Starting daemon...")
-	pid, err := daemon.ForkDaemon(cfg.LogPath)
+	pid, err := daemon.ForkDaemon()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
 		os.Exit(1)

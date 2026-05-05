@@ -29,7 +29,7 @@ func runRestart(cmd *cobra.Command, args []string) {
 
 	if !daemon.IsRunning(cfg.PIDPath) {
 		fmt.Println("akama is not running, starting fresh...")
-		pid, err := daemon.ForkDaemon(cfg.LogPath)
+		pid, err := daemon.ForkDaemon()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
 			os.Exit(1)
@@ -61,7 +61,7 @@ func runRestart(cmd *cobra.Command, args []string) {
 
 start:
 	fmt.Println("Starting daemon...")
-	pid, err := daemon.ForkDaemon(cfg.LogPath)
+	pid, err := daemon.ForkDaemon()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
 		os.Exit(1)
