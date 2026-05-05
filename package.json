@@ -5,6 +5,17 @@
   "scripts": {
     "semantic-release": "semantic-release"
   },
+  "release": {
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      "@semantic-release/changelog",
+      "@semantic-release/git",
+      ["@semantic-release/github", {
+        "assets": ["akama-*"]
+      }]
+    ]
+  },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",

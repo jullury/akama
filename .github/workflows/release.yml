@@ -52,24 +52,25 @@ jobs:
           path: akama-${{ matrix.goos }}-${{ matrix.goarch }}
 
   release:
-    name: Create GitHub Release
+    name: Release
     needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Generate version tag
-        id: version
-        run: echo "tag=v$(date +'%Y.%m.%d')" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
 
-      - name: Create or update release
-        uses: softprops/action-gh-release@v2
+      - uses: actions/setup-node@v4
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          files: akama-*
-          generate_release_notes: true
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run semantic-release
