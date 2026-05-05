@@ -1,3 +1,10 @@
+## [1.8.2](https://github.com/jullury/akama/compare/v1.8.1...v1.8.2) (2026-05-05)
+
+
+### Bug Fixes
+
+* use repo name instead of provider in agent progress notification ([1817660](https://github.com/jullury/akama/commit/1817660564fe58ce73d822343c98aa17a8192b3e))
+
 ## [1.8.1](https://github.com/jullury/akama/compare/v1.8.0...v1.8.1) (2026-05-05)
 
 
