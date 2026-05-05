@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/jullury/akama/compare/v1.0.0...v1.1.0) (2026-05-05)
+
+
+### Features
+
+* add log rotation and enhance logs command with follow/all flags ([4ac22b9](https://github.com/jullury/akama/commit/4ac22b9084e16d1c11e85ffb9ee28b4948ce2e78))
+
 # 1.0.0 (2026-05-05)
 
 
