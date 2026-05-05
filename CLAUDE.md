@@ -117,8 +117,10 @@ router.handleReply / handleText(await_agent_input)
 4. Raw agent output is saved to `jobs.agent_output` for debugging
 
 **Agent execution**:
+- Agent providers are registered via a registry pattern in `internal/agent/runner.go` — `agent.Register()` adds providers, `agent.Get()` retrieves them
+- Built-in providers: `claude` and `opencode`; new providers just need to implement `agent.AgentRunner` interface and call `agent.Register()`
 - `claude`: `claude -p <promptFile> --dangerously-skip-permissions --output-format json` — outputs a single JSON envelope `{"result":"..."}`
-- `opencode`: reads prompt file content, passes as message string arg with `--dir <workspacePath> --dangerously-skip-permissions --format json` — outputs NDJSON event stream; `agent.ParseOutput` collects text from `"text"` events and `message.content[].text` blocks; opencode exits 0 on API errors, so `extractOpencodeError` scans for `{"type":"api_error"}` events
+- `opencode`: reads prompt file content, passes as message string arg with `--dir <workspacePath> --dangerously-skip-permissions --format json` — outputs NDJSON event stream; exits 0 on API errors, so `extractOpencodeError` scans for `{"type":"api_error"}` events
 - Both use `exec.CommandContext` so the subprocess is killed when the daemon context is cancelled (SIGTERM) or the per-job timeout (`agent_timeout_mins`, default 30) expires.
 
 **Question detection**: `agent.IsQuestion(text)` returns true when the last non-empty line of agent output ends with `?`. This is the only signal used to enter `awaiting_input` state.
@@ -138,9 +140,10 @@ router.handleReply / handleText(await_agent_input)
 
 ```yaml
 telegram_token: ""
-anthropic_api_key: ""
-openai_api_key: ""
-default_agent: "claude"          # claude | opencode
+api_keys:
+  anthropic: ""
+  openai: ""
+default_agent: "claude"          # registered agent name (claude, opencode, or any newly added provider)
 default_model: ""
 agent_timeout_mins: 30           # kill agent subprocess after this many minutes
 workspace_dir: "~/.akama/workspaces"
@@ -150,6 +153,8 @@ pid_path:       "~/.akama/akama.pid"
 ```
 
 OAuth client IDs/secrets are **not** in config.yaml — they are baked in at build time via `make build` from `.env`.
+
+API keys are stored in the `api_keys` map (keyed by provider name like `anthropic`, `openai`). The `make build` process bakes in OAuth credentials, while API keys are set via `akama init` or edited directly in config.yaml.
 
 ## Logging
 

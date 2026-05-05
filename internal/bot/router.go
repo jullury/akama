@@ -85,9 +85,8 @@ func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
 
 	if j.Status == "pr_created" || j.Status == "updating" || j.Status == "awaiting_input" {
 		agentCfg := &agent.Config{
-			AnthropicAPIKey: b.Config.AnthropicAPIKey,
-			OpenAIAPIKey:    b.Config.OpenAIAPIKey,
-			TimeoutMins:     b.Config.AgentTimeoutMins,
+			APIKeys:      b.Config.APIKeys,
+			TimeoutMins:   b.Config.AgentTimeoutMins,
 		}
 		go job.RunFollowUp(b.ctx, j.ID, msg.Text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, fmt.Sprintf("[%s] Updating...", j.Provider))
@@ -269,9 +268,8 @@ func (b *Bot) handleText(chatID int64, text string) {
 		jobID := int64(jobIDFloat)
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		agentCfg := &agent.Config{
-			AnthropicAPIKey: b.Config.AnthropicAPIKey,
-			OpenAIAPIKey:    b.Config.OpenAIAPIKey,
-			TimeoutMins:     b.Config.AgentTimeoutMins,
+			APIKeys:      b.Config.APIKeys,
+			TimeoutMins:   b.Config.AgentTimeoutMins,
 		}
 		go job.RunFollowUp(b.ctx, jobID, text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, "Got it, continuing work on the issue...")
@@ -386,9 +384,8 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 	}
 
 	agentCfg := &agent.Config{
-		AnthropicAPIKey: b.Config.AnthropicAPIKey,
-		OpenAIAPIKey:    b.Config.OpenAIAPIKey,
-		TimeoutMins:     b.Config.AgentTimeoutMins,
+		APIKeys:      b.Config.APIKeys,
+		TimeoutMins:   b.Config.AgentTimeoutMins,
 	}
 	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
 }

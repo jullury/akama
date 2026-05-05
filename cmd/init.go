@@ -49,12 +49,18 @@ func runInit(cmd *cobra.Command, args []string) {
 
 	fmt.Print("Anthropic API key (required for claude): ")
 	key, _ := term.ReadPassword(int(os.Stdin.Fd()))
-	cfg.AnthropicAPIKey = strings.TrimSpace(string(key))
+	keyStr := strings.TrimSpace(string(key))
+	if keyStr != "" {
+		cfg.SetAPIKey("anthropic", keyStr)
+	}
 	fmt.Println()
 
 	fmt.Print("OpenAI API key (optional, for opencode): ")
 	key, _ = term.ReadPassword(int(os.Stdin.Fd()))
-	cfg.OpenAIAPIKey = strings.TrimSpace(string(key))
+	keyStr = strings.TrimSpace(string(key))
+	if keyStr != "" {
+		cfg.SetAPIKey("openai", keyStr)
+	}
 	fmt.Println()
 
 	fmt.Print("Default agent [claude/opencode] (default: claude): ")
@@ -65,7 +71,12 @@ func runInit(cmd *cobra.Command, args []string) {
 	}
 	cfg.DefaultAgent = agent
 
-	installAgents()
+	switch agent {
+	case "opencode":
+		installOpencode()
+	default:
+		installClaude()
+	}
 
 	fmt.Print("Workspace directory (default ~/.akama/workspaces): ")
 	var ws string
@@ -98,11 +109,6 @@ func runInit(cmd *cobra.Command, args []string) {
 	db.Close()
 
 	fmt.Println("Config saved. Run `akama start` to start the bot.")
-}
-
-func installAgents() {
-	installClaude()
-	installOpencode()
 }
 
 func installClaude() {

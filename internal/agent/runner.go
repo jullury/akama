@@ -9,49 +9,79 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Config struct {
-	AnthropicAPIKey string
-	OpenAIAPIKey    string
-	TimeoutMins     int
+	APIKeys    map[string]string
+	TimeoutMins int
+}
+
+// AgentRunner defines the interface for executing a provider command.
+type AgentRunner interface {
+	Name() string
+	Run(ctx context.Context, model, workspacePath, promptPath string, cfg *Config) (string, error)
+	FetchModels() []string
+	ParseOutput(output string) string
+}
+
+var (
+	registry   = make(map[string]AgentRunner)
+	registryMu sync.RWMutex
+)
+
+// Register adds a provider implementation to the registry.
+func Register(r AgentRunner) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	registry[r.Name()] = r
+}
+
+// Get retrieves a provider by name; returns nil if not found.
+func Get(name string) AgentRunner {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	return registry[name]
+}
+
+// List returns the names of all registered providers.
+func List() []string {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	names := make([]string, 0, len(registry))
+	for n := range registry {
+		names = append(names, n)
+	}
+	return names
 }
 
 func Run(ctx context.Context, agentName, model, workspacePath, promptPath string, cfg *Config) (string, error) {
+	r := Get(agentName)
+	if r == nil {
+		return "", fmt.Errorf("unknown agent: %s", agentName)
+	}
 	if cfg.TimeoutMins > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(cfg.TimeoutMins)*time.Minute)
 		defer cancel()
 	}
+	return r.Run(ctx, model, workspacePath, promptPath, cfg)
+}
 
-	var cmd *exec.Cmd
+// claudeRunner implements AgentRunner for the claude CLI.
+type claudeRunner struct{}
 
-	switch agentName {
-	case "claude":
-		args := []string{"-p", promptPath, "--dangerously-skip-permissions", "--output-format", "json"}
-		cmd = exec.CommandContext(ctx, "claude", args...)
-	case "opencode":
-		promptContent, readErr := os.ReadFile(promptPath)
-		if readErr != nil {
-			return "", fmt.Errorf("read prompt: %w", readErr)
-		}
-		args := []string{"run", string(promptContent), "--dir", workspacePath, "--dangerously-skip-permissions", "--format", "json"}
-		if model != "" {
-			args = append(args, "-m", model)
-		}
-		cmd = exec.CommandContext(ctx, "opencode", args...)
-	default:
-		return "", fmt.Errorf("unknown agent: %s", agentName)
-	}
+func (r *claudeRunner) Name() string { return "claude" }
+
+func (r *claudeRunner) Run(ctx context.Context, model, workspacePath, promptPath string, cfg *Config) (string, error) {
+	args := []string{"-p", promptPath, "--dangerously-skip-permissions", "--output-format", "json"}
+	cmd := exec.CommandContext(ctx, "claude", args...)
 
 	cmd.Dir = workspacePath
 	cmd.Env = os.Environ()
-	if cfg.AnthropicAPIKey != "" {
-		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+cfg.AnthropicAPIKey)
-	}
-	if cfg.OpenAIAPIKey != "" {
-		cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+cfg.OpenAIAPIKey)
+	if key, ok := cfg.APIKeys["anthropic"]; ok && key != "" {
+		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+key)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -60,30 +90,105 @@ func Run(ctx context.Context, agentName, model, workspacePath, promptPath string
 
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return "", fmt.Errorf("agent %s cancelled: %w", agentName, ctx.Err())
+			return "", fmt.Errorf("agent claude cancelled: %w", ctx.Err())
 		}
-		return "", fmt.Errorf("agent %s failed: %w\nstderr: %s", agentName, err, stderr.String())
+		return "", fmt.Errorf("agent claude failed: %w\nstderr: %s", err, stderr.String())
+	}
+	return stdout.String() + stderr.String(), nil
+}
+
+func (r *claudeRunner) FetchModels() []string {
+	cmd := exec.Command("claude", "-p", "/model", "--output-format", "text")
+	out, err := cmd.Output()
+	if err == nil {
+		if models := parseModelLines(string(out)); len(models) > 0 {
+			return models
+		}
+	}
+	return []string{"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"}
+}
+
+func (r *claudeRunner) ParseOutput(output string) string {
+	output = strings.TrimSpace(output)
+	var envelope struct {
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(output), &envelope); err == nil && envelope.Result != "" {
+		return strings.TrimSpace(envelope.Result)
+	}
+	return output
+}
+
+// opencodeRunner implements AgentRunner for the opencode CLI.
+type opencodeRunner struct{}
+
+func (r *opencodeRunner) Name() string { return "opencode" }
+
+func (r *opencodeRunner) Run(ctx context.Context, model, workspacePath, promptPath string, cfg *Config) (string, error) {
+	promptContent, readErr := os.ReadFile(promptPath)
+	if readErr != nil {
+		return "", fmt.Errorf("read prompt: %w", readErr)
+	}
+
+	args := []string{"run", string(promptContent), "--dir", workspacePath, "--dangerously-skip-permissions", "--format", "json"}
+	if model != "" {
+		args = append(args, "-m", model)
+	}
+	cmd := exec.CommandContext(ctx, "opencode", args...)
+
+	cmd.Dir = workspacePath
+	cmd.Env = os.Environ()
+	if key, ok := cfg.APIKeys["anthropic"]; ok && key != "" {
+		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+key)
+	}
+	if key, ok := cfg.APIKeys["openai"]; ok && key != "" {
+		cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+key)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("agent opencode cancelled: %w", ctx.Err())
+		}
+		return "", fmt.Errorf("agent opencode failed: %w\nstderr: %s", err, stderr.String())
 	}
 
 	out := stdout.String() + stderr.String()
-
-	// opencode exits 0 even on API/network errors — check the event stream.
-	if agentName == "opencode" {
-		if err := extractOpencodeError(out); err != nil {
-			return "", err
-		}
+	if err := extractOpencodeError(out); err != nil {
+		return "", err
 	}
-
 	return out, nil
 }
 
+func (r *opencodeRunner) FetchModels() []string {
+	cmd := exec.Command("opencode", "models")
+	out, err := cmd.Output()
+	if err == nil {
+		if models := parseModelLines(string(out)); len(models) > 0 {
+			return models
+		}
+	}
+	return []string{
+		"anthropic/claude-sonnet-4-6",
+		"anthropic/claude-haiku-4-5",
+		"openai/gpt-4o",
+		"openai/gpt-4o-mini",
+	}
+}
+
+func (r *opencodeRunner) ParseOutput(output string) string {
+	return parseOpencodeOutput(output)
+}
+
 // extractOpencodeError scans opencode's NDJSON output for error events.
-// opencode exits 0 on network/API failures but emits {"type":"api_error",...}.
 func extractOpencodeError(output string) error {
 	var msgs []string
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || line[0] != '{' {
+		if line == "" || len(line) == 0 || line[0] != '{' {
 			continue
 		}
 		var evt struct {
@@ -109,6 +214,45 @@ func extractOpencodeError(output string) error {
 		return fmt.Errorf("opencode: %s", strings.Join(msgs, "; "))
 	}
 	return nil
+}
+
+// parseOpencodeOutput extracts text from opencode's NDJSON event stream.
+func parseOpencodeOutput(output string) string {
+	output = strings.TrimSpace(output)
+	var parts []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var textEvt struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(line), &textEvt); err == nil && textEvt.Text != "" {
+			parts = append(parts, textEvt.Text)
+			continue
+		}
+		var msgEvt struct {
+			Message struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &msgEvt); err == nil {
+			for _, c := range msgEvt.Message.Content {
+				if c.Type == "text" && c.Text != "" {
+					parts = append(parts, c.Text)
+				}
+			}
+		}
+	}
+	if len(parts) > 0 {
+		return strings.TrimSpace(strings.Join(parts, "\n"))
+	}
+	return output
 }
 
 func BuildPrompt(title, url, body string) string {
@@ -173,7 +317,7 @@ PR_DESCRIPTION: <2-3 sentences describing what changed and why, no mention of AI
 		return "fix: apply changes", fmt.Sprintf("Fixes %s", issueURL)
 	}
 
-	text := ParseOutput(output)
+	text := ParseOutput(agentName, output)
 	for _, line := range strings.Split(text, "\n") {
 		if msg, ok := strings.CutPrefix(line, "COMMIT_MESSAGE:"); ok {
 			commitMsg = truncate(strings.TrimSpace(msg), 72)
@@ -251,43 +395,13 @@ func slugify(s string) string {
 	return strings.TrimRight(b.String(), "-")
 }
 
-// FetchModels returns the available models for the given agent by running its
-// listing command. Falls back to hardcoded defaults if the command fails.
+// FetchModels returns the available models for the given agent.
 func FetchModels(agentName string) []string {
-	switch agentName {
-	case "claude":
-		return fetchClaudeModels()
-	case "opencode":
-		return fetchOpencodeModels()
+	r := Get(agentName)
+	if r == nil {
+		return nil
 	}
-	return nil
-}
-
-func fetchClaudeModels() []string {
-	cmd := exec.Command("claude", "-p", "/model", "--output-format", "text")
-	out, err := cmd.Output()
-	if err == nil {
-		if models := parseModelLines(string(out)); len(models) > 0 {
-			return models
-		}
-	}
-	return []string{"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"}
-}
-
-func fetchOpencodeModels() []string {
-	cmd := exec.Command("opencode", "models")
-	out, err := cmd.Output()
-	if err == nil {
-		if models := parseModelLines(string(out)); len(models) > 0 {
-			return models
-		}
-	}
-	return []string{
-		"anthropic/claude-sonnet-4-6",
-		"anthropic/claude-haiku-4-5",
-		"openai/gpt-4o",
-		"openai/gpt-4o-mini",
-	}
+	return r.FetchModels()
 }
 
 func parseModelLines(output string) []string {
@@ -322,7 +436,7 @@ func gitDiff(workspacePath string) string {
 // BuildCommitMessage extracts the COMMIT_MESSAGE line the agent was asked to produce.
 // Searches both decoded text (newlines) and raw output (JSON-encoded \n sequences).
 // Falls back to the first non-JSON, non-markdown line, then to a generic message.
-func BuildCommitMessage(text string) string {
+func BuildCommitMessage(agentName, text string) string {
 	// Pass 1: clean decoded text — look for COMMIT_MESSAGE: at line start
 	for _, line := range strings.Split(text, "\n") {
 		if msg, ok := strings.CutPrefix(line, "COMMIT_MESSAGE:"); ok {
@@ -366,53 +480,11 @@ func truncate(s string, max int) string {
 }
 
 // ParseOutput extracts the human-readable text from agent output.
-// Handles claude's single JSON envelope and opencode's NDJSON event stream.
-func ParseOutput(output string) string {
-	output = strings.TrimSpace(output)
-
-	// Claude: single JSON object {"type":"result","result":"..."}
-	var envelope struct {
-		Result string `json:"result"`
-	}
-	if err := json.Unmarshal([]byte(output), &envelope); err == nil && envelope.Result != "" {
-		return strings.TrimSpace(envelope.Result)
-	}
-
-	// Opencode: NDJSON stream — collect text from assistant/text events
-	var parts []string
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || line[0] != '{' {
-			continue
-		}
-		// Top-level "text" field (simple text event)
-		var textEvt struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal([]byte(line), &textEvt); err == nil && textEvt.Text != "" {
-			parts = append(parts, textEvt.Text)
-			continue
-		}
-		// Nested message.content[].text (assistant message event)
-		var msgEvt struct {
-			Message struct {
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"message"`
-		}
-		if err := json.Unmarshal([]byte(line), &msgEvt); err == nil {
-			for _, c := range msgEvt.Message.Content {
-				if c.Type == "text" && c.Text != "" {
-					parts = append(parts, c.Text)
-				}
-			}
-		}
-	}
-	if len(parts) > 0 {
-		return strings.TrimSpace(strings.Join(parts, "\n"))
+// Delegates to the specific agent's parser.
+func ParseOutput(agentName, output string) string {
+	r := Get(agentName)
+	if r != nil {
+		return r.ParseOutput(output)
 	}
 	return output
 }
@@ -436,4 +508,10 @@ func WritePrompt(workspacePath, content string) (string, error) {
 		return "", fmt.Errorf("write prompt: %w", err)
 	}
 	return promptPath, nil
+}
+
+// init registers the built-in agent providers.
+func init() {
+	Register(&claudeRunner{})
+	Register(&opencodeRunner{})
 }
