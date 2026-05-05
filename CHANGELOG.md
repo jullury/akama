@@ -1,3 +1,13 @@
+# [1.5.0](https://github.com/jullury/akama/compare/v1.4.0...v1.5.0) (2026-05-05)
+
+
+### Features
+
+* prompt branch confirmation on first issue per repo ([5c5612e](https://github.com/jullury/akama/commit/5c5612effd8ff7f2f3c480dfe6de3d0e7925abe9))
+* prompt branch confirmation on first issue per repo ([8e5f4ce](https://github.com/jullury/akama/commit/8e5f4ce7f7a61a69192779759f9efe97f0b7bf2c))
+* prompt branch confirmation on first issue per repo ([2c124bf](https://github.com/jullury/akama/commit/2c124bf21ff9ad1338864016371d4b545653bfbe))
+* store and use repo default branch for PR/MR creation ([0d8e557](https://github.com/jullury/akama/commit/0d8e5576e1de8f40b39b654f48d45eadd2d9368a))
+
 # [1.4.0](https://github.com/jullury/akama/compare/v1.3.0...v1.4.0) (2026-05-05)
 
 
