@@ -2,6 +2,7 @@ package provider
 
 import (
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -41,4 +42,27 @@ func GetDefaultBranch(repoURL, token, providerName string) string {
 		return "main"
 	}
 	return branch
+}
+
+// IsAuthError returns true when the error indicates an authentication failure.
+// Covers HTTP-level errors (401/403) and git-level auth failures.
+func IsAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	authPatterns := []string{
+		"401", "403",
+		"unauthorized", "forbidden",
+		"bad credentials", "token expired", "token revoked",
+		"authentication failed", "permission denied",
+		"could not read from remote", "access denied",
+		"invalid token", "token is invalid",
+	}
+	for _, p := range authPatterns {
+		if strings.Contains(strings.ToLower(msg), p) {
+			return true
+		}
+	}
+	return false
 }

@@ -22,6 +22,17 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 		return
 	}
 
+	// Refresh git token from connection so follow-ups pick up refreshed tokens.
+	if conn, err := storage.FindConnectionByRepo(jobsDB, j.ChatID, j.RepoURL); err == nil && conn != nil {
+		if conn.GitToken != j.GitToken {
+			log.Printf("[RunFollowUp] Refreshing token from connection for job %d", jobID)
+			j.GitToken = conn.GitToken
+			if err := storage.UpdateJobToken(jobsDB, jobID, conn.GitToken); err != nil {
+				log.Printf("[RunFollowUp] Failed to update job token: %v", err)
+			}
+		}
+	}
+
 	storage.SetJobStatus(jobsDB, jobID, "updating")
 
 	userCfg, err := storage.GetUserConfig(jobsDB, j.ChatID)
@@ -111,6 +122,17 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 
 func failFollowUp(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg string) {
 	storage.SetJobStatus(jobsDB, j.ID, "pr_created")
-	msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Follow-up failed: %s", errMsg))
-	bot.Send(msg)
+	// Check if the failure is auth-related and give specific guidance
+	if provider.IsAuthError(fmt.Errorf(errMsg)) {
+		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
+			"❌ Follow-up failed: authentication error.\n\n"+
+				"Your token for %s may have expired or been revoked.\n"+
+				"Use /connect to refresh your token, then reply to the PR message to try again.",
+			j.Provider,
+		))
+		bot.Send(msg)
+	} else {
+		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Follow-up failed: %s", errMsg))
+		bot.Send(msg)
+	}
 }

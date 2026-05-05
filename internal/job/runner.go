@@ -72,6 +72,17 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		return
 	}
 
+	// Refresh git token from connection so retried jobs pick up a refreshed token.
+	if conn, err := storage.FindConnectionByRepo(jobsDB, j.ChatID, j.RepoURL); err == nil && conn != nil {
+		if conn.GitToken != j.GitToken {
+			log.Printf("[runJob] Refreshing token from connection for job %d", jobID)
+			j.GitToken = conn.GitToken
+			if err := storage.UpdateJobToken(jobsDB, jobID, conn.GitToken); err != nil {
+				log.Printf("[runJob] Failed to update job token: %v", err)
+			}
+		}
+	}
+
 	userCfg, err := storage.GetUserConfig(jobsDB, j.ChatID)
 	if err != nil {
 		log.Printf("get user config: %v", err)
@@ -315,8 +326,19 @@ func notifyChunked(bot *tgbotapi.BotAPI, chatID int64, header, body string) {
 
 func failJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, workspacePath string) {
 	storage.SetJobFailed(jobsDB, j.ID, errMsg)
-	msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Job %d failed: %s\n\nUse /logs %d to view details.", j.ID, errMsg, j.ID))
-	bot.Send(msg)
+	// Check if the failure is auth-related and give specific guidance
+	if provider.IsAuthError(fmt.Errorf(errMsg)) {
+		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
+			"❌ Job %d failed: authentication error.\n\n"+
+				"Your token for %s may have expired or been revoked.\n"+
+				"Use /connect to refresh your token, then /retry %d to try again.",
+			j.ID, j.Provider, j.ID,
+		))
+		bot.Send(msg)
+	} else {
+		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Job %d failed: %s\n\nUse /logs %d to view details.", j.ID, errMsg, j.ID))
+		bot.Send(msg)
+	}
 	os.RemoveAll(workspacePath)
 }
 
