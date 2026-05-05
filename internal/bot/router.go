@@ -40,14 +40,14 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		b.handleConfig(chatID)
 	case strings.HasPrefix(text, "/newissue"):
 		b.handleNewIssue(chatID)
-	case strings.HasPrefix(text, "/connect"):
-		b.handleConnect(chatID)
 	case strings.HasPrefix(text, "/connections"):
 		b.handleConnections(chatID)
-	case strings.HasPrefix(text, "/disconnect"):
-		b.handleDisconnect(chatID)
 	case strings.HasPrefix(text, "/connection"):
 		b.handleConnection(chatID, text)
+	case strings.HasPrefix(text, "/connect"):
+		b.handleConnect(chatID)
+	case strings.HasPrefix(text, "/disconnect"):
+		b.handleDisconnect(chatID)
 	case strings.HasPrefix(text, "/issues"):
 		b.handleIssues(chatID, text)
 	case strings.HasPrefix(text, "/queue"):
