@@ -139,6 +139,12 @@ func SetJobNotifMsgID(db *sql.DB, id int64, msgID int64) error {
 	return err
 }
 
+func UpdateJobToken(db *sql.DB, id int64, token string) error {
+	_, err := db.Exec(`UPDATE jobs SET git_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		token, id)
+	return err
+}
+
 func CountJobsByRepo(db *sql.DB, chatID int64, repoURL string) (int, error) {
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE chat_id = ? AND repo_url = ?`, chatID, repoURL).Scan(&count)

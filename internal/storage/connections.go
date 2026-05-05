@@ -68,3 +68,9 @@ func FindConnectionByRepo(db *sql.DB, chatID int64, repoURL string) (*Connection
 	}
 	return c, err
 }
+
+func UpdateConnectionToken(db *sql.DB, chatID int64, repoURL, newToken string) error {
+	_, err := db.Exec(`UPDATE connections SET git_token = ? WHERE chat_id = ? AND repo_url = ?`,
+		newToken, chatID, repoURL)
+	return err
+}

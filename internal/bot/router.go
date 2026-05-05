@@ -236,6 +236,14 @@ func (b *Bot) handleText(chatID int64, text string) {
 			issueURL, err = provider.CreateGitLabIssue(repoURL, token, title, body)
 		}
 		if err != nil {
+			if provider.IsAuthError(err) {
+				b.send(chatID, fmt.Sprintf(
+					"❌ Authentication failed for %s. Your token may have expired or been revoked.\n\n"+
+						"Use /connect to refresh your token, then /newissue to try again.",
+					providerName,
+				))
+				return
+			}
 			b.send(chatID, fmt.Sprintf("Failed to create issue: %v", err))
 			return
 		}
@@ -290,13 +298,28 @@ func (b *Bot) handleText(chatID int64, text string) {
 		}
 		repoURL := extractRepoURL(strings.TrimSpace(text))
 		defaultBranch := provider.GetDefaultBranch(repoURL, token, providerName)
-		if err := storage.SaveConnection(b.JobsDB, chatID, providerName, repoURL, token, defaultBranch); err != nil {
-			log.Printf("save connection: %v", err)
-			b.send(chatID, "Failed to save connection. Please try again.")
-			return
+
+		// Update existing connection if one exists for this repo, otherwise create new.
+		existing, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, repoURL)
+		if existing != nil {
+			if err := storage.UpdateConnectionToken(b.JobsDB, chatID, repoURL, token); err != nil {
+				log.Printf("update connection token: %v", err)
+				b.send(chatID, "Failed to update connection. Please try again.")
+				return
+			}
+			if defaultBranch != "" {
+				storage.UpdateConnectionDefaultBranch(b.JobsDB, chatID, repoURL, defaultBranch)
+			}
+			b.send(chatID, fmt.Sprintf("✅ Token refreshed for %s! Send an issue URL to start a job.", repoURL))
+		} else {
+			if err := storage.SaveConnection(b.JobsDB, chatID, providerName, repoURL, token, defaultBranch); err != nil {
+				log.Printf("save connection: %v", err)
+				b.send(chatID, "Failed to save connection. Please try again.")
+				return
+			}
+			b.send(chatID, fmt.Sprintf("Connected! Send a %s issue URL to start a job.", providerName))
 		}
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
-		b.send(chatID, fmt.Sprintf("Connected! Send a %s issue URL to start a job.", providerName))
 	case "await_branch_confirm":
 		issueURL, _ := conv.Data["issue_url"].(string)
 		gitToken, _ := conv.Data["git_token"].(string)
@@ -403,6 +426,14 @@ func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultB
 	}
 
 	if err != nil {
+		if provider.IsAuthError(err) {
+			b.send(chatID, fmt.Sprintf(
+				"❌ Authentication failed for %s. Your token may have expired or been revoked.\n\n"+
+					"Use /connect to refresh your token for this repository.",
+				providerName,
+			))
+			return
+		}
 		b.send(chatID, fmt.Sprintf("Failed to fetch issue: %v", err))
 		return
 	}
