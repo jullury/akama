@@ -57,11 +57,13 @@ Telegram update
 - `/connect` — OAuth device flow (GitHub or GitLab inline button)
 - `/connections` — list saved repo connections
 - `/disconnect` — delete all connections for this chat
-- `/config` — inline keyboard to set git name, email, and AI model
+- `/config` — inline keyboard to set git name, email, and AI model (model list from `agent.FetchModels`, paginated)
 - `/newissue` — pick a connected repo, then send issue title + body; bot creates the issue and immediately starts a job
 - `/issues` — list jobs with status `pr_created`
+- `/queue` — list jobs with status `pending` or `running`
 - `/status` — show last 5 jobs
 - `/done <id>` — mark job done, clean up workspace
+- `/retry <id>` — reset a `failed` job to `pending` and requeue it
 - `/cancel` — reset conversation state to `idle`
 
 **`/connect` OAuth device flow:**
@@ -76,12 +78,13 @@ router.processIssue
   → FindActiveJobByIssue — block duplicate submissions
   → fetch issue title/body from provider API
   → storage.CreateJob
-  → job.Run(ctx, jobID, ...)           ← goroutine tracked by sync.WaitGroup
+  → job.Run(ctx, jobID, ...)           ← goroutine tracked by sync.WaitGroup + cancelFuncs map
         git.Clone (retry ×3)
         agent.Run(ctx, ...)            ← exec.CommandContext — killed on ctx cancel
+        heartbeat goroutine sends "still working..." every 5 min while agent runs
         if agent output ends with "?":
             SetJobAwaitingInput, set conversation state await_agent_input, return
-        git.CommitPush (retry ×3)
+        git.Commit + git.Push (retry ×3)
         provider.CreatePR/MR (retry ×3, handles "already exists")
         → Telegram notification with PR URL
         → storage.SetJobNotifMsgID     ← enables reply-threading
@@ -97,7 +100,7 @@ router.processIssue
 ```
 router.handleReply / handleText(await_agent_input)
   → job.RunFollowUp(ctx, jobID, userText, ...)
-        agent.Run → git.CommitPush
+        agent.Run → git.Commit + git.Push
         if status was awaiting_input: also CreatePR/MR
         → Telegram update with PR URL
 ```
@@ -122,6 +125,7 @@ router.handleReply / handleText(await_agent_input)
 - `claude`: `claude -p <promptFile> --dangerously-skip-permissions --output-format json` — outputs a single JSON envelope `{"result":"..."}`
 - `opencode`: reads prompt file content, passes as message string arg with `--dir <workspacePath> --dangerously-skip-permissions --format json` — outputs NDJSON event stream; exits 0 on API errors, so `extractOpencodeError` scans for `{"type":"api_error"}` events
 - Both use `exec.CommandContext` so the subprocess is killed when the daemon context is cancelled (SIGTERM) or the per-job timeout (`agent_timeout_mins`, default 30) expires.
+- `agent.FetchModels(name)` calls the provider's API to list available models; used to populate the paginated model picker in `/config`.
 
 **Question detection**: `agent.IsQuestion(text)` returns true when the last non-empty line of agent output ends with `?`. This is the only signal used to enter `awaiting_input` state.
 
@@ -129,12 +133,17 @@ router.handleReply / handleText(await_agent_input)
 
 **Daemon self-check**: `runDaemon()` calls `daemon.IsRunning(pidPath)` before writing its PID — prevents duplicate Telegram polling sessions (which cause `409 Conflict`).
 
+**Concurrency model**: Each job goroutine is registered in two structures: a `sync.WaitGroup` (for graceful shutdown) and a `cancelFuncs` map keyed by jobID (for per-job cancellation). On SIGTERM, the daemon context is cancelled, then `wg.Wait()` drains with a 30s hard timeout. `/cancel <id>` looks up the job's `CancelFunc` in the map and calls it directly. Message handlers are dispatched as goroutines; long-polling itself runs in the main goroutine of `RunCtx`.
+
+**Branch confirmation**: The first issue submitted for a given repo triggers the `await_branch_confirm` state — the bot asks the user to confirm or override the default branch before cloning. Subsequent issues for that repo skip this step and use the persisted default branch.
+
 **Conversation state machine** (`conversations` table, `data` column is JSON):
 - `idle` — default
 - `await_repo` — after OAuth approval; `data`: `{provider, token}`
 - `await_agent_input` — agent asked a question pre-commit; `data`: `{job_id}`
 - `await_config` — user tapped a `/config` inline button; `data`: `{field: "git_name"|"git_email"|"model"}`
 - `await_new_issue_title` / `await_new_issue_body` — `/newissue` multi-step flow; `data`: `{connection_id}`
+- `await_branch_confirm` — first job for a repo; bot asks user to confirm default branch; `data`: `{connection_id, branch}`
 
 ## Config (`~/.akama/config.yaml`)
 
@@ -154,7 +163,7 @@ pid_path:       "~/.akama/akama.pid"
 
 OAuth client IDs/secrets are **not** in config.yaml — they are baked in at build time via `make build` from `.env`.
 
-API keys are stored in the `api_keys` map (keyed by provider name like `anthropic`, `openai`). The `make build` process bakes in OAuth credentials, while API keys are set via `akama init` or edited directly in config.yaml.
+API keys are stored in the `api_keys` map (keyed by provider name like `anthropic`, `openai`). `config.Load` automatically migrates configs that still use the old flat `anthropic_api_key` / `openai_api_key` fields into the `api_keys` map on first load.
 
 ## Logging
 
@@ -183,3 +192,5 @@ Uses `github.com/go-telegram-bot-api/telegram-bot-api/v5`. Key v5 notes:
 ## Release / CI
 
 `.github/workflows/release.yml` runs semantic-release first (creates the git tag and GitHub release), then builds binaries with the version injected via `-X config.Version=$VERSION`, and uploads them to the release via `gh release upload`. Binaries are named `akama-<os>-<arch>`. The build matrix only runs when semantic-release actually cuts a new release.
+
+Commits must follow [Conventional Commits](https://www.conventionalcommits.org): `fix:` → patch, `feat:` → minor, `BREAKING CHANGE:` → major.
