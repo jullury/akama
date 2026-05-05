@@ -58,6 +58,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		b.handleRetry(chatID, text)
 	case strings.HasPrefix(text, "/done"):
 		b.handleDone(chatID, text)
+	case strings.HasPrefix(text, "/followup"):
+		b.handleFollowUp(chatID, text)
 	case strings.HasPrefix(text, "/cancel"):
 		var jobID int64
 		if n, _ := fmt.Sscanf(text, "/cancel %d", &jobID); n == 1 && jobID != 0 {
@@ -83,13 +85,15 @@ func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
 		return
 	}
 
-	if j.Status == "pr_created" || j.Status == "updating" || j.Status == "awaiting_input" {
+	if j.Status == "pr_created" {
 		agentCfg := &agent.Config{
 			APIKeys:      b.Config.APIKeys,
 			TimeoutMins:   b.Config.AgentTimeoutMins,
 		}
 		go job.RunFollowUp(b.ctx, j.ID, msg.Text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, fmt.Sprintf("[%s] Updating...", j.Provider))
+	} else {
+		b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created'. Current status: %s", j.Status))
 	}
 }
 
@@ -274,13 +278,32 @@ func (b *Bot) handleText(chatID int64, text string) {
 	case "await_agent_input":
 		jobIDFloat, _ := conv.Data["job_id"].(float64)
 		jobID := int64(jobIDFloat)
-		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		j, err := storage.GetJob(b.JobsDB, jobID)
+		if err != nil || j == nil {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "Job not found.")
+			return
+		}
+		if j.Status != "pr_created" {
+			b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created'. Current status: %s", j.Status))
+			return
+		}
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", conv.Data)
 		agentCfg := &agent.Config{
 			APIKeys:      b.Config.APIKeys,
 			TimeoutMins:   b.Config.AgentTimeoutMins,
 		}
 		go job.RunFollowUp(b.ctx, jobID, text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, "Got it, continuing work on the issue...")
+	case "await_followup":
+		jobIDFloat, _ := conv.Data["job_id"].(float64)
+		jobID := int64(jobIDFloat)
+		j, _ := storage.GetJob(b.JobsDB, jobID)
+		if j != nil && j.Status == "updating" {
+			b.send(chatID, "A follow-up is already in progress. Please wait for it to complete.")
+		} else {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		}
 	case "idle":
 		if isIssueURL(text) {
 			b.processIssue(chatID, text, "")

@@ -79,6 +79,7 @@ Jobs
 /cancel <id> — cancel a running job
 /done <id> — mark job done and clean up workspace
 /done all — clean up all completed and failed jobs
+/followup <id> — continue working on a job with status 'pr_created'
 
 Settings
 /config — set git name, email and AI model
@@ -411,4 +412,26 @@ func (b *Bot) handleDone(chatID int64, text string) {
 	storage.ResetConversation(b.JobsDB, chatID, "telegram")
 	os.RemoveAll(j.WorkspacePath)
 	b.send(chatID, fmt.Sprintf("Job %d marked as done. Workspace cleaned up.", jobID))
+}
+
+func (b *Bot) handleFollowUp(chatID int64, text string) {
+	var jobID int64
+	if n, _ := fmt.Sscanf(text, "/followup %d", &jobID); n == 0 || jobID == 0 {
+		b.send(chatID, "Usage: /followup <job_id>")
+		return
+	}
+
+	j, err := storage.GetJob(b.JobsDB, jobID)
+	if err != nil || j == nil || j.ChatID != chatID {
+		b.send(chatID, "Job not found.")
+		return
+	}
+
+	if j.Status != "pr_created" {
+		b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created'. Current status: %s", j.Status))
+		return
+	}
+
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", map[string]interface{}{"job_id": float64(jobID)})
+	b.send(chatID, fmt.Sprintf("Job #%d is ready for follow-up. Send your message to continue working on it.", jobID))
 }

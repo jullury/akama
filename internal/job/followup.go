@@ -108,31 +108,29 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 	}
 
 	storage.SetJobStatus(jobsDB, jobID, "pr_created")
-	msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("[%s] Updated — %s\n\nReply for more or /done %d", j.Provider, j.PRURL, jobID))
+	msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("[%s] Updated — %s\n\nReply to the PR message or use /followup %d for more changes.", j.Provider, j.PRURL, jobID))
 	sent, _ := bot.Send(msg)
 	if sent.MessageID != 0 {
 		storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
 	}
-
-	storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
-		map[string]interface{}{"job_id": jobID})
 
 	os.Remove(promptPath)
 }
 
 func failFollowUp(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg string) {
 	storage.SetJobStatus(jobsDB, j.ID, "pr_created")
+	storage.ResetConversation(jobsDB, j.ChatID, "telegram")
 	// Check if the failure is auth-related and give specific guidance
 	if provider.IsAuthError(fmt.Errorf(errMsg)) {
 		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
 			"❌ Follow-up failed: authentication error.\n\n"+
 				"Your token for %s may have expired or been revoked.\n"+
-				"Use /connect to refresh your token, then reply to the PR message to try again.",
-			j.Provider,
+				"Use /connect to refresh your token, then use /followup %d to try again.",
+			j.Provider, j.ID,
 		))
 		bot.Send(msg)
 	} else {
-		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Follow-up failed: %s", errMsg))
+		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Follow-up failed: %s\n\nUse /followup %d to try again.", errMsg, j.ID))
 		bot.Send(msg)
 	}
 }
