@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/jullury/akama/compare/v1.2.1...v1.3.0) (2026-05-05)
+
+
+### Features
+
+* **bot:** add /help, /queue, /logs, /retry, /cancel commands ([407941e](https://github.com/jullury/akama/commit/407941ee9b173352e5112a6c9819e10a12763d75))
+
 ## [1.2.1](https://github.com/jullury/akama/compare/v1.2.0...v1.2.1) (2026-05-05)
 
 
