@@ -46,6 +46,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		b.handleConnections(chatID)
 	case strings.HasPrefix(text, "/disconnect"):
 		b.handleDisconnect(chatID)
+	case strings.HasPrefix(text, "/connection"):
+		b.handleConnection(chatID, text)
 	case strings.HasPrefix(text, "/issues"):
 		b.handleIssues(chatID, text)
 	case strings.HasPrefix(text, "/queue"):
@@ -206,6 +208,20 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			var page int
 			fmt.Sscanf(rest, "%d", &page)
 			b.handleStatus(chatID, fmt.Sprintf("/status %d", page))
+			return
+		}
+		if connIDStr, ok := strings.CutPrefix(data, "connection:delete:"); ok {
+			var connID int
+			fmt.Sscanf(connIDStr, "%d", &connID)
+			if err := storage.DeleteConnection(b.JobsDB, connID); err != nil {
+				log.Printf("delete connection: %v", err)
+				b.send(chatID, "Failed to delete connection.")
+				return
+			}
+			if err := storage.ResetConversation(b.JobsDB, chatID, "telegram"); err != nil {
+				log.Printf("reset conversation: %v", err)
+			}
+			b.send(chatID, "Connection deleted.")
 			return
 		}
 		log.Printf("callback: unhandled data: %q", data)

@@ -67,6 +67,7 @@ Send a GitHub or GitLab issue URL to start a job, or use these commands:
 Repository
 /connect — connect a repository via OAuth
 /connections — list saved connections
+/connection delete — delete a single connection
 /disconnect — remove all connections
 
 Jobs
@@ -184,6 +185,33 @@ func (b *Bot) handleDisconnect(chatID int64) {
 		return
 	}
 	b.send(chatID, "All connections removed.")
+}
+
+func (b *Bot) handleConnection(chatID int64, text string) {
+	if !strings.HasPrefix(text, "/connection delete") {
+		b.send(chatID, "Usage: /connection delete")
+		return
+	}
+	conns, err := storage.FindConnectionsByChat(b.JobsDB, chatID)
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Error: %v", err))
+		return
+	}
+	if len(conns) == 0 {
+		b.send(chatID, "No saved connections. Use /connect to add one.")
+		return
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, c := range conns {
+		label := fmt.Sprintf("[%s] %s", c.Provider, c.RepoURL)
+		data := fmt.Sprintf("connection:delete:%d", c.ID)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, data),
+		))
+	}
+	msg := tgbotapi.NewMessage(chatID, "Select a connection to delete:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.API.Send(msg)
 }
 
 func (b *Bot) handleIssues(chatID int64, text string) {
