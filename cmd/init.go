@@ -65,7 +65,12 @@ func runInit(cmd *cobra.Command, args []string) {
 	}
 	cfg.DefaultAgent = agent
 
-	installAgents()
+	switch agent {
+	case "opencode":
+		installOpencode()
+	default:
+		installClaude()
+	}
 
 	fmt.Print("Workspace directory (default ~/.akama/workspaces): ")
 	var ws string
@@ -98,11 +103,6 @@ func runInit(cmd *cobra.Command, args []string) {
 	db.Close()
 
 	fmt.Println("Config saved. Run `akama start` to start the bot.")
-}
-
-func installAgents() {
-	installClaude()
-	installOpencode()
 }
 
 func installClaude() {
