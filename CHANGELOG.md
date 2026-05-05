@@ -1,3 +1,10 @@
+## [1.6.1](https://github.com/jullury/akama/compare/v1.6.0...v1.6.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* **install:** unify package manager fallback logic and improve error handling ([df77283](https://github.com/jullury/akama/commit/df772832aa778c2e97ab1c53b40cd500baca80f6))
+
 # [1.6.0](https://github.com/jullury/akama/compare/v1.5.1...v1.6.0) (2026-05-05)
 
 
