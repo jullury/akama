@@ -65,6 +65,11 @@ func CommitPush(repoPath, branchName, token, gitName, gitEmail, commitMsg string
 		}
 	}
 
+	// Refresh tracking ref so --force-with-lease has accurate remote state.
+	// Ignore error — branch may not exist on remote yet (first push).
+	fetchCmd := newCommand(repoPath, askpassPath, "git", "-C", repoPath, "fetch", "origin", branchName)
+	fetchCmd.CombinedOutput()
+
 	cmd := newCommand(repoPath, askpassPath, "git", "-C", repoPath, "push", "origin", branchName, "--force-with-lease")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git push: %w\n%s", err, output)
