@@ -51,7 +51,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/queue"):
 		b.handleQueue(chatID)
 	case strings.HasPrefix(text, "/status"):
-		b.handleStatus(chatID)
+		b.handleStatus(chatID, text)
 	case strings.HasPrefix(text, "/logs"):
 		b.handleLogs(chatID, text)
 	case strings.HasPrefix(text, "/retry"):
@@ -196,6 +196,12 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			} else {
 				b.send(chatID, fmt.Sprintf("AI model set to: %s", model))
 			}
+			return
+		}
+		if rest, ok := strings.CutPrefix(data, "status:page:"); ok {
+			var page int
+			fmt.Sscanf(rest, "%d", &page)
+			b.handleStatus(chatID, fmt.Sprintf("/status %d", page))
 			return
 		}
 		log.Printf("callback: unhandled data: %q", data)

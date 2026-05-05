@@ -182,8 +182,14 @@ func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
 	return jobs, nil
 }
 
-func ListJobs(db *sql.DB, limit int) ([]*Job, error) {
-	rows, err := db.Query(`SELECT `+jobColumns+` FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
+func CountAllJobs(db *sql.DB) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM jobs`).Scan(&count)
+	return count, err
+}
+
+func ListJobs(db *sql.DB, limit, offset int) ([]*Job, error) {
+	rows, err := db.Query(`SELECT `+jobColumns+` FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}

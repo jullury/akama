@@ -265,19 +265,39 @@ func (b *Bot) handleQueue(chatID int64) {
 	b.send(chatID, sb.String())
 }
 
-func (b *Bot) handleStatus(chatID int64) {
-	jobs, err := storage.ListJobs(b.JobsDB, 5)
+const jobsPerPage = 5
+
+func (b *Bot) handleStatus(chatID int64, text string) {
+	page := 0
+	if strings.HasPrefix(text, "/status ") {
+		fmt.Sscanf(text, "/status %d", &page)
+	}
+
+	total, err := storage.CountAllJobs(b.JobsDB)
 	if err != nil {
 		b.send(chatID, fmt.Sprintf("Error: %v", err))
 		return
 	}
-	if len(jobs) == 0 {
+
+	if total == 0 {
 		b.send(chatID, "No jobs yet.")
 		return
 	}
 
+	offset := page * jobsPerPage
+	if offset >= total {
+		page = 0
+		offset = 0
+	}
+
+	jobs, err := storage.ListJobs(b.JobsDB, jobsPerPage, offset)
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Error: %v", err))
+		return
+	}
+
 	var sb strings.Builder
-	sb.WriteString("Recent jobs:\n")
+	sb.WriteString(fmt.Sprintf("Recent jobs (page %d/%d):\n", page+1, (total+jobsPerPage-1)/jobsPerPage))
 	for _, j := range jobs {
 		repoDisplay := j.RepoURL
 		if owner, repo, err := git.OwnerRepo(j.RepoURL); err == nil {
@@ -285,7 +305,24 @@ func (b *Bot) handleStatus(chatID int64) {
 		}
 		sb.WriteString(fmt.Sprintf("- [#%d] %s - %s - %s (%s)\n", j.ID, j.IssueTitle, repoDisplay, j.Status, j.Provider))
 	}
-	b.send(chatID, sb.String())
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var navRow []tgbotapi.InlineKeyboardButton
+	if page > 0 {
+		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("← Back", fmt.Sprintf("status:page:%d", page-1)))
+	}
+	if offset+jobsPerPage < total {
+		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Next →", fmt.Sprintf("status:page:%d", page+1)))
+	}
+	if len(navRow) > 0 {
+		rows = append(rows, navRow)
+	}
+
+	msg := tgbotapi.NewMessage(chatID, sb.String())
+	if len(rows) > 0 {
+		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	}
+	b.API.Send(msg)
 }
 
 func (b *Bot) handleLogs(chatID int64, text string) {
