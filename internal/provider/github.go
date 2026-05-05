@@ -305,6 +305,67 @@ func parseRepoURL(rawURL string) (owner, repo string, err error) {
 	return parts[len(parts)-2], parts[len(parts)-1], nil
 }
 
+// GetGitHubCIStatus polls the GitHub Checks API for CI results on a branch.
+func GetGitHubCIStatus(repoURL, token, branch string) (CIStatus, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return CIStatus{}, err
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s/check-runs", owner, repo, branch)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return CIStatus{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return CIStatus{}, fmt.Errorf("check runs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		TotalCount int `json:"total_count"`
+		CheckRuns  []struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			HTMLURL    string `json:"html_url"`
+		} `json:"check_runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return CIStatus{}, fmt.Errorf("decode check runs: %w", err)
+	}
+
+	if result.TotalCount == 0 {
+		return CIStatus{State: "none"}, nil
+	}
+
+	var checkURL string
+	allDone := true
+	anyFailed := false
+	for _, cr := range result.CheckRuns {
+		if checkURL == "" {
+			checkURL = cr.HTMLURL
+		}
+		if cr.Status != "completed" {
+			allDone = false
+		}
+		switch cr.Conclusion {
+		case "failure", "timed_out", "cancelled", "action_required":
+			anyFailed = true
+		}
+	}
+
+	if !allDone {
+		return CIStatus{State: "pending", URL: checkURL}, nil
+	}
+	if anyFailed {
+		return CIStatus{State: "failure", URL: checkURL}, nil
+	}
+	return CIStatus{State: "success", URL: checkURL}, nil
+}
+
 func parseGitHubIssueURL(issueURL string) (owner, repo string, issueNum int, err error) {
 	owner, repo, err = parseRepoURL(issueURL)
 	if err != nil {

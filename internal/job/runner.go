@@ -22,11 +22,46 @@ import (
 
 var wg sync.WaitGroup
 
+var (
+	cancelsMu sync.Mutex
+	cancels   = make(map[int64]context.CancelFunc)
+)
+
+func registerCancel(jobID int64, cancel context.CancelFunc) {
+	cancelsMu.Lock()
+	cancels[jobID] = cancel
+	cancelsMu.Unlock()
+}
+
+func deregisterCancel(jobID int64) {
+	cancelsMu.Lock()
+	delete(cancels, jobID)
+	cancelsMu.Unlock()
+}
+
+// CancelJob cancels a running job by jobID. Returns true if the job was found.
+func CancelJob(jobID int64) bool {
+	cancelsMu.Lock()
+	cancel, ok := cancels[jobID]
+	if ok {
+		delete(cancels, jobID)
+	}
+	cancelsMu.Unlock()
+	if ok {
+		cancel()
+	}
+	return ok
+}
+
 func Run(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
+	jobCtx, cancel := context.WithCancel(ctx)
+	registerCancel(jobID, cancel)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runJob(ctx, jobID, jobsDB, bot, agentCfg, workspaceDir)
+		defer deregisterCancel(jobID)
+		defer cancel()
+		runJob(jobCtx, jobID, jobsDB, bot, agentCfg, workspaceDir)
 	}()
 }
 
@@ -88,13 +123,32 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		return
 	}
 
+	heartbeatStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		elapsed := 0
+		for {
+			select {
+			case <-heartbeatStop:
+				return
+			case <-ticker.C:
+				elapsed += 5
+				notify(bot, j.ChatID, fmt.Sprintf("⏳ [%s] Agent still working... (%d min elapsed)", j.Provider, elapsed))
+			}
+		}
+	}()
+
 	var rawOutput string
-	if err := withRetry(ctx, "agent run", 3, func() error {
+	agentErr := withRetry(ctx, "agent run", 3, func() error {
 		var e error
 		rawOutput, e = agent.Run(ctx, j.Agent, j.AgentModel, workspacePath, promptPath, agentCfg)
 		return e
-	}); err != nil {
-		failJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", err), workspacePath)
+	})
+	close(heartbeatStop)
+
+	if agentErr != nil {
+		failJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr), workspacePath)
 		return
 	}
 	storage.SetJobAgentOutput(jobsDB, jobID, rawOutput)
@@ -105,7 +159,6 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		if err := storage.SetJobAwaitingInput(jobsDB, jobID, agentText); err != nil {
 			log.Printf("set awaiting_input: %v", err)
 		}
-		// Set conversation state so any plain-text reply (not just a quoted reply) answers this job.
 		storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
 			map[string]interface{}{"job_id": jobID})
 		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
@@ -130,6 +183,8 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		return
 	}
 
+	diffStat := git.DiffStat(workspacePath)
+
 	notify(bot, j.ChatID, fmt.Sprintf("🔗 [%s] %s — creating pull request...", j.Provider, repoName))
 	var prURL string
 	if err := withRetry(ctx, "create PR", 3, func() error {
@@ -153,7 +208,13 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		log.Printf("set pr_created: %v", err)
 	}
 
-	msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("[%s] PR ready — %s\n\nReply for follow-up or /done %d", j.Provider, prURL, jobID))
+	msgText := fmt.Sprintf("[%s] PR ready — %s", j.Provider, prURL)
+	if diffStat != "" {
+		msgText += "\n\n" + diffStat
+	}
+	msgText += fmt.Sprintf("\n\nReply for follow-up or /done %d", jobID)
+
+	msg := tgbotapi.NewMessage(j.ChatID, msgText)
 	sent, _ := bot.Send(msg)
 	if sent.MessageID != 0 {
 		storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
@@ -162,7 +223,51 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
 		map[string]interface{}{"job_id": jobID})
 
+	go pollCI(ctx, j, branchName, jobsDB, bot)
+
 	os.Remove(promptPath)
+}
+
+func pollCI(ctx context.Context, j *storage.Job, branch string, jobsDB *sql.DB, bot *tgbotapi.BotAPI) {
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+	deadline := time.NewTimer(20 * time.Minute)
+	defer deadline.Stop()
+
+	noneCount := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline.C:
+			return
+		case <-ticker.C:
+			status, err := provider.GetCIStatus(j.RepoURL, j.GitToken, branch, j.Provider)
+			if err != nil {
+				log.Printf("CI poll job %d: %v", j.ID, err)
+				continue
+			}
+			switch status.State {
+			case "none":
+				noneCount++
+				if noneCount >= 3 {
+					return
+				}
+			case "pending":
+				noneCount = 0
+			case "success":
+				notify(bot, j.ChatID, fmt.Sprintf("✅ [%s] CI passed — %s", j.Provider, j.PRURL))
+				return
+			case "failure":
+				msg := fmt.Sprintf("❌ [%s] CI failed for job #%d", j.Provider, j.ID)
+				if status.URL != "" {
+					msg += "\n" + status.URL
+				}
+				notify(bot, j.ChatID, msg)
+				return
+			}
+		}
+	}
 }
 
 func notify(bot *tgbotapi.BotAPI, chatID int64, text string) {
@@ -171,7 +276,7 @@ func notify(bot *tgbotapi.BotAPI, chatID int64, text string) {
 
 func failJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, workspacePath string) {
 	storage.SetJobFailed(jobsDB, j.ID, errMsg)
-	msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Job %d failed: %s", j.ID, errMsg))
+	msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Job %d failed: %s\n\nUse /logs %d to view details.", j.ID, errMsg, j.ID))
 	bot.Send(msg)
 	os.RemoveAll(workspacePath)
 }

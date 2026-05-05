@@ -138,6 +138,30 @@ func CountActiveJobs(db *sql.DB) (int, error) {
 	return count, err
 }
 
+func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
+	rows, err := db.Query(`SELECT * FROM jobs WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?`, chatID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []*Job
+	for rows.Next() {
+		j := &Job{}
+		var createdAt, updatedAt string
+		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
+			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
+			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
+			&j.AgentOutput, &createdAt, &updatedAt)
+		if err != nil {
+			return nil, err
+		}
+		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
+}
+
 func ListJobs(db *sql.DB, limit int) ([]*Job, error) {
 	rows, err := db.Query(`SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?`, limit)
 	if err != nil {

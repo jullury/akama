@@ -247,6 +247,44 @@ func findGitLabMR(repoURL, token, branch string) (string, error) {
 	return mrs[0].WebURL, nil
 }
 
+// GetGitLabCIStatus polls the GitLab Pipelines API for CI results on a branch.
+func GetGitLabCIStatus(repoURL, token, branch string) (CIStatus, error) {
+	projectPath, err := gitLabProjectPath(repoURL)
+	if err != nil {
+		return CIStatus{}, err
+	}
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/pipelines?ref=%s&per_page=1", encodedPath, branch)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return CIStatus{}, err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return CIStatus{}, fmt.Errorf("pipelines: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var pipelines []struct {
+		Status string `json:"status"`
+		WebURL string `json:"web_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&pipelines); err != nil || len(pipelines) == 0 {
+		return CIStatus{State: "none"}, nil
+	}
+
+	switch pipelines[0].Status {
+	case "success":
+		return CIStatus{State: "success", URL: pipelines[0].WebURL}, nil
+	case "failed", "canceled":
+		return CIStatus{State: "failure", URL: pipelines[0].WebURL}, nil
+	default:
+		return CIStatus{State: "pending", URL: pipelines[0].WebURL}, nil
+	}
+}
+
 // gitLabProjectPath extracts the owner/repo path from a plain repo URL or issue URL.
 func gitLabProjectPath(rawURL string) (string, error) {
 	rawURL = strings.TrimSuffix(rawURL, ".git")
