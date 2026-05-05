@@ -1,3 +1,10 @@
+## [1.11.1](https://github.com/jullury/akama/compare/v1.11.0...v1.11.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* **git:** update askpass gitignore and improve appendIfMissing logic ([42b200d](https://github.com/jullury/akama/commit/42b200d82a4c2eaf2c9fa7ebe5367987e3718a73))
+
 # [1.11.0](https://github.com/jullury/akama/compare/v1.10.0...v1.11.0) (2026-05-05)
 
 
