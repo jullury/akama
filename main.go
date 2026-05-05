@@ -14,6 +14,7 @@ import (
 	"github.com/jullury/akama/internal/config"
 	"github.com/jullury/akama/internal/daemon"
 	"github.com/jullury/akama/internal/job"
+	"github.com/jullury/akama/internal/logger"
 	"github.com/jullury/akama/internal/storage"
 )
 
@@ -38,6 +39,16 @@ func runDaemon() {
 	if err != nil {
 		log.Fatalf("Load config: %v", err)
 	}
+
+	// Set up rotating log writer
+	lw, err := logger.NewRotatingWriter(logger.Config{
+		LogPath: cfg.LogPath,
+	})
+	if err != nil {
+		log.Fatalf("Create logger: %v", err)
+	}
+	defer lw.Close()
+	log.SetOutput(lw)
 
 	// Write PID file from the daemon process itself so there is no
 	// race between the parent's IsRunning check and fork.

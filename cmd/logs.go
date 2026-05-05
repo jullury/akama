@@ -1,22 +1,34 @@
 package cmd
 
 import (
+	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jullury/akama/internal/config"
 	"github.com/spf13/cobra"
 )
 
+const archiveSuffix = ".gz"
+
+var (
+	logsFollow bool
+	logsAll     bool
+)
+
 var logsCmd = &cobra.Command{
 	Use:   "logs",
-	Short: "Tail ~/.akama/akama.log",
+	Short: "Show or tail application logs",
 	Run:   runLogs,
 }
 
 func init() {
+	logsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output")
+	logsCmd.Flags().BoolVarP(&logsAll, "all", "a", false, "Show all log files, not just today's")
 	rootCmd.AddCommand(logsCmd)
 }
 
@@ -27,24 +39,51 @@ func runLogs(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	f, err := os.Open(cfg.LogPath)
+	logsDir := filepath.Join(filepath.Dir(cfg.LogPath), "logs")
+	base := filepath.Base(cfg.LogPath)
+	ext := filepath.Ext(base)
+	name := base[:len(base)-len(ext)]
+
+	today := time.Now().Format("2006-01-02")
+	curLog := filepath.Join(logsDir, fmt.Sprintf("%s-%s%s", name, today, ext))
+
+	if logsAll {
+		// Print all log files (including archives), then optionally follow current
+		entries, err := os.ReadDir(logsDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Read log dir: %v\n", err)
+			os.Exit(1)
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			fpath := filepath.Join(logsDir, e.Name())
+			if strings.HasSuffix(fpath, archiveSuffix) {
+				printGzipFile(fpath)
+			} else {
+				printFile(fpath)
+			}
+		}
+	} else {
+		// Just print today's log
+		printFile(curLog)
+	}
+
+	if !logsFollow {
+		return
+	}
+
+	// Tail mode: watch the current log file from current end
+	f, err := os.Open(curLog)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Open log: %v\n", err)
 		os.Exit(1)
 	}
 	defer f.Close()
 
-	info, err := f.Stat()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Stat log: %v\n", err)
-		os.Exit(1)
-	}
-
-	if info.Size() > 4096 {
-		f.Seek(-4096, 2)
-	}
-
-	io.Copy(os.Stdout, f)
+	// Seek to end so we only see new writes
+	f.Seek(0, 2)
 
 	buf := make([]byte, 1024)
 	for {
@@ -56,4 +95,33 @@ func runLogs(cmd *cobra.Command, args []string) {
 			time.Sleep(200 * time.Millisecond)
 		}
 	}
+}
+
+func printFile(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Open %s: %v\n", path, err)
+		return
+	}
+	defer f.Close()
+
+	io.Copy(os.Stdout, f)
+}
+
+func printGzipFile(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Open %s: %v\n", path, err)
+		return
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Read %s: %v\n", path, err)
+		return
+	}
+	defer gz.Close()
+
+	io.Copy(os.Stdout, gz)
 }
