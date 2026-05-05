@@ -1,3 +1,10 @@
+## [1.6.2](https://github.com/jullury/akama/compare/v1.6.1...v1.6.2) (2026-05-05)
+
+
+### Bug Fixes
+
+* improve opencode output parsing for better terminal display ([ee8c5e6](https://github.com/jullury/akama/commit/ee8c5e6ca87492a61765e4971d97122828377513))
+
 ## [1.6.1](https://github.com/jullury/akama/compare/v1.6.0...v1.6.1) (2026-05-05)
 
 
