@@ -1,3 +1,10 @@
+# [1.12.0](https://github.com/jullury/akama/compare/v1.11.2...v1.12.0) (2026-05-05)
+
+
+### Features
+
+* **bot:** register Telegram commands on startup ([218b509](https://github.com/jullury/akama/commit/218b50925022809ca938cb740890850c1d5d045f))
+
 ## [1.11.2](https://github.com/jullury/akama/compare/v1.11.1...v1.11.2) (2026-05-05)
 
 
