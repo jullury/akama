@@ -216,49 +216,79 @@ func extractOpencodeError(output string) error {
 	return nil
 }
 
-// parseOpencodeOutput extracts text from opencode's NDJSON event stream.
+// parseOpencodeOutput extracts human-readable text from opencode's NDJSON event stream.
+// It formats text messages and tool call results like a terminal session.
 func parseOpencodeOutput(output string) string {
 	output = strings.TrimSpace(output)
 	var parts []string
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || line[0] != '{' {
+		if line == "" || len(line) == 0 || line[0] != '{' {
 			continue
 		}
-		// Generic envelope: {"type":"text","part":{"type":"text","text":"..."}}
-		var evt struct {
-			Type string `json:"type"`
-			Text string `json:"text"` // legacy flat format
-			Part struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-				Message struct {
-					Content []struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
-					} `json:"content"`
-				} `json:"message"`
-			} `json:"part"`
-		}
+
+		// Try to parse as a generic JSON event
+		evt := map[string]json.RawMessage{}
 		if err := json.Unmarshal([]byte(line), &evt); err != nil {
 			continue
 		}
-		// flat legacy format
-		if evt.Text != "" {
-			parts = append(parts, evt.Text)
-			continue
+
+		// Get event type
+		var evtType string
+		if t, ok := evt["type"]; ok {
+			json.Unmarshal(t, &evtType)
 		}
-		// nested part.text (current opencode format)
-		if evt.Type == "text" && evt.Part.Text != "" {
-			parts = append(parts, evt.Part.Text)
-			continue
-		}
-		// message content blocks
-		for _, c := range evt.Part.Message.Content {
-			if c.Type == "text" && c.Text != "" {
-				parts = append(parts, c.Text)
+
+		// Handle text events
+		if evtType == "text" {
+			// Try part.text format
+			if part, ok := evt["part"]; ok {
+				var p struct {
+					Text string `json:"text"`
+				}
+				if json.Unmarshal(part, &p) == nil && p.Text != "" {
+					parts = append(parts, p.Text)
+					continue
+				}
 			}
+			// Try flat text format
+			var flat struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal([]byte(line), &flat) == nil && flat.Text != "" {
+				parts = append(parts, flat.Text)
+			}
+			continue
 		}
+
+		// Handle tool_use events - show tool name and output
+		if evtType == "tool_use" {
+			var tu struct {
+				Part struct {
+					Type   string `json:"type"`
+					Tool   string `json:"tool"`
+					State  struct {
+						Status string `json:"status"`
+						Input  json.RawMessage `json:"input"`
+						Output string `json:"output"`
+					} `json:"state"`
+				} `json:"part"`
+			}
+			if json.Unmarshal([]byte(line), &tu) == nil && tu.Part.Tool != "" {
+				// Show what tool was used
+				output := strings.TrimSpace(tu.Part.State.Output)
+				if output != "" {
+					// Truncate very long output
+					if len(output) > 500 {
+						output = output[:500] + "..."
+					}
+					parts = append(parts, output)
+				}
+			}
+			continue
+		}
+
+		// Skip step_start, step_finish, and other metadata events
 	}
 	if len(parts) > 0 {
 		return strings.TrimSpace(strings.Join(parts, "\n"))
