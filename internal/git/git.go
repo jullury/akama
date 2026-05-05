@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-func Clone(repoURL, token, destPath string) error {
+func Clone(repoURL, token, destPath, branch string) error {
 	if err := os.RemoveAll(destPath); err != nil {
 		return fmt.Errorf("remove existing dir: %w", err)
 	}
@@ -22,7 +22,12 @@ func Clone(repoURL, token, destPath string) error {
 	}
 	defer os.Remove(askpassPath)
 
-	cmd := newCommand(parentDir, askpassPath, "git", "clone", "--depth=1", repoURL, destPath)
+	args := []string{"clone", "--depth=1"}
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	args = append(args, repoURL, destPath)
+	cmd := newCommand(parentDir, askpassPath, "git", args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone: %w\n%s", err, output)
 	}

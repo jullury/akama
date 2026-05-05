@@ -18,7 +18,7 @@ import (
 
 var (
 	githubIssueRegex = regexp.MustCompile(`github\.com/[^/]+/[^/]+/issues/\d+`)
-	gitlabIssueRegex = regexp.MustCompile(`gitlab\.com/[^/]+/[^/]+/issues/\d+`)
+	gitlabIssueRegex = regexp.MustCompile(`gitlab\.com/[^/]+/[^/]+(?:/-)?/(?:issues|work_items)/\d+`)
 )
 
 func (b *Bot) handleMessage(msg *tgbotapi.Message) {
@@ -309,6 +309,9 @@ func (b *Bot) handleText(chatID int64, text string) {
 			chosenBranch = detectedBranch
 		}
 		log.Printf("[await_branch_confirm] Using branch %q for %s", chosenBranch, repoURL)
+		if err := storage.UpdateConnectionDefaultBranch(b.JobsDB, chatID, repoURL, chosenBranch); err != nil {
+			log.Printf("[await_branch_confirm] Failed to persist branch: %v", err)
+		}
 		b.continueIssueProcessing(chatID, issueURL, gitToken, chosenBranch)
 	}
 }
@@ -588,8 +591,10 @@ func detectProvider(url string) string {
 }
 
 func extractRepoURL(issueURL string) string {
-	if idx := strings.Index(issueURL, "/issues/"); idx != -1 {
-		return issueURL[:idx]
+	for _, sep := range []string{"/-/issues/", "/-/work_items/", "/issues/"} {
+		if idx := strings.Index(issueURL, sep); idx != -1 {
+			return issueURL[:idx]
+		}
 	}
 	return issueURL
 }

@@ -1,11 +1,11 @@
 package provider
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -21,16 +21,13 @@ type GitLabDeviceCode struct {
 // StartGitLabDeviceFlow initiates GitLab device flow.
 // Requires a GitLab Application with device flow / native app option enabled.
 func StartGitLabDeviceFlow(clientID string) (*GitLabDeviceCode, error) {
-	body, _ := json.Marshal(map[string]string{
-		"client_id": clientID,
-		"scope":     "api",
-	})
-	req, err := http.NewRequest("POST", "https://gitlab.com/oauth/authorize_device", bytes.NewReader(body))
+	form := url.Values{"client_id": {clientID}, "scope": {"api"}}
+	req, err := http.NewRequest("POST", "https://gitlab.com/oauth/authorize_device", strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -51,18 +48,18 @@ func StartGitLabDeviceFlow(clientID string) (*GitLabDeviceCode, error) {
 
 // PollGitLabToken polls for the access token after the user authorizes.
 func PollGitLabToken(clientID, clientSecret, deviceCode string) (string, error, int) {
-	body, _ := json.Marshal(map[string]string{
-		"client_id":     clientID,
-		"client_secret": clientSecret,
-		"device_code":   deviceCode,
-		"grant_type":    "urn:ietf:params:oauth:grant-type:device_code",
-	})
-	req, err := http.NewRequest("POST", "https://gitlab.com/oauth/token", bytes.NewReader(body))
+	form := url.Values{
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+		"device_code":   {deviceCode},
+		"grant_type":    {"urn:ietf:params:oauth:grant-type:device_code"},
+	}
+	req, err := http.NewRequest("POST", "https://gitlab.com/oauth/token", strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", err, 0
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -131,7 +128,7 @@ func CreateGitLabIssue(repoURL, token, title, body string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -161,7 +158,7 @@ func FetchGitLabIssue(repoURL, token string) (*GitLabIssue, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -192,7 +189,7 @@ func GetGitLabDefaultBranch(repoURL, token string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch project: %w", err)
@@ -238,7 +235,7 @@ func CreateGitLabMR(repoURL, token, title, branch, baseBranch, body string) (str
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := httpClient.Do(req)
@@ -267,7 +264,7 @@ func findGitLabMR(repoURL, token, branch string) (string, error) {
 	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
 	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/merge_requests?source_branch=%s&state=opened", encodedPath, branch)
 	req, _ := http.NewRequest("GET", url, nil)
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("find MR: %w", err)
@@ -292,7 +289,7 @@ func GetGitLabCIStatus(repoURL, token, branch string) (CIStatus, error) {
 	if err != nil {
 		return CIStatus{}, err
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -321,8 +318,11 @@ func GetGitLabCIStatus(repoURL, token, branch string) (CIStatus, error) {
 // gitLabProjectPath extracts the owner/repo path from a plain repo URL or issue URL.
 func gitLabProjectPath(rawURL string) (string, error) {
 	rawURL = strings.TrimSuffix(rawURL, ".git")
-	if idx := strings.Index(rawURL, "/issues/"); idx != -1 {
-		rawURL = rawURL[:idx]
+	for _, sep := range []string{"/-/issues/", "/-/work_items/", "/issues/"} {
+		if idx := strings.Index(rawURL, sep); idx != -1 {
+			rawURL = rawURL[:idx]
+			break
+		}
 	}
 	path := strings.TrimPrefix(rawURL, "https://gitlab.com/")
 	if path == rawURL {
@@ -333,19 +333,17 @@ func gitLabProjectPath(rawURL string) (string, error) {
 
 func parseGitLabIssueURL(repoURL string) (projectPath string, issueIID int, err error) {
 	repoURL = strings.TrimSuffix(repoURL, ".git")
-	parts := strings.Split(repoURL, "/")
-	if len(parts) < 2 {
-		err = fmt.Errorf("invalid GitLab URL: %s", repoURL)
+	for _, sep := range []string{"/-/issues/", "/-/work_items/", "/issues/"} {
+		idx := strings.Index(repoURL, sep)
+		if idx == -1 {
+			continue
+		}
+		base := repoURL[:idx]
+		rest := repoURL[idx+len(sep):]
+		projectPath = strings.TrimPrefix(base, "https://gitlab.com/")
+		fmt.Sscanf(rest, "%d", &issueIID)
 		return
 	}
-
-	issueParts := strings.Split(repoURL, "/issues/")
-	if len(issueParts) != 2 {
-		err = fmt.Errorf("invalid issue URL: %s", repoURL)
-		return
-	}
-
-	projectPath = strings.TrimPrefix(issueParts[0], "https://gitlab.com/")
-	fmt.Sscanf(issueParts[1], "%d", &issueIID)
+	err = fmt.Errorf("invalid issue URL: %s", repoURL)
 	return
 }

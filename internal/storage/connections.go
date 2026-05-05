@@ -52,6 +52,12 @@ func GetConnectionByID(db *sql.DB, id int64) (*Connection, error) {
 	return c, err
 }
 
+func UpdateConnectionDefaultBranch(db *sql.DB, chatID int64, repoURL, defaultBranch string) error {
+	_, err := db.Exec(`UPDATE connections SET default_branch = ? WHERE chat_id = ? AND repo_url = ?`,
+		defaultBranch, chatID, repoURL)
+	return err
+}
+
 func FindConnectionByRepo(db *sql.DB, chatID int64, repoURL string) (*Connection, error) {
 	row := db.QueryRow(`SELECT id, chat_id, provider, repo_url, git_token, default_branch FROM connections WHERE chat_id = ? AND repo_url = ?`,
 		chatID, repoURL)

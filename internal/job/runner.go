@@ -108,7 +108,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	notify(bot, j.ChatID, fmt.Sprintf("🔍 [%s] %s — cloning repo for: %s...", j.Provider, repoName, j.IssueTitle))
 
 	if err := withRetry(ctx, "git clone", 3, func() error {
-		return git.Clone(j.RepoURL, j.GitToken, workspacePath)
+		return git.Clone(j.RepoURL, j.GitToken, workspacePath, j.DefaultBranch)
 	}); err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), workspacePath)
 		return
