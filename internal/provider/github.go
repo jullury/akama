@@ -205,7 +205,40 @@ func FetchGitHubIssue(repoURL, token string) (*GitHubIssue, error) {
 	return &issue, nil
 }
 
-func CreateGitHubPR(repoURL, token, title, branch, body string) (string, error) {
+func GetGitHubDefaultBranch(repoURL, token string) (string, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repo)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch repo: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, b)
+	}
+	var result struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode repo: %w", err)
+	}
+	if result.DefaultBranch == "" {
+		return "main", nil
+	}
+	return result.DefaultBranch, nil
+}
+
+func CreateGitHubPR(repoURL, token, title, branch, baseBranch, body string) (string, error) {
 	owner, repo, err := parseRepoURL(repoURL)
 	if err != nil {
 		return "", err
@@ -215,7 +248,7 @@ func CreateGitHubPR(repoURL, token, title, branch, body string) (string, error) 
 	prReq := GitHubPRRequest{
 		Title: title,
 		Head:  branch,
-		Base:  "main",
+		Base:  baseBranch,
 		Body:  body,
 	}
 

@@ -42,6 +42,7 @@ func migrate(db *sql.DB) error {
 		notification_msg_id INTEGER NOT NULL DEFAULT 0,
 		error_msg           TEXT    NOT NULL DEFAULT '',
 		agent_output        TEXT    NOT NULL DEFAULT '',
+		default_branch      TEXT    NOT NULL DEFAULT 'main',
 		created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -56,12 +57,13 @@ func migrate(db *sql.DB) error {
 	);
 
 	CREATE TABLE IF NOT EXISTS connections (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		chat_id    INTEGER NOT NULL,
-		provider   TEXT    NOT NULL DEFAULT '',
-		repo_url   TEXT    NOT NULL DEFAULT '',
-		git_token  TEXT    NOT NULL DEFAULT '',
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		id             INTEGER PRIMARY KEY AUTOINCREMENT,
+		chat_id        INTEGER NOT NULL,
+		provider       TEXT    NOT NULL DEFAULT '',
+		repo_url       TEXT    NOT NULL DEFAULT '',
+		git_token      TEXT    NOT NULL DEFAULT '',
+		default_branch TEXT    NOT NULL DEFAULT '',
+		created_at     DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_jobs_chat  ON jobs(chat_id, status);
@@ -79,7 +81,9 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
-	// Add agent column to existing DBs that predate this migration.
+	// Add columns to existing DBs that predate these migrations.
 	db.Exec(`ALTER TABLE user_config ADD COLUMN agent TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE connections ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN default_branch TEXT NOT NULL DEFAULT 'main'`)
 	return nil
 }

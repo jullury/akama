@@ -200,9 +200,9 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		var e error
 		switch j.Provider {
 		case "github":
-			prURL, e = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
+			prURL, e = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, j.DefaultBranch, prBody)
 		case "gitlab":
-			prURL, e = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, prBody)
+			prURL, e = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, j.DefaultBranch, prBody)
 		}
 		if e != nil && provider.IsPRAlreadyExists(e) {
 			prURL, e = provider.FindExistingPR(j.RepoURL, j.GitToken, branchName, j.Provider)

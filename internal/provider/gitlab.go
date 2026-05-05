@@ -181,7 +181,40 @@ func FetchGitLabIssue(repoURL, token string) (*GitLabIssue, error) {
 	return &issue, nil
 }
 
-func CreateGitLabMR(repoURL, token, title, branch, body string) (string, error) {
+func GetGitLabDefaultBranch(repoURL, token string) (string, error) {
+	projectPath, err := gitLabProjectPath(repoURL)
+	if err != nil {
+		return "", err
+	}
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s", encodedPath)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch project: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitLab API error %d: %s", resp.StatusCode, b)
+	}
+	var result struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode project: %w", err)
+	}
+	if result.DefaultBranch == "" {
+		return "main", nil
+	}
+	return result.DefaultBranch, nil
+}
+
+func CreateGitLabMR(repoURL, token, title, branch, baseBranch, body string) (string, error) {
 	projectPath, err := gitLabProjectPath(repoURL)
 	if err != nil {
 		return "", err
@@ -190,9 +223,9 @@ func CreateGitLabMR(repoURL, token, title, branch, body string) (string, error) 
 	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
 	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/merge_requests", encodedPath)
 	mrReq := GitLabMRRequest{
-		Title:       title,
+		Title:        title,
 		SourceBranch: branch,
-		TargetBranch: "main",
+		TargetBranch: baseBranch,
 		Description:  body,
 	}
 

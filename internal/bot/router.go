@@ -289,7 +289,8 @@ func (b *Bot) handleText(chatID int64, text string) {
 			return
 		}
 		repoURL := extractRepoURL(strings.TrimSpace(text))
-		if err := storage.SaveConnection(b.JobsDB, chatID, providerName, repoURL, token); err != nil {
+		defaultBranch := provider.GetDefaultBranch(repoURL, token, providerName)
+		if err := storage.SaveConnection(b.JobsDB, chatID, providerName, repoURL, token, defaultBranch); err != nil {
 			log.Printf("save connection: %v", err)
 			b.send(chatID, "Failed to save connection. Please try again.")
 			return
@@ -306,24 +307,28 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 		return
 	}
 
+	lookupURL := extractRepoURL(issueURL)
+	log.Printf("[processIssue] Looking up connection for chatID=%d, repoURL=%q", chatID, lookupURL)
+	conn, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, lookupURL)
+
 	var token string
-	if gitToken == "" {
-		lookupURL := extractRepoURL(issueURL)
-		log.Printf("[processIssue] Looking up connection for chatID=%d, repoURL=%q", chatID, lookupURL)
-		conn, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, lookupURL)
-		if conn != nil {
-			log.Printf("[processIssue] Found connection, token prefix: %s...", conn.GitToken[:10])
-			token = conn.GitToken
-		} else {
-			log.Printf("[processIssue] No connection found for repoURL=%q", lookupURL)
-		}
-	} else {
+	if gitToken != "" {
 		token = gitToken
+	} else if conn != nil {
+		log.Printf("[processIssue] Found connection, token prefix: %s...", conn.GitToken[:10])
+		token = conn.GitToken
+	} else {
+		log.Printf("[processIssue] No connection found for repoURL=%q", lookupURL)
 	}
 
 	if token == "" {
 		b.send(chatID, "No git token found. Use /connect to add a repository first.")
 		return
+	}
+
+	defaultBranch := "main"
+	if conn != nil && conn.DefaultBranch != "" {
+		defaultBranch = conn.DefaultBranch
 	}
 
 	var title, body, issueID string
@@ -365,16 +370,17 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 	}
 
 	j := &storage.Job{
-		ChatID:     chatID,
-		IssueID:    issueID,
-		IssueTitle: title,
-		IssueBody:  body,
-		IssueURL:   issueURL,
-		RepoURL:    extractRepoURL(issueURL),
-		Provider:   providerName,
-		GitToken:   token,
-		Agent:      b.Config.DefaultAgent,
-		AgentModel: b.Config.DefaultModel,
+		ChatID:        chatID,
+		IssueID:       issueID,
+		IssueTitle:    title,
+		IssueBody:     body,
+		IssueURL:      issueURL,
+		RepoURL:       extractRepoURL(issueURL),
+		Provider:      providerName,
+		GitToken:      token,
+		Agent:         b.Config.DefaultAgent,
+		AgentModel:    b.Config.DefaultModel,
+		DefaultBranch: defaultBranch,
 	}
 
 	jobID, err := storage.CreateJob(b.JobsDB, j)
