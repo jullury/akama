@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/jullury/akama/compare/v1.1.0...v1.1.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* apply changes ([ddfe0d3](https://github.com/jullury/akama/commit/ddfe0d30cd9cf7e870c07b4982e26a272ff7fe5c))
+
 # [1.1.0](https://github.com/jullury/akama/compare/v1.0.0...v1.1.0) (2026-05-05)
 
 
