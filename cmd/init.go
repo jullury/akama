@@ -123,26 +123,34 @@ func installClaude() {
 			fmt.Printf("failed: %v\n", err)
 			return
 		}
-		fmt.Println("done.")
-		return
-	}
-	if _, err := exec.LookPath("curl"); err == nil {
+	} else if _, err := exec.LookPath("npm"); err == nil {
+		cmd := exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code")
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("failed: %v\n", err)
+			return
+		}
+	} else if _, err := exec.LookPath("curl"); err == nil {
 		cmd := exec.Command("curl", "-fsSL", "https://claude.ai/install.sh", "-o", "/tmp/claude-install.sh")
 		if err := cmd.Run(); err != nil {
 			fmt.Println("failed: curl download failed")
 			return
 		}
 		cmd = exec.Command("bash", "/tmp/claude-install.sh")
-		if err := cmd.Run(); err != nil {
+		err := cmd.Run()
+		os.Remove("/tmp/claude-install.sh")
+		if err != nil {
 			fmt.Printf("failed: %v\n", err)
-			os.Remove("/tmp/claude-install.sh")
 			return
 		}
-		os.Remove("/tmp/claude-install.sh")
-		fmt.Println("done.")
+	} else {
+		fmt.Println("failed: no supported package manager found (brew, npm, or curl required)")
 		return
 	}
-	fmt.Println("failed: no supported package manager found")
+	if _, err := exec.LookPath("claude"); err != nil {
+		fmt.Println("installed but 'claude' not found in PATH — you may need to restart your shell or add the install location to PATH")
+		return
+	}
+	fmt.Println("done.")
 }
 
 func installOpencode() {
@@ -157,33 +165,32 @@ func installOpencode() {
 			fmt.Printf("failed: %v\n", err)
 			return
 		}
-		fmt.Println("done.")
-		return
-	}
-	if _, err := exec.LookPath("npm"); err == nil {
+	} else if _, err := exec.LookPath("npm"); err == nil {
 		cmd := exec.Command("npm", "install", "-g", "opencode-ai@latest")
 		if err := cmd.Run(); err != nil {
 			fmt.Printf("failed: %v\n", err)
 			return
 		}
-		fmt.Println("done.")
-		return
-	}
-	if _, err := exec.LookPath("curl"); err == nil {
+	} else if _, err := exec.LookPath("curl"); err == nil {
 		cmd := exec.Command("curl", "-fsSL", "https://opencode.ai/install", "-o", "/tmp/opencode-install.sh")
 		if err := cmd.Run(); err != nil {
 			fmt.Println("failed: curl download failed")
 			return
 		}
 		cmd = exec.Command("bash", "/tmp/opencode-install.sh")
-		if err := cmd.Run(); err != nil {
+		err := cmd.Run()
+		os.Remove("/tmp/opencode-install.sh")
+		if err != nil {
 			fmt.Printf("failed: %v\n", err)
-			os.Remove("/tmp/opencode-install.sh")
 			return
 		}
-		os.Remove("/tmp/opencode-install.sh")
-		fmt.Println("done.")
+	} else {
+		fmt.Println("failed: no supported package manager found (brew, npm, or curl required)")
 		return
 	}
-	fmt.Println("failed: no supported package manager found")
+	if _, err := exec.LookPath("opencode"); err != nil {
+		fmt.Println("installed but 'opencode' not found in PATH — you may need to restart your shell or add the install location to PATH")
+		return
+	}
+	fmt.Println("done.")
 }
