@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/jullury/akama/compare/v1.5.0...v1.5.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* **git:** use explicit refspec for fetch before force-with-lease ([644aad0](https://github.com/jullury/akama/commit/644aad096003563ef82e9f0dae52e6ea7dc3b4be))
+
 # [1.5.0](https://github.com/jullury/akama/compare/v1.4.0...v1.5.0) (2026-05-05)
 
 
