@@ -1,3 +1,11 @@
+# [1.10.0](https://github.com/jullury/akama/compare/v1.9.0...v1.10.0) (2026-05-05)
+
+
+### Features
+
+* allow follow-up for jobs with 'updating' status ([6fa5144](https://github.com/jullury/akama/commit/6fa51449a46764b40dde96fb271d0d233002ee49))
+* **bot:** add /followup command for pr_created jobs ([0a04907](https://github.com/jullury/akama/commit/0a04907971536268f7c23fa6a64091e393b784ce))
+
 # [1.9.0](https://github.com/jullury/akama/compare/v1.8.2...v1.9.0) (2026-05-05)
 
 
