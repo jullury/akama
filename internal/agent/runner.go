@@ -222,30 +222,41 @@ func parseOpencodeOutput(output string) string {
 	var parts []string
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || len(line) == 0 || line[0] != '{' {
+		if line == "" || line[0] != '{' {
 			continue
 		}
-		var textEvt struct {
+		// Generic envelope: {"type":"text","part":{"type":"text","text":"..."}}
+		var evt struct {
 			Type string `json:"type"`
-			Text string `json:"text"`
+			Text string `json:"text"` // legacy flat format
+			Part struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+				Message struct {
+					Content []struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"message"`
+			} `json:"part"`
 		}
-		if err := json.Unmarshal([]byte(line), &textEvt); err == nil && textEvt.Text != "" {
-			parts = append(parts, textEvt.Text)
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
 			continue
 		}
-		var msgEvt struct {
-			Message struct {
-				Content []struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
-				} `json:"content"`
-			} `json:"message"`
+		// flat legacy format
+		if evt.Text != "" {
+			parts = append(parts, evt.Text)
+			continue
 		}
-		if err := json.Unmarshal([]byte(line), &msgEvt); err == nil {
-			for _, c := range msgEvt.Message.Content {
-				if c.Type == "text" && c.Text != "" {
-					parts = append(parts, c.Text)
-				}
+		// nested part.text (current opencode format)
+		if evt.Type == "text" && evt.Part.Text != "" {
+			parts = append(parts, evt.Part.Text)
+			continue
+		}
+		// message content blocks
+		for _, c := range evt.Part.Message.Content {
+			if c.Type == "text" && c.Text != "" {
+				parts = append(parts, c.Text)
 			}
 		}
 	}
