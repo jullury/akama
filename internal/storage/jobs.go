@@ -95,7 +95,12 @@ func RecoverInterruptedJobs(db *sql.DB) error {
 		}
 	}
 	_, err = db.Exec(`UPDATE jobs SET status = 'failed', error_msg = 'interrupted by daemon restart', updated_at = CURRENT_TIMESTAMP WHERE status IN ('running','awaiting_input')`)
-	return err
+	if err != nil {
+		return err
+	}
+	// Reset conversations stuck in await_branch_confirm (no job created yet)
+	db.Exec(`UPDATE conversations SET state = 'idle', data = '{}', updated_at = CURRENT_TIMESTAMP WHERE state = 'await_branch_confirm'`)
+	return nil
 }
 
 func FindActiveJobByIssue(db *sql.DB, chatID int64, issueURL string) *Job {
@@ -132,6 +137,12 @@ func SetJobNotifMsgID(db *sql.DB, id int64, msgID int64) error {
 	_, err := db.Exec(`UPDATE jobs SET notification_msg_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		msgID, id)
 	return err
+}
+
+func CountJobsByRepo(db *sql.DB, chatID int64, repoURL string) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE chat_id = ? AND repo_url = ?`, chatID, repoURL).Scan(&count)
+	return count, err
 }
 
 func CountActiveJobs(db *sql.DB) (int, error) {

@@ -297,6 +297,19 @@ func (b *Bot) handleText(chatID int64, text string) {
 		}
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		b.send(chatID, fmt.Sprintf("Connected! Send a %s issue URL to start a job.", providerName))
+	case "await_branch_confirm":
+		issueURL, _ := conv.Data["issue_url"].(string)
+		gitToken, _ := conv.Data["git_token"].(string)
+		detectedBranch, _ := conv.Data["detected_branch"].(string)
+		repoURL, _ := conv.Data["repo_url"].(string)
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+		chosenBranch := strings.TrimSpace(text)
+		if chosenBranch == "" {
+			chosenBranch = detectedBranch
+		}
+		log.Printf("[await_branch_confirm] Using branch %q for %s", chosenBranch, repoURL)
+		b.continueIssueProcessing(chatID, issueURL, gitToken, chosenBranch)
 	}
 }
 
@@ -326,17 +339,48 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 		return
 	}
 
+	if existing := storage.FindActiveJobByIssue(b.JobsDB, chatID, issueURL); existing != nil {
+		b.send(chatID, fmt.Sprintf("⚠️ Job #%d is already working on this issue (status: %s).", existing.ID, existing.Status))
+		return
+	}
+
 	defaultBranch := "main"
 	if conn != nil && conn.DefaultBranch != "" {
 		defaultBranch = conn.DefaultBranch
 	}
+
+	jobCount, _ := storage.CountJobsByRepo(b.JobsDB, chatID, lookupURL)
+	if jobCount == 0 && conn != nil && conn.DefaultBranch != "" {
+		log.Printf("[processIssue] First issue for repo, prompting for branch confirmation")
+		data := map[string]interface{}{
+			"issue_url":       issueURL,
+			"git_token":       token,
+			"detected_branch": defaultBranch,
+			"repo_url":        lookupURL,
+		}
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_branch_confirm", data)
+		b.send(chatID, fmt.Sprintf(
+			"This is the first issue for this repository.\n"+
+				"Detected default branch: *%s*\n\n"+
+				"Send a different branch name to override, or press Enter to use the detected branch.",
+			defaultBranch,
+		))
+		return
+	}
+
+	b.continueIssueProcessing(chatID, issueURL, token, defaultBranch)
+}
+
+func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultBranch string) {
+	providerName := detectProvider(issueURL)
+	repoURL := extractRepoURL(issueURL)
 
 	var title, body, issueID string
 	var err error
 
 	switch providerName {
 	case "github":
-		issue, e := provider.FetchGitHubIssue(issueURL, token)
+		issue, e := provider.FetchGitHubIssue(issueURL, gitToken)
 		if e != nil {
 			err = e
 		} else {
@@ -345,7 +389,7 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 			issueID = fmt.Sprintf("%d", issue.Number)
 		}
 	case "gitlab":
-		issue, e := provider.FetchGitLabIssue(issueURL, token)
+		issue, e := provider.FetchGitLabIssue(issueURL, gitToken)
 		if e != nil {
 			err = e
 		} else {
@@ -364,20 +408,15 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 		return
 	}
 
-	if existing := storage.FindActiveJobByIssue(b.JobsDB, chatID, issueURL); existing != nil {
-		b.send(chatID, fmt.Sprintf("⚠️ Job #%d is already working on this issue (status: %s).", existing.ID, existing.Status))
-		return
-	}
-
 	j := &storage.Job{
 		ChatID:        chatID,
 		IssueID:       issueID,
 		IssueTitle:    title,
 		IssueBody:     body,
 		IssueURL:      issueURL,
-		RepoURL:       extractRepoURL(issueURL),
+		RepoURL:       repoURL,
 		Provider:      providerName,
-		GitToken:      token,
+		GitToken:      gitToken,
 		Agent:         b.Config.DefaultAgent,
 		AgentModel:    b.Config.DefaultModel,
 		DefaultBranch: defaultBranch,
