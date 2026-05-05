@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/jullury/akama/compare/v1.5.1...v1.6.0) (2026-05-05)
+
+
+### Features
+
+* add GitLab work_items support and persist default branch ([87d4c9d](https://github.com/jullury/akama/commit/87d4c9d22ced55596f830e5270482e835af8a217))
+
 ## [1.5.1](https://github.com/jullury/akama/compare/v1.5.0...v1.5.1) (2026-05-05)
 
 
