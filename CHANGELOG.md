@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/jullury/akama/compare/v1.6.2...v1.7.0) (2026-05-05)
+
+
+### Features
+
+* implement smart chunking for long agent outputs ([5098f7d](https://github.com/jullury/akama/commit/5098f7d5f6561292be49e405e0c8fecc40b30a88))
+
 ## [1.6.2](https://github.com/jullury/akama/compare/v1.6.1...v1.6.2) (2026-05-05)
 
 
