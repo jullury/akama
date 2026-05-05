@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/jullury/akama/compare/v1.3.0...v1.4.0) (2026-05-05)
+
+
+### Features
+
+* send agent output to user after each agent run ([5a4469f](https://github.com/jullury/akama/commit/5a4469f858d0433d4e8b5a09da5a661c28c29976))
+
 # [1.3.0](https://github.com/jullury/akama/compare/v1.2.1...v1.3.0) (2026-05-05)
 
 
