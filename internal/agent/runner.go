@@ -65,7 +65,50 @@ func Run(ctx context.Context, agentName, model, workspacePath, promptPath string
 		return "", fmt.Errorf("agent %s failed: %w\nstderr: %s", agentName, err, stderr.String())
 	}
 
-	return stdout.String() + stderr.String(), nil
+	out := stdout.String() + stderr.String()
+
+	// opencode exits 0 even on API/network errors — check the event stream.
+	if agentName == "opencode" {
+		if err := extractOpencodeError(out); err != nil {
+			return "", err
+		}
+	}
+
+	return out, nil
+}
+
+// extractOpencodeError scans opencode's NDJSON output for error events.
+// opencode exits 0 on network/API failures but emits {"type":"api_error",...}.
+func extractOpencodeError(output string) error {
+	var msgs []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] != '{' {
+			continue
+		}
+		var evt struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+			Error   string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue
+		}
+		if evt.Type == "api_error" || evt.Type == "error" {
+			msg := evt.Message
+			if msg == "" {
+				msg = evt.Error
+			}
+			if msg == "" {
+				msg = "unknown error"
+			}
+			msgs = append(msgs, msg)
+		}
+	}
+	if len(msgs) > 0 {
+		return fmt.Errorf("opencode: %s", strings.Join(msgs, "; "))
+	}
+	return nil
 }
 
 func BuildPrompt(title, url, body string) string {

@@ -41,8 +41,10 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 		return
 	}
 
-	_, err = agent.Run(ctx, j.Agent, j.AgentModel, j.WorkspacePath, promptPath, agentCfg)
-	if err != nil {
+	if err := withRetry(ctx, "agent run", 3, func() error {
+		_, e := agent.Run(ctx, j.Agent, j.AgentModel, j.WorkspacePath, promptPath, agentCfg)
+		return e
+	}); err != nil {
 		failFollowUp(jobsDB, bot, j, fmt.Sprintf("agent run: %v", err))
 		return
 	}

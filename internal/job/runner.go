@@ -85,8 +85,12 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		return
 	}
 
-	rawOutput, err := agent.Run(ctx, j.Agent, j.AgentModel, workspacePath, promptPath, agentCfg)
-	if err != nil {
+	var rawOutput string
+	if err := withRetry(ctx, "agent run", 3, func() error {
+		var e error
+		rawOutput, e = agent.Run(ctx, j.Agent, j.AgentModel, workspacePath, promptPath, agentCfg)
+		return e
+	}); err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", err), workspacePath)
 		return
 	}
