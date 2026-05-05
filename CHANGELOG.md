@@ -1,3 +1,10 @@
+## [1.11.2](https://github.com/jullury/akama/compare/v1.11.1...v1.11.2) (2026-05-05)
+
+
+### Bug Fixes
+
+* **bot:** reorder command handlers to fix prefix matching conflicts ([c8c959f](https://github.com/jullury/akama/commit/c8c959f07d5768ef01887c3e43c87643c4c7acf1))
+
 ## [1.11.1](https://github.com/jullury/akama/compare/v1.11.0...v1.11.1) (2026-05-05)
 
 
