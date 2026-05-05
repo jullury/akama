@@ -87,3 +87,30 @@ func migrate(db *sql.DB) error {
 	db.Exec(`ALTER TABLE jobs ADD COLUMN default_branch TEXT NOT NULL DEFAULT 'main'`)
 	return nil
 }
+
+func FindConnectionsByChat(db *sql.DB, chatID int64) ([]*Connection, error) {
+	rows, err := db.Query(`SELECT id, chat_id, provider, repo_url, git_token, default_branch FROM connections WHERE chat_id = ? ORDER BY id`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Connection
+	for rows.Next() {
+		c := &Connection{}
+		if err := rows.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken, &c.DefaultBranch); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func DeleteConnection(db *sql.DB, id int) error {
+	_, err := db.Exec(`DELETE FROM connections WHERE id = ?`, id)
+	return err
+}
+
+func ResetConversationState(db *sql.DB, chatID int64) error {
+	_, err := db.Exec(`UPDATE conversations SET state = 'idle', data = '{}' WHERE chat_id = ?`, chatID)
+	return err
+}
