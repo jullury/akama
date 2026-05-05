@@ -99,7 +99,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}
 	storage.SetJobAgentOutput(jobsDB, jobID, rawOutput)
 
-	agentText := agent.ParseOutput(rawOutput)
+	agentText := agent.ParseOutput(j.Agent, rawOutput)
 
 	if agent.IsQuestion(agentText) {
 		if err := storage.SetJobAwaitingInput(jobsDB, jobID, agentText); err != nil {
