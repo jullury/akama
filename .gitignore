@@ -3,3 +3,4 @@ ssh
 akama
 .akama.git-askpass
 .akama-prompt.txt
+node_modules
