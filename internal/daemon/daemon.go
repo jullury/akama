@@ -23,17 +23,12 @@ func IsRunning(pidPath string) bool {
 	return err == nil
 }
 
-func ForkDaemon(logPath string) (int, error) {
+func ForkDaemon() (int, error) {
 	cmd := exec.Command(os.Args[0], "start", "--daemon")
 	cmd.Env = os.Environ()
-
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return 0, fmt.Errorf("open log: %w", err)
-	}
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
 	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := cmd.Start(); err != nil {
