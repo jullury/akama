@@ -70,7 +70,7 @@ func Commit(repoPath, branchName, token, gitName, gitEmail, commitMsg string) er
 	return nil
 }
 
-// Push refreshes the remote tracking ref and force-pushes branchName. Safe to retry.
+// Push force-pushes branchName to origin. Safe to retry; akama exclusively owns these branches.
 func Push(repoPath, branchName, token string) error {
 	askpassPath, err := writeAskpass(token)
 	if err != nil {
@@ -78,15 +78,7 @@ func Push(repoPath, branchName, token string) error {
 	}
 	defer os.Remove(askpassPath)
 
-	// Refresh the remote tracking ref so --force-with-lease has accurate state.
-	// Use an explicit refspec so refs/remotes/origin/<branch> is guaranteed to
-	// be updated (bare branch name may only write FETCH_HEAD on some git versions).
-	// Ignore error — branch may not exist on remote yet (first push).
-	fetchCmd := newCommand(repoPath, askpassPath, "git", "-C", repoPath, "fetch", "origin",
-		"refs/heads/"+branchName+":refs/remotes/origin/"+branchName)
-	fetchCmd.CombinedOutput()
-
-	cmd := newCommand(repoPath, askpassPath, "git", "-C", repoPath, "push", "origin", branchName, "--force-with-lease")
+	cmd := newCommand(repoPath, askpassPath, "git", "-C", repoPath, "push", "origin", branchName, "--force")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git push: %w\n%s", err, output)
 	}
