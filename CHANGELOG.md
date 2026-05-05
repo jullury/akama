@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/jullury/akama/compare/v1.10.0...v1.11.0) (2026-05-05)
+
+
+### Features
+
+* **bot:** add /connection delete to remove individual connections ([64eca6b](https://github.com/jullury/akama/commit/64eca6bb12347507b6f9bfe385ecc9b6c37fbe44))
+
 # [1.10.0](https://github.com/jullury/akama/compare/v1.9.0...v1.10.0) (2026-05-05)
 
 
