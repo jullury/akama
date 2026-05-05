@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/jullury/akama/compare/v1.8.0...v1.8.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* handle authentication errors and refresh connection tokens ([e77ab3c](https://github.com/jullury/akama/commit/e77ab3c31b8048ef04d7a6c9d4debb5260d5e2ac))
+
 # [1.8.0](https://github.com/jullury/akama/compare/v1.7.0...v1.8.0) (2026-05-05)
 
 
