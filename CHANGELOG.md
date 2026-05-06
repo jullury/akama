@@ -1,3 +1,10 @@
+# [1.17.0](https://github.com/jullury/akama/compare/v1.16.0...v1.17.0) (2026-05-06)
+
+
+### Features
+
+* **bot:** add /update command and standardize command descriptions ([8e464c9](https://github.com/jullury/akama/commit/8e464c96a9b153670ec6ec4ae40debe740fa0e58))
+
 # [1.16.0](https://github.com/jullury/akama/compare/v1.15.0...v1.16.0) (2026-05-06)
 
 
