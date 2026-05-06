@@ -1,3 +1,10 @@
+## [2.4.1](https://github.com/jullury/akama/compare/v2.4.0...v2.4.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **agent:** fix opencode npm update and install commands ([bf1a2cf](https://github.com/jullury/akama/commit/bf1a2cfc66583ebda02a4d46419b0ac9217e8ee9))
+
 # [2.4.0](https://github.com/jullury/akama/compare/v2.3.2...v2.4.0) (2026-05-06)
 
 
