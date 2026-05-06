@@ -26,7 +26,7 @@ Akama is a coding agent orchestration system controlled via Telegram. Send it a 
   - [Logs](#logs)
   - [Telegram Commands](#telegram-commands)
 - [Building from Source](#building-from-source)
-- [Docker for Fresh Testing](#docker-for-fresh-testing)
+- [Docker Deployment](#docker-deployment)
 - [Creating a Release](#creating-a-release)
 - [Configuration Reference](#configuration-reference)
 
@@ -217,44 +217,56 @@ GITLAB_CLIENT_SECRET=...
 
 ---
 
-## Docker for Fresh Testing
+## Docker Deployment
 
-The included `Dockerfile` provides a clean Alpine-based environment for testing Akama in isolation without affecting your host system.
+The included `Dockerfile` and `docker-compose.yml` provide an isolated environment for running Akama in production mode without affecting your host system.
 
-### Build the image
+### Prerequisites
 
-```sh
-docker build -t akama-test .
-```
-
-### Run a container
+Copy the example environment file and fill in your credentials:
 
 ```sh
-docker run -it --rm \
-  -v "$(pwd):/app" \
-  -w /app \
-  akama-test
-```
-
-### Build and test inside the container
-
-```sh
-# Inside the container
-cd /app
 cp .env.example .env
-# Edit .env with your OAuth credentials
-make build
-./akama init
-./akama start
+```
+
+Edit `.env` with your values:
+- `TELEGRAM_BOT_TOKEN` — from [@BotFather](https://t.me/BotFather)
+- `OPENAI_API_KEY` — required for opencode (default agent)
+- `ANTHROPIC_API_KEY` — required for claude agent
+
+### Start with docker-compose
+
+```sh
+docker-compose up -d
+```
+
+This will:
+- Build the image using `install.sh` to download the latest akama binary
+- Install `opencode` as the default agent globally
+- Generate `config.yaml` from environment variables at runtime
+- Start akama as a background daemon
+- Persist state (config, database, logs) via the `akama-data` volume
+- Automatically restart the container unless explicitly stopped
+
+### View logs
+
+```sh
+docker-compose logs -f
+```
+
+### Stop the container
+
+```sh
+docker-compose down
 ```
 
 ### Notes
 
 - The container includes `git`, `curl`, `bash`, `nodejs`, and `npm` — sufficient for agent auto-installation and repo operations.
-- Mount your local repository to `/app` to access the source code.
-- OAuth credentials must still be provided via `.env` and baked in at compile time.
-- This is intended for **testing only** — not for production deployments.
-- State (config, database, logs) is ephemeral and lost when the container exits unless you mount additional volumes.
+- State is persisted in the `akama-data` Docker volume (mounted to `/root/.akama` inside the container).
+- `opencode` is set as the default agent; change `default_agent` in your `.env` if needed.
+- No build from source is required — the image downloads the pre-built binary via `install.sh`.
+- Configuration is generated at runtime from environment variables — no need to bake in OAuth credentials.
 
 ---
 

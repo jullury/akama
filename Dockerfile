@@ -4,10 +4,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl bash nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install opencode globally
+# Install opencode globally (default agent)
 RUN npm install -g opencode-ai
 
 # Verify opencode installation
 RUN which opencode && opencode --version || echo "opencode check completed"
 
-CMD ["/bin/bash"]
+# Create workspace directory
+RUN mkdir -p /root/.akama/workspaces
+
+# Copy and run install.sh to get akama binary
+COPY install.sh /tmp/install.sh
+RUN chmod +x /tmp/install.sh && /tmp/install.sh && rm /tmp/install.sh
+
+# Copy entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+WORKDIR /app
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["/usr/local/bin/akama", "start", "--daemon"]

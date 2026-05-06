@@ -4,3 +4,4 @@ akama
 .git-askpass
 .akama-prompt.txt
 node_modules
+.dockerignore

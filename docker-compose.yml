@@ -1,0 +1,15 @@
+services:
+  akama:
+    build: .
+    container_name: akama
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - akama-data:/root/.akama
+    command: ["/usr/local/bin/akama", "start", "--daemon"]
+
+volumes:
+  akama-data:

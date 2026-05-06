@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+
+# Environment files with secrets
+.env
+.env.*
+
+# Build artifacts
+akama
+dist/
+*.exe
+*.test
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+*.gz
+
+# Temporary
+tmp/
+temp/
