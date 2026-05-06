@@ -1,3 +1,10 @@
+# [2.1.0](https://github.com/jullury/akama/compare/v2.0.0...v2.1.0) (2026-05-06)
+
+
+### Features
+
+* **skills:** add required skills and automatic prompt injection ([c03d744](https://github.com/jullury/akama/commit/c03d744cddc47fb6d4cd24889c85aa043e5d2776))
+
 # [2.0.0](https://github.com/jullury/akama/compare/v1.17.1...v2.0.0) (2026-05-06)
 
 
