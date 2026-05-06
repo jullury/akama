@@ -1,3 +1,10 @@
+## [1.14.1](https://github.com/jullury/akama/compare/v1.14.0...v1.14.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **bot:** standardize command naming and fix callback routing ([dd05c6c](https://github.com/jullury/akama/commit/dd05c6c1738b0769cc1206ac2c1867c5793120b4))
+
 # [1.14.0](https://github.com/jullury/akama/compare/v1.13.0...v1.14.0) (2026-05-06)
 
 
