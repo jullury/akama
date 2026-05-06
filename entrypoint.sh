@@ -25,6 +25,6 @@ chmod 600 ~/.akama/config.yaml
 akama status > /dev/null 2>&1 || true
 
 echo "Config ready. Starting akama..."
-
+akama start --daemon
 # Execute the command
 exec "$@"

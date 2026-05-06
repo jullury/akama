@@ -9,7 +9,7 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
       - akama-data:/root/.akama
-    command: ["/usr/local/bin/akama", "start", "--daemon"]
+    command: ["/usr/local/bin/akama", "logs", "-af"]
 
 volumes:
   akama-data:
