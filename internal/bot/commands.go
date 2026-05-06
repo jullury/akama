@@ -72,7 +72,7 @@ Repository
 
 Jobs
 /newissue — create and immediately fix a new issue
-/issues — list jobs (then enter: running, failed, pending, all)
+/issues — list jobs (select filter with buttons)
 /queue — show pending and running jobs
 /status — show recent jobs
 /logs — view agent output for a job (will prompt for ID)
@@ -234,10 +234,13 @@ func (b *Bot) showIssues(chatID int64, filterStatus string) {
 	}
 
 	if len(filtered) == 0 {
-		if filterStatus != "" && filterStatus != "open" && filterStatus != "all" {
-			b.send(chatID, fmt.Sprintf("No %s jobs.", filterStatus))
-		} else {
+		switch filterStatus {
+		case "all":
+			b.send(chatID, "No jobs.")
+		case "", "open":
 			b.send(chatID, "No active jobs.")
+		default:
+			b.send(chatID, fmt.Sprintf("No %s jobs.", filterStatus))
 		}
 		return
 	}

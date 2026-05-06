@@ -49,8 +49,20 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/disconnect"):
 		b.handleDisconnect(chatID)
 	case strings.HasPrefix(text, "/issues"):
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issues_filter", nil)
-		b.send(chatID, "Enter filter (running, failed, pending, all), or press Enter for open jobs:")
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Open", "issues:open"),
+				tgbotapi.NewInlineKeyboardButtonData("Running", "issues:running"),
+				tgbotapi.NewInlineKeyboardButtonData("Failed", "issues:failed"),
+			),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Pending", "issues:pending"),
+				tgbotapi.NewInlineKeyboardButtonData("All", "issues:all"),
+			),
+		)
+		msg := tgbotapi.NewMessage(chatID, "Show jobs:")
+		msg.ReplyMarkup = keyboard
+		b.API.Send(msg)
 	case strings.HasPrefix(text, "/queue"):
 		b.handleQueue(chatID)
 	case strings.HasPrefix(text, "/status"):
@@ -437,6 +449,16 @@ func (b *Bot) handleText(chatID int64, text string) {
 			filterStatus = "open"
 		}
 		b.showIssues(chatID, filterStatus)
+	case "issues:open":
+		b.showIssues(chatID, "open")
+	case "issues:running":
+		b.showIssues(chatID, "running")
+	case "issues:failed":
+		b.showIssues(chatID, "failed")
+	case "issues:pending":
+		b.showIssues(chatID, "pending")
+	case "issues:all":
+		b.showIssues(chatID, "all")
 	}
 }
 
