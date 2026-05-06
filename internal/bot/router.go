@@ -70,6 +70,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/cancel"):
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		b.send(chatID, "Conversation reset.")
+	case strings.HasPrefix(text, "/update-agents"):
+		go b.handleUpdateAgents(chatID)
 	default:
 		b.handleText(chatID, text)
 	}

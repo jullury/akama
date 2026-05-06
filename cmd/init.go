@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/config"
 	"github.com/jullury/akama/internal/storage"
 	"golang.org/x/term"
@@ -113,37 +114,9 @@ func runInit(cmd *cobra.Command, args []string) {
 
 func installClaude() {
 	fmt.Print("Installing claude... ")
-	if _, err := exec.LookPath("claude"); err == nil {
-		fmt.Println("already installed.")
-		return
-	}
-	if _, err := exec.LookPath("brew"); err == nil {
-		cmd := exec.Command("brew", "install", "--cask", "claude-code")
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("failed: %v\n", err)
-			return
-		}
-	} else if _, err := exec.LookPath("npm"); err == nil {
-		cmd := exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code")
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("failed: %v\n", err)
-			return
-		}
-	} else if _, err := exec.LookPath("curl"); err == nil {
-		cmd := exec.Command("curl", "-fsSL", "https://claude.ai/install.sh", "-o", "/tmp/claude-install.sh")
-		if err := cmd.Run(); err != nil {
-			fmt.Println("failed: curl download failed")
-			return
-		}
-		cmd = exec.Command("bash", "/tmp/claude-install.sh")
-		err := cmd.Run()
-		os.Remove("/tmp/claude-install.sh")
-		if err != nil {
-			fmt.Printf("failed: %v\n", err)
-			return
-		}
-	} else {
-		fmt.Println("failed: no supported package manager found (brew, npm, or curl required)")
+	err := agent.InstallClaudeCmd()
+	if err != nil {
+		fmt.Printf("failed: %v\n", err)
 		return
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
@@ -155,37 +128,9 @@ func installClaude() {
 
 func installOpencode() {
 	fmt.Print("Installing opencode... ")
-	if _, err := exec.LookPath("opencode"); err == nil {
-		fmt.Println("already installed.")
-		return
-	}
-	if _, err := exec.LookPath("brew"); err == nil {
-		cmd := exec.Command("brew", "install", "anomalyco/tap/opencode")
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("failed: %v\n", err)
-			return
-		}
-	} else if _, err := exec.LookPath("npm"); err == nil {
-		cmd := exec.Command("npm", "install", "-g", "opencode-ai@latest")
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("failed: %v\n", err)
-			return
-		}
-	} else if _, err := exec.LookPath("curl"); err == nil {
-		cmd := exec.Command("curl", "-fsSL", "https://opencode.ai/install", "-o", "/tmp/opencode-install.sh")
-		if err := cmd.Run(); err != nil {
-			fmt.Println("failed: curl download failed")
-			return
-		}
-		cmd = exec.Command("bash", "/tmp/opencode-install.sh")
-		err := cmd.Run()
-		os.Remove("/tmp/opencode-install.sh")
-		if err != nil {
-			fmt.Printf("failed: %v\n", err)
-			return
-		}
-	} else {
-		fmt.Println("failed: no supported package manager found (brew, npm, or curl required)")
+	err := agent.InstallOpencodeCmd()
+	if err != nil {
+		fmt.Printf("failed: %v\n", err)
 		return
 	}
 	if _, err := exec.LookPath("opencode"); err != nil {
@@ -193,4 +138,17 @@ func installOpencode() {
 		return
 	}
 	fmt.Println("done.")
+}
+
+func UpdateAgents() {
+	fmt.Println("Updating agents...")
+	results := agent.UpdateAll()
+	for name, err := range results {
+		if err != nil {
+			fmt.Printf("%s: %v\n", name, err)
+		} else {
+			fmt.Printf("%s: updated\n", name)
+		}
+	}
+	fmt.Println("Agent update complete.")
 }

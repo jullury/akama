@@ -553,3 +553,87 @@ func init() {
 	Register(&claudeRunner{})
 	Register(&opencodeRunner{})
 }
+
+// InstallClaudeCmd installs the claude agent using available package managers.
+func InstallClaudeCmd() error {
+	if _, err := exec.LookPath("brew"); err == nil {
+		return exec.Command("brew", "install", "--cask", "claude-code").Run()
+	}
+	if _, err := exec.LookPath("npm"); err == nil {
+		return exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code").Run()
+	}
+	if _, err := exec.LookPath("curl"); err == nil {
+		if err := exec.Command("curl", "-fsSL", "https://claude.ai/install.sh", "-o", "/tmp/claude-install.sh").Run(); err != nil {
+			return err
+		}
+		err := exec.Command("bash", "/tmp/claude-install.sh").Run()
+		os.Remove("/tmp/claude-install.sh")
+		return err
+	}
+	return fmt.Errorf("no supported package manager found (brew, npm, or curl required)")
+}
+
+// InstallOpencodeCmd installs the opencode agent using available package managers.
+func InstallOpencodeCmd() error {
+	if _, err := exec.LookPath("brew"); err == nil {
+		return exec.Command("brew", "install", "anomalyco/tap/opencode").Run()
+	}
+	if _, err := exec.LookPath("npm"); err == nil {
+		return exec.Command("npm", "install", "-g", "opencode-ai@latest").Run()
+	}
+	if _, err := exec.LookPath("curl"); err == nil {
+		if err := exec.Command("curl", "-fsSL", "https://opencode.ai/install", "-o", "/tmp/opencode-install.sh").Run(); err != nil {
+			return err
+		}
+		err := exec.Command("bash", "/tmp/opencode-install.sh").Run()
+		os.Remove("/tmp/opencode-install.sh")
+		return err
+	}
+	return fmt.Errorf("no supported package manager found (brew, npm, or curl required)")
+}
+
+// UpdateClaude updates the claude agent to the latest version.
+// Installs it if not present.
+func UpdateClaude() error {
+	if _, err := exec.LookPath("claude"); err == nil {
+		// Already installed, update it
+		if _, err := exec.LookPath("brew"); err == nil {
+			cmd := exec.Command("brew", "upgrade", "--cask", "claude-code")
+			return cmd.Run()
+		}
+		if _, err := exec.LookPath("npm"); err == nil {
+			cmd := exec.Command("npm", "update", "-g", "@anthropic-ai/claude-code")
+			return cmd.Run()
+		}
+		return fmt.Errorf("no supported package manager found (brew or npm required)")
+	}
+	// Not installed, install it
+	return InstallClaudeCmd()
+}
+
+// UpdateOpencode updates the opencode agent to the latest version.
+// Installs it if not present.
+func UpdateOpencode() error {
+	if _, err := exec.LookPath("opencode"); err == nil {
+		// Already installed, update it
+		if _, err := exec.LookPath("brew"); err == nil {
+			cmd := exec.Command("brew", "upgrade", "anomalyco/tap/opencode")
+			return cmd.Run()
+		}
+		if _, err := exec.LookPath("npm"); err == nil {
+			cmd := exec.Command("npm", "update", "-g", "opencode-ai@latest")
+			return cmd.Run()
+		}
+		return fmt.Errorf("no supported package manager found (brew or npm required)")
+	}
+	// Not installed, install it
+	return InstallOpencodeCmd()
+}
+
+// UpdateAll updates all registered agents to their latest versions.
+func UpdateAll() map[string]error {
+	results := make(map[string]error)
+	results["claude"] = UpdateClaude()
+	results["opencode"] = UpdateOpencode()
+	return results
+}

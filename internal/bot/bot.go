@@ -51,6 +51,7 @@ func New(token string) (*Bot, error) {
 		{Command: "done", Description: "Mark job done and clean up"},
 		{Command: "retry", Description: "Retry a failed job"},
 		{Command: "cancel", Description: "Reset conversation state"},
+		{Command: "update-agents", Description: "Update agents to latest version"},
 	}
 
 	_, cmdErr := api.Request(tgbotapi.NewSetMyCommands(commands...))
