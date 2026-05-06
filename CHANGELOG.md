@@ -1,3 +1,10 @@
+# [1.16.0](https://github.com/jullury/akama/compare/v1.15.0...v1.16.0) (2026-05-06)
+
+
+### Features
+
+* save pending actions and retry after token refresh ([551e9f7](https://github.com/jullury/akama/commit/551e9f7234ebb2b9fe08de93783b8706075abe51))
+
 # [1.15.0](https://github.com/jullury/akama/compare/v1.14.1...v1.15.0) (2026-05-06)
 
 
