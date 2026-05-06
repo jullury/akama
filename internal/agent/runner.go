@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -556,18 +557,22 @@ func init() {
 
 // InstallClaudeCmd installs the claude agent using available package managers.
 func InstallClaudeCmd() error {
-	if _, err := exec.LookPath("brew"); err == nil {
-		return exec.Command("brew", "install", "--cask", "claude-code").Run()
+	// brew --cask is macOS-only; skip it on Linux even if brew is installed.
+	if runtime.GOOS == "darwin" {
+		if _, err := exec.LookPath("brew"); err == nil {
+			return exec.Command("brew", "install", "--cask", "claude-code").Run()
+		}
 	}
 	if _, err := exec.LookPath("npm"); err == nil {
 		return exec.Command("npm", "install", "-g", "@anthropic-ai/claude-code").Run()
 	}
 	if _, err := exec.LookPath("curl"); err == nil {
-		if err := exec.Command("curl", "-fsSL", "https://claude.ai/install.sh", "-o", "/tmp/claude-install.sh").Run(); err != nil {
+		tmpScript := filepath.Join(os.TempDir(), "claude-install.sh")
+		if err := exec.Command("curl", "-fsSL", "https://claude.ai/install.sh", "-o", tmpScript).Run(); err != nil {
 			return err
 		}
-		err := exec.Command("bash", "/tmp/claude-install.sh").Run()
-		os.Remove("/tmp/claude-install.sh")
+		err := exec.Command("bash", tmpScript).Run()
+		os.Remove(tmpScript)
 		return err
 	}
 	return fmt.Errorf("no supported package manager found (brew, npm, or curl required)")
@@ -575,18 +580,22 @@ func InstallClaudeCmd() error {
 
 // InstallOpencodeCmd installs the opencode agent using available package managers.
 func InstallOpencodeCmd() error {
-	if _, err := exec.LookPath("brew"); err == nil {
-		return exec.Command("brew", "install", "anomalyco/tap/opencode").Run()
+	// brew tap formulas may not have Linux bottles; use npm/curl on Linux.
+	if runtime.GOOS == "darwin" {
+		if _, err := exec.LookPath("brew"); err == nil {
+			return exec.Command("brew", "install", "anomalyco/tap/opencode").Run()
+		}
 	}
 	if _, err := exec.LookPath("npm"); err == nil {
 		return exec.Command("npm", "install", "-g", "opencode-ai@latest").Run()
 	}
 	if _, err := exec.LookPath("curl"); err == nil {
-		if err := exec.Command("curl", "-fsSL", "https://opencode.ai/install", "-o", "/tmp/opencode-install.sh").Run(); err != nil {
+		tmpScript := filepath.Join(os.TempDir(), "opencode-install.sh")
+		if err := exec.Command("curl", "-fsSL", "https://opencode.ai/install", "-o", tmpScript).Run(); err != nil {
 			return err
 		}
-		err := exec.Command("bash", "/tmp/opencode-install.sh").Run()
-		os.Remove("/tmp/opencode-install.sh")
+		err := exec.Command("bash", tmpScript).Run()
+		os.Remove(tmpScript)
 		return err
 	}
 	return fmt.Errorf("no supported package manager found (brew, npm, or curl required)")
@@ -596,18 +605,17 @@ func InstallOpencodeCmd() error {
 // Installs it if not present.
 func UpdateClaude() error {
 	if _, err := exec.LookPath("claude"); err == nil {
-		// Already installed, update it
-		if _, err := exec.LookPath("brew"); err == nil {
-			cmd := exec.Command("brew", "upgrade", "--cask", "claude-code")
-			return cmd.Run()
+		// brew --cask upgrade is macOS-only.
+		if runtime.GOOS == "darwin" {
+			if _, err := exec.LookPath("brew"); err == nil {
+				return exec.Command("brew", "upgrade", "--cask", "claude-code").Run()
+			}
 		}
 		if _, err := exec.LookPath("npm"); err == nil {
-			cmd := exec.Command("npm", "update", "-g", "@anthropic-ai/claude-code")
-			return cmd.Run()
+			return exec.Command("npm", "update", "-g", "@anthropic-ai/claude-code").Run()
 		}
 		return fmt.Errorf("no supported package manager found (brew or npm required)")
 	}
-	// Not installed, install it
 	return InstallClaudeCmd()
 }
 
@@ -615,18 +623,16 @@ func UpdateClaude() error {
 // Installs it if not present.
 func UpdateOpencode() error {
 	if _, err := exec.LookPath("opencode"); err == nil {
-		// Already installed, update it
-		if _, err := exec.LookPath("brew"); err == nil {
-			cmd := exec.Command("brew", "upgrade", "anomalyco/tap/opencode")
-			return cmd.Run()
+		if runtime.GOOS == "darwin" {
+			if _, err := exec.LookPath("brew"); err == nil {
+				return exec.Command("brew", "upgrade", "anomalyco/tap/opencode").Run()
+			}
 		}
 		if _, err := exec.LookPath("npm"); err == nil {
-			cmd := exec.Command("npm", "update", "-g", "opencode-ai@latest")
-			return cmd.Run()
+			return exec.Command("npm", "update", "-g", "opencode-ai@latest").Run()
 		}
 		return fmt.Errorf("no supported package manager found (brew or npm required)")
 	}
-	// Not installed, install it
 	return InstallOpencodeCmd()
 }
 

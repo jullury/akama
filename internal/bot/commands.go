@@ -9,14 +9,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
-	"time"
+	"syscall"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/config"
-	"github.com/jullury/akama/internal/daemon"
 	"github.com/jullury/akama/internal/git"
 	"github.com/jullury/akama/internal/job"
 	"github.com/jullury/akama/internal/storage"
@@ -523,10 +523,12 @@ func isNewerVersion(latest, current string) bool {
 	currentParts := strings.Split(current, ".")
 
 	for i := 0; i < len(latestParts) && i < len(currentParts); i++ {
-		if latestParts[i] > currentParts[i] {
+		l, _ := strconv.Atoi(latestParts[i])
+		c, _ := strconv.Atoi(currentParts[i])
+		if l > c {
 			return true
 		}
-		if latestParts[i] < currentParts[i] {
+		if l < c {
 			return false
 		}
 	}
@@ -568,49 +570,36 @@ func (b *Bot) handleUpdateCommand(chatID int64) {
 }
 
 func (b *Bot) handleUpdateConfirm(chatID int64) {
-	b.send(chatID, "Starting update...")
+	b.send(chatID, "Downloading and installing update...")
 
-	cfg := b.Config
-
-	if daemon.IsRunning(cfg.PIDPath) {
-		b.send(chatID, "Stopping running daemon...")
-		if err := daemon.StopDaemon(cfg.PIDPath); err != nil {
-			b.send(chatID, fmt.Sprintf("Failed to stop daemon: %v", err))
-			return
-		}
-		b.send(chatID, "Waiting for daemon to stop...")
-		deadline := time.After(35 * time.Second)
-		for {
-			select {
-			case <-deadline:
-				b.send(chatID, "Timed out waiting for daemon to exit.")
-				return
-			case <-time.After(300 * time.Millisecond):
-				if !daemon.IsRunning(cfg.PIDPath) {
-					b.send(chatID, "Daemon stopped.")
-					goto download
-				}
-			}
-		}
-	}
-
-download:
-	b.send(chatID, "Downloading and installing...")
 	if err := b.downloadUpdate(); err != nil {
 		b.send(chatID, fmt.Sprintf("Update failed: %v", err))
 		return
 	}
 
-	b.send(chatID, "Update installed successfully.")
-
-	b.send(chatID, "Starting daemon...")
-	pid, err := daemon.ForkDaemon()
+	exePath, err := os.Executable()
 	if err != nil {
-		b.send(chatID, fmt.Sprintf("Failed to start daemon: %v", err))
+		b.send(chatID, fmt.Sprintf("Could not determine binary path: %v", err))
 		return
 	}
 
-	b.send(chatID, fmt.Sprintf("Akama daemon started (pid %d)", pid))
+	// Spawn a detached helper that waits for this process to exit, then starts the new daemon.
+	// We cannot stop ourselves and then continue in the same goroutine — sending SIGTERM to the
+	// daemon kills the goroutine running this handler before any restart logic can execute.
+	pid := os.Getpid()
+	script := fmt.Sprintf("while kill -0 %d 2>/dev/null; do sleep 1; done; '%s' start", pid, exePath)
+	helper := exec.Command("sh", "-c", script)
+	helper.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := helper.Start(); err != nil {
+		b.send(chatID, fmt.Sprintf("Failed to schedule restart: %v", err))
+		return
+	}
+
+	b.send(chatID, "Update installed. Restarting now...")
+
+	// Signal ourselves to shut down cleanly; the helper starts the new daemon after we exit.
+	proc, _ := os.FindProcess(pid)
+	proc.Signal(syscall.SIGTERM)
 }
 
 func (b *Bot) downloadUpdate() error {

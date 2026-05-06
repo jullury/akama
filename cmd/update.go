@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,10 +133,12 @@ func isNewerVersion(latest, current string) bool {
 	currentParts := strings.Split(current, ".")
 
 	for i := 0; i < len(latestParts) && i < len(currentParts); i++ {
-		if latestParts[i] > currentParts[i] {
+		l, _ := strconv.Atoi(latestParts[i])
+		c, _ := strconv.Atoi(currentParts[i])
+		if l > c {
 			return true
 		}
-		if latestParts[i] < currentParts[i] {
+		if l < c {
 			return false
 		}
 	}
