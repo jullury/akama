@@ -1,8 +1,12 @@
 package bot
 
 import (
+	"encoding/base64"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -84,13 +88,141 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/cancel"):
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		b.send(chatID, "Conversation reset.")
+	case strings.HasPrefix(text, "/done"):
+		conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
+		if err == nil && conv.State == "await_issue_images" {
+			// Process the issue with collected images
+			repoURL, _ := conv.Data["repo_url"].(string)
+			providerName, _ := conv.Data["provider"].(string)
+			token, _ := conv.Data["token"].(string)
+			title, _ := conv.Data["title"].(string)
+			body, _ := conv.Data["body"].(string)
+			images, _ := conv.Data["images"].(string)
+
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+			var issueURL string
+			var err error
+			switch providerName {
+			case "github":
+				issueURL, err = provider.CreateGitHubIssue(repoURL, token, title, body)
+			case "gitlab":
+				issueURL, err = provider.CreateGitLabIssue(repoURL, token, title, body)
+			}
+			if err != nil {
+				if provider.IsAuthError(err) {
+					pendingData := map[string]interface{}{
+						"pending_action": "create_issue",
+						"title":          title,
+						"body":           body,
+						"repo_url":       repoURL,
+						"provider_name":  providerName,
+						"token":          token,
+						"images":         images,
+					}
+					if saveErr := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_token_refresh", pendingData); saveErr != nil {
+						log.Printf("[await_issue_images] Failed to save pending action: %v", saveErr)
+					}
+					b.send(chatID, fmt.Sprintf(
+						"❌ Authentication failed for %s. Your token may have expired or been revoked.\n\n"+
+							"Use /connect to refresh your token, then /newissue to try again.",
+						providerName,
+					))
+					return
+				}
+				b.send(chatID, fmt.Sprintf("Failed to create issue: %v", err))
+				return
+			}
+			b.send(chatID, fmt.Sprintf("Issue created: %s\n\nProcessing it now...", issueURL))
+			b.processIssueWithImages(chatID, issueURL, token, images)
+		} else {
+			b.send(chatID, "No pending issue to complete. Use /newissue to start.")
+		}
 	case strings.HasPrefix(text, "/update_agents"):
 		go b.handleUpdateAgents(chatID)
 	case strings.HasPrefix(text, "/update"):
 		go b.handleUpdateCommand(chatID)
 	default:
-		b.handleText(chatID, text)
+		if msg.Photo != nil {
+			b.handlePhoto(chatID, msg)
+		} else {
+			b.handleText(chatID, text)
+		}
 	}
+}
+
+func (b *Bot) handlePhoto(chatID int64, msg *tgbotapi.Message) {
+	conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
+	if err != nil {
+		log.Printf("get conversation: %v", err)
+		return
+	}
+
+	if conv.State == "await_issue_desc" {
+		b.send(chatID, "Please describe the issue first before sending images. Send the issue description (first line = title, rest = description).")
+		return
+	}
+
+	if conv.State != "idle" && conv.State != "await_issue_images" {
+		b.send(chatID, "Images can only be sent when creating a new issue. Use /newissue to start.")
+		return
+	}
+
+	if conv.State == "idle" {
+		b.send(chatID, "Use /newissue to create a new issue first, then you can attach images.")
+		return
+	}
+
+	// Get the highest resolution photo
+	photos := msg.Photo
+	photo := photos[len(photos)-1]
+
+	fileConfig := tgbotapi.FileConfig{FileID: photo.FileID}
+	file, err := b.API.GetFile(fileConfig)
+	if err != nil {
+		log.Printf("[handlePhoto] Failed to get file: %v", err)
+		b.send(chatID, "Failed to download image. Please try again.")
+		return
+	}
+
+	fileURL := file.Link(b.API.Token)
+
+	resp, err := http.Get(fileURL)
+	if err != nil {
+		log.Printf("[handlePhoto] Failed to download: %v", err)
+		b.send(chatID, "Failed to download image. Please try again.")
+		return
+	}
+	defer resp.Body.Close()
+
+	imageData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("[handlePhoto] Failed to read: %v", err)
+		b.send(chatID, "Failed to read image. Please try again.")
+		return
+	}
+
+	// Store image info in conversation data: URL|size in bytes
+	imagesInterface, _ := conv.Data["images"]
+	images := ""
+	if imagesInterface != nil {
+		images, _ = imagesInterface.(string)
+	}
+
+	imageEntry := fmt.Sprintf("%s|%d", fileURL, len(imageData))
+	if images != "" {
+		images += ";"
+	}
+	images += imageEntry
+
+	conv.Data["images"] = images
+	if err := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issue_images", conv.Data); err != nil {
+		log.Printf("[handlePhoto] Failed to save: %v", err)
+		b.send(chatID, "Failed to save image. Please try again.")
+		return
+	}
+
+	b.send(chatID, fmt.Sprintf("✅ Image received (%d bytes). Send more images or /done to finish.", len(imageData)))
 }
 
 func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
@@ -300,6 +432,29 @@ func (b *Bot) handleText(chatID int64, text string) {
 			return
 		}
 
+		// Save issue data and transition to image collection state
+		pendingData := map[string]interface{}{
+			"repo_url":      repoURL,
+			"provider":      providerName,
+			"token":         token,
+			"title":         title,
+			"body":          body,
+			"images":        "",
+		}
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issue_images", pendingData)
+		b.send(chatID, "Now you can send images to attach to the issue. Send images or /done to create the issue.")
+		return
+	case "await_issue_images":
+		// Process the issue with images
+		repoURL, _ := conv.Data["repo_url"].(string)
+		providerName, _ := conv.Data["provider"].(string)
+		token, _ := conv.Data["token"].(string)
+		title, _ := conv.Data["title"].(string)
+		body, _ := conv.Data["body"].(string)
+		images, _ := conv.Data["images"].(string)
+
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
 		var issueURL string
 		var err error
 		switch providerName {
@@ -317,9 +472,10 @@ func (b *Bot) handleText(chatID int64, text string) {
 					"repo_url":       repoURL,
 					"provider_name":  providerName,
 					"token":          token,
+					"images":         images,
 				}
 				if saveErr := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_token_refresh", pendingData); saveErr != nil {
-					log.Printf("[await_issue_desc] Failed to save pending action: %v", saveErr)
+					log.Printf("[await_issue_images] Failed to save pending action: %v", saveErr)
 				}
 				b.send(chatID, fmt.Sprintf(
 					"❌ Authentication failed for %s. Your token may have expired or been revoked.\n\n"+
@@ -332,7 +488,7 @@ func (b *Bot) handleText(chatID int64, text string) {
 			return
 		}
 		b.send(chatID, fmt.Sprintf("Issue created: %s\n\nProcessing it now...", issueURL))
-		b.processIssue(chatID, issueURL, token)
+		b.processIssueWithImages(chatID, issueURL, token, images)
 	case "await_config":
 		field, _ := conv.Data["field"].(string)
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
