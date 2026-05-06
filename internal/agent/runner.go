@@ -588,7 +588,7 @@ func InstallOpencodeCmd() error {
 		}
 	}
 	if _, err := exec.LookPath("npm"); err == nil {
-		return exec.Command("npm", "install", "-g", "opencode-ai@latest").Run()
+		return exec.Command("npm", "install", "-g", "--force", "opencode-ai@latest").Run()
 	}
 	if _, err := exec.LookPath("curl"); err == nil {
 		tmpScript := filepath.Join(os.TempDir(), "opencode-install.sh")
@@ -629,9 +629,9 @@ func UpdateOpencode() error {
 				return exec.Command("brew", "upgrade", "anomalyco/tap/opencode").Run()
 			}
 		}
-		if _, err := exec.LookPath("npm"); err == nil {
-			return exec.Command("npm", "update", "-g", "opencode-ai@latest").Run()
-		}
+	if _, err := exec.LookPath("npm"); err == nil {
+		return exec.Command("npm", "install", "-g", "--force", "opencode-ai@latest").Run()
+	}
 		return fmt.Errorf("no supported package manager found (brew or npm required)")
 	}
 	return InstallOpencodeCmd()
