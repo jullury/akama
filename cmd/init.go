@@ -78,6 +78,7 @@ func runInit(cmd *cobra.Command, args []string) {
 	default:
 		installClaude()
 	}
+	installSkills()
 
 	fmt.Print("Workspace directory (default ~/.akama/workspaces): ")
 	var ws string
@@ -138,6 +139,43 @@ func installOpencode() {
 		return
 	}
 	fmt.Println("done.")
+}
+
+func installSkills() {
+	fmt.Println("\nAvailable skills (press Enter to skip):")
+	for i, s := range agent.BuiltinSkills {
+		fmt.Printf("  %d. %-25s — %s\n", i+1, s.Name, s.Description)
+	}
+	fmt.Print("\nSelect skills to install [1,2,... or 'all']: ")
+	var input string
+	fmt.Scanln(&input)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return
+	}
+
+	var toInstall []agent.Skill
+	if strings.ToLower(input) == "all" {
+		toInstall = agent.BuiltinSkills
+	} else {
+		for _, part := range strings.Split(input, ",") {
+			var idx int
+			fmt.Sscanf(strings.TrimSpace(part), "%d", &idx)
+			s := agent.SkillByIndex(idx - 1)
+			if s != nil {
+				toInstall = append(toInstall, *s)
+			}
+		}
+	}
+
+	for _, s := range toInstall {
+		fmt.Printf("Installing %s... ", s.Name)
+		if err := agent.InstallSkill(s.ID); err != nil {
+			fmt.Printf("failed: %v\n", err)
+		} else {
+			fmt.Println("done.")
+		}
+	}
 }
 
 func UpdateAgents() {

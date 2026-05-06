@@ -92,6 +92,7 @@ Jobs
 
 Settings
 /config — configure git name, email, and model
+/skills — browse and install skillhub.club skills
 /update — update Akama server binary to the latest version
 /update_agents — update agents to latest version
 
@@ -471,6 +472,37 @@ func (b *Bot) handleCancelJob(chatID int64, jobID int64) {
 	storage.SetJobFailed(b.JobsDB, jobID, "cancelled by user")
 	storage.ResetConversation(b.JobsDB, chatID, "telegram")
 	b.send(chatID, fmt.Sprintf("Job #%d cancelled.", jobID))
+}
+
+func (b *Bot) handleSkills(chatID int64) {
+	var sb strings.Builder
+	sb.WriteString("Available skills from skillhub.club:\n\n")
+	for i, s := range agent.BuiltinSkills {
+		sb.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, s.Name, s.Description))
+	}
+	sb.WriteString("\nTap to install, or use + to add a custom skill by ID.")
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for i, s := range agent.BuiltinSkills {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(s.Name, fmt.Sprintf("skills:install:%d", i)),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("+ Custom skill by ID", "skills:custom"),
+	))
+
+	msg := tgbotapi.NewMessage(chatID, sb.String())
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.API.Send(msg)
+}
+
+func (b *Bot) installSkill(chatID int64, skillID string) {
+	if err := agent.InstallSkill(skillID); err != nil {
+		b.send(chatID, fmt.Sprintf("Failed to install skill %s: %v", skillID, err))
+	} else {
+		b.send(chatID, fmt.Sprintf("✅ Skill installed: %s", skillID))
+	}
 }
 
 func (b *Bot) handleUpdateAgents(chatID int64) {

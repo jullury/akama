@@ -79,6 +79,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/followup"):
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup_id", nil)
 		b.send(chatID, "Enter the job ID for follow-up:")
+	case strings.HasPrefix(text, "/skills"):
+		b.handleSkills(chatID)
 	case strings.HasPrefix(text, "/cancel"):
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		b.send(chatID, "Conversation reset.")
@@ -242,6 +244,23 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 				log.Printf("reset conversation: %v", err)
 			}
 			b.send(chatID, "Connection deleted.")
+			return
+		}
+		if rest, ok := strings.CutPrefix(data, "skills:install:"); ok {
+			var idx int
+			fmt.Sscanf(rest, "%d", &idx)
+			s := agent.SkillByIndex(idx)
+			if s == nil {
+				b.send(chatID, "Unknown skill.")
+				return
+			}
+			b.send(chatID, fmt.Sprintf("Installing %s...", s.Name))
+			go b.installSkill(chatID, s.ID)
+			return
+		}
+		if data == "skills:custom" {
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_skill_id", nil)
+			b.send(chatID, "Send the skillhub.club skill ID to install:\n\nExample: `massgen-massgen-file-search`")
 			return
 		}
 		if data == "update:confirm" {
@@ -469,6 +488,11 @@ func (b *Bot) handleText(chatID int64, text string) {
 			return
 		}
 		b.handleCancelJob(chatID, jobID)
+	case "await_skill_id":
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		skillID := strings.TrimSpace(text)
+		b.send(chatID, fmt.Sprintf("Installing skill %s...", skillID))
+		go b.installSkill(chatID, skillID)
 	case "await_issues_filter":
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		filterStatus := strings.ToLower(strings.TrimSpace(text))
