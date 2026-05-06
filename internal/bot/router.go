@@ -76,20 +76,10 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_retry", nil)
 		b.send(chatID, "Enter the job ID to retry:")
 	case strings.HasPrefix(text, "/done"):
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_done", nil)
-		b.send(chatID, "Enter the job ID to mark as done, or type 'all' to clean up all completed jobs:")
-	case strings.HasPrefix(text, "/followup"):
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup_id", nil)
-		b.send(chatID, "Enter the job ID for follow-up:")
-	case strings.HasPrefix(text, "/skills"):
-		b.handleSkills(chatID)
-	case strings.HasPrefix(text, "/cancel"):
-		storage.ResetConversation(b.JobsDB, chatID, "telegram")
-		b.send(chatID, "Conversation reset.")
-	case strings.HasPrefix(text, "/done"):
+		// Check if user is in issue image collection mode first
 		conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
 		if err == nil && conv.State == "await_issue_images" {
-			// Process the issue with collected images
+			// Image skipper: process issue with collected images
 			repoURL, _ := conv.Data["repo_url"].(string)
 			providerName, _ := conv.Data["provider"].(string)
 			token, _ := conv.Data["token"].(string)
@@ -100,15 +90,15 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 			storage.ResetConversation(b.JobsDB, chatID, "telegram")
 
 			var issueURL string
-			var err error
+			var issueErr error
 			switch providerName {
 			case "github":
-				issueURL, err = provider.CreateGitHubIssue(repoURL, token, title, body)
+				issueURL, issueErr = provider.CreateGitHubIssue(repoURL, token, title, body)
 			case "gitlab":
-				issueURL, err = provider.CreateGitLabIssue(repoURL, token, title, body)
+				issueURL, issueErr = provider.CreateGitLabIssue(repoURL, token, title, body)
 			}
-			if err != nil {
-				if provider.IsAuthError(err) {
+			if issueErr != nil {
+				if provider.IsAuthError(issueErr) {
 					pendingData := map[string]interface{}{
 						"pending_action": "create_issue",
 						"title":          title,
@@ -128,14 +118,23 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 					))
 					return
 				}
-				b.send(chatID, fmt.Sprintf("Failed to create issue: %v", err))
+				b.send(chatID, fmt.Sprintf("❌ Failed to create issue: %v", issueErr))
 				return
 			}
-			b.send(chatID, fmt.Sprintf("Issue created: %s\n\nProcessing it now...", issueURL))
-			b.processIssueWithImages(chatID, issueURL, token, images)
-		} else {
-			b.send(chatID, "No pending issue to complete. Use /newissue to start.")
+			b.send(chatID, fmt.Sprintf("✅ Issue created: %s", issueURL))
+			return
 		}
+		// Normal /done command: mark job as done
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_done", nil)
+		b.send(chatID, "Enter the job ID to mark as done, or type 'all' to clean up all completed jobs:")
+	case strings.HasPrefix(text, "/followup"):
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup_id", nil)
+		b.send(chatID, "Enter the job ID for follow-up:")
+	case strings.HasPrefix(text, "/skills"):
+		b.handleSkills(chatID)
+	case strings.HasPrefix(text, "/cancel"):
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		b.send(chatID, "Conversation reset.")
 	case strings.HasPrefix(text, "/update_agents"):
 		go b.handleUpdateAgents(chatID)
 	case strings.HasPrefix(text, "/update"):
