@@ -66,7 +66,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/queue"):
 		b.handleQueue(chatID)
 	case strings.HasPrefix(text, "/status"):
-		b.handleStatus(chatID)
+		b.handleStatus(chatID, 0)
 	case strings.HasPrefix(text, "/logs"):
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_logs", nil)
 		b.send(chatID, "Enter the job ID to view logs:")
@@ -223,7 +223,7 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		if rest, ok := strings.CutPrefix(data, "status:page:"); ok {
 			var page int
 			fmt.Sscanf(rest, "%d", &page)
-			b.handleStatus(chatID)
+			b.handleStatus(chatID, page)
 			return
 		}
 		if rest, ok := strings.CutPrefix(data, "issues:"); ok {

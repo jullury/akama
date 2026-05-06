@@ -158,19 +158,25 @@ Logs are written to `<log_dir>/logs/akama-YYYY-MM-DD.log`. Files are rotated dai
 
 ### Telegram Commands
 
-| Command       | Description                                      |
-|---------------|--------------------------------------------------|
-| `/connect`    | Connect a GitHub or GitLab repository via OAuth  |
-| `/connections`| List saved repository connections                |
-| `/disconnect` | Remove all connections for this chat             |
-| `/config`     | Set git identity or override the model           |
-| `/newissue`   | Create a new issue and immediately start a job   |
-| `/issues`     | List jobs with a created PR                      |
-| `/queue`      | List jobs with status pending or running         |
-| `/status`     | Show the last 5 jobs                             |
-| `/done <id>`  | Mark a job done and clean up its workspace       |
-| `/retry <id>` | Reset a failed job to pending and requeue it     |
-| `/cancel`     | Reset conversation state to idle                 |
+| Command         | Description                                      |
+|-----------------|--------------------------------------------------|
+| `/cancel`       | Reset conversation state                         |
+| `/config`       | Configure git name, email, and model             |
+| `/connect`      | Connect repository account                       |
+| `/connections`  | List saved repo connections                      |
+| `/delete_connection` | Delete a specific connection                |
+| `/disconnect`   | Delete all connections for this chat             |
+| `/done <id>`    | Mark job done and clean up                      |
+| `/followup`     | Continue working on a job                        |
+| `/issues`       | List completed issues                            |
+| `/logs`         | View agent output for a job                      |
+| `/newissue`     | Create a new issue                               |
+| `/queue`        | List pending and running jobs                    |
+| `/retry <id>`   | Retry a failed job                               |
+| `/start`        | Welcome message                                  |
+| `/status`       | Show last 10 jobs                                |
+| `/update`       | Update Akama server binary to the latest version |
+| `/update_agents`| Update agents to latest version                  |
 
 **Fixing an issue:** paste a GitHub or GitLab issue URL into the chat while in `idle` state. Akama starts working on it immediately.
 

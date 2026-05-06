@@ -69,33 +69,33 @@ func (b *Bot) handleStart(chatID int64) {
 }
 
 func (b *Bot) handleHelp(chatID int64) {
-	msg := `Akama — AI-powered issue fixer
+	msg := `Akama — Coding agent orchestration system
 
-Send a GitHub or GitLab issue URL to start a job, or use these commands:
+Akama is a coding agent orchestration system controlled via Telegram. Send it a GitHub or GitLab issue URL — Akama clones the repo, runs an agent to fix the issue, pushes a branch, and opens a pull request, then notifies you when done.
 
 Repository
-/connect — connect a repository via OAuth
-/connections — list saved connections
-/delete_connection — delete a single connection
-/disconnect — remove all connections
+/connect — connect repository account
+/connections — list saved repo connections
+/delete_connection — delete a specific connection
+/disconnect — delete all connections for this chat
 
 Jobs
-/newissue — create and immediately fix a new issue
-/issues — list jobs (select filter with buttons)
-/queue — show pending and running jobs
-/status — show recent jobs
-/logs — view agent output for a job (will prompt for ID)
-/retry — retry a failed job (will prompt for ID)
-/cancel — cancel a running job (will prompt for ID)
-/done — mark job done and clean up workspace (will prompt for ID)
-/done all — clean up all completed and failed jobs
-/followup — continue working on a job with status 'pr_created' or 'updating' (will prompt for ID)
+/newissue — create a new issue
+/issues — list completed issues
+/queue — list pending and running jobs
+/status — show last 10 jobs
+/logs — view agent output for a job
+/retry — retry a failed job
+/cancel — reset conversation state
+/done — mark job done and clean up
+/followup — continue working on a job
 
 Settings
-/config — set git name, email and AI model
+/config — configure git name, email, and model
+/update — update Akama server binary to the latest version
 /update_agents — update agents to latest version
 
-/cancel — reset conversation state
+/start — welcome message
 /help — show this message`
 	b.send(chatID, msg)
 }
@@ -299,8 +299,7 @@ func (b *Bot) handleQueue(chatID int64) {
 
 const jobsPerPage = 10
 
-func (b *Bot) handleStatus(chatID int64) {
-	page := 0
+func (b *Bot) handleStatus(chatID int64, page int) {
 
 	total, err := storage.CountAllJobs(b.JobsDB)
 	if err != nil {
