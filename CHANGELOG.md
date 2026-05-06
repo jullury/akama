@@ -1,3 +1,33 @@
+# [2.0.0](https://github.com/jullury/akama/compare/v1.17.1...v2.0.0) (2026-05-06)
+
+
+* feat!: add skillhub.club integration for extensible agent capabilities ([e5a18ee](https://github.com/jullury/akama/commit/e5a18eec306c9b4a38bec11d269fbe5d9d60ad0d))
+
+
+### BREAKING CHANGES
+
+* Introduce new /skills command and skill installation system
+
+Add comprehensive skill management system that allows users to browse and install
+skills from skillhub.club, significantly expanding agent capabilities.
+
+Key features:
+- Built-in skill catalog with 12 pre-curated skills
+- Interactive skill browser with inline keyboard navigation
+- Custom skill installation by ID
+- Automatic skill installation across all agents (claude, opencode)
+- New conversation state handling for skill ID input
+
+New commands:
+- /skills — browse and install skillhub.club skills
+- + Custom skill by ID — install skills by identifier
+
+Files modified:
+- cmd/init.go: Update initialization for skill system
+- internal/agent/skills.go: New skill management package
+- internal/bot/commands.go: Add skills command and installation logic
+- internal/bot/router.go: Add routing for skills commands and callbacks
+
 ## [1.17.1](https://github.com/jullury/akama/compare/v1.17.0...v1.17.1) (2026-05-06)
 
 
