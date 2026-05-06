@@ -67,7 +67,7 @@ Send a GitHub or GitLab issue URL to start a job, or use these commands:
 Repository
 /connect — connect a repository via OAuth
 /connections — list saved connections
-/delete-connection — delete a single connection
+/delete_connection — delete a single connection
 /disconnect — remove all connections
 
 Jobs
@@ -84,7 +84,7 @@ Jobs
 
 Settings
 /config — set git name, email and AI model
-/update-agents — update agents to latest version
+/update_agents — update agents to latest version
 
 /cancel — reset conversation state
 /help — show this message`
@@ -288,7 +288,7 @@ func (b *Bot) handleQueue(chatID int64) {
 	b.send(chatID, sb.String())
 }
 
-const jobsPerPage = 5
+const jobsPerPage = 10
 
 func (b *Bot) handleStatus(chatID int64) {
 	page := 0

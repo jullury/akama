@@ -42,7 +42,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		b.handleNewIssue(chatID)
 	case strings.HasPrefix(text, "/connections"):
 		b.handleConnections(chatID)
-	case strings.HasPrefix(text, "/delete-connection"):
+	case strings.HasPrefix(text, "/delete_connection"):
 		b.handleDeleteConnection(chatID)
 	case strings.HasPrefix(text, "/connect"):
 		b.handleConnect(chatID)
@@ -82,7 +82,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/cancel"):
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		b.send(chatID, "Conversation reset.")
-	case strings.HasPrefix(text, "/update-agents"):
+	case strings.HasPrefix(text, "/update_agents"):
 		go b.handleUpdateAgents(chatID)
 	default:
 		b.handleText(chatID, text)
@@ -222,6 +222,10 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			var page int
 			fmt.Sscanf(rest, "%d", &page)
 			b.handleStatus(chatID)
+			return
+		}
+		if rest, ok := strings.CutPrefix(data, "issues:"); ok {
+			b.showIssues(chatID, rest)
 			return
 		}
 		if connIDStr, ok := strings.CutPrefix(data, "connection:delete:"); ok {
@@ -451,16 +455,6 @@ func (b *Bot) handleText(chatID int64, text string) {
 			filterStatus = "open"
 		}
 		b.showIssues(chatID, filterStatus)
-	case "issues:open":
-		b.showIssues(chatID, "open")
-	case "issues:running":
-		b.showIssues(chatID, "running")
-	case "issues:failed":
-		b.showIssues(chatID, "failed")
-	case "issues:pending":
-		b.showIssues(chatID, "pending")
-	case "issues:all":
-		b.showIssues(chatID, "all")
 	}
 }
 

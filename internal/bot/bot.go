@@ -43,15 +43,16 @@ func New(token string) (*Bot, error) {
 		{Command: "connect", Description: "Connect repository account"},
 		{Command: "connections", Description: "List saved repo connections"},
 		{Command: "disconnect", Description: "Delete all connections for this chat"},
+		{Command: "delete_connection", Description: "Delete a specific connection"},
 		{Command: "config", Description: "Configure git name, email, and model"},
 		{Command: "newissue", Description: "Create a new issue"},
 		{Command: "issues", Description: "List completed issues"},
 		{Command: "queue", Description: "List pending and running jobs"},
-		{Command: "status", Description: "Show last 5 jobs"},
+		{Command: "status", Description: "Show last 10 jobs"},
 		{Command: "done", Description: "Mark job done and clean up"},
 		{Command: "retry", Description: "Retry a failed job"},
 		{Command: "cancel", Description: "Reset conversation state"},
-		{Command: "update-agents", Description: "Update agents to latest version"},
+		{Command: "update_agents", Description: "Update agents to latest version"},
 	}
 
 	_, cmdErr := api.Request(tgbotapi.NewSetMyCommands(commands...))

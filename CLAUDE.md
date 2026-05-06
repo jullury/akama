@@ -13,13 +13,14 @@ OAuth credentials are baked in at compile time via `-ldflags`. Always build thro
 ```bash
 make build          # build with OAuth creds from .env
 make start          # build + stop any running instance + start daemon
-make clean          # remove binary
+make dist           # cross-compile for linux/darwin × amd64/arm64 → ./dist/
+make clean          # remove binary and dist/
 go build ./...      # quick compile check (no OAuth creds, Version = "dev")
 ```
 
 `.env` file must contain `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET`.
 
-`config.Version` defaults to `"dev"` unless injected via `make build`. The `akama update` command refuses to run on dev builds.
+`config.Version` defaults to `"dev"` unless injected via `make build`. The `akama update` command refuses to run on dev builds. `make dist` strips debug symbols (`-s -w`) and uses `CGO_ENABLED=0` for static binaries.
 
 CLI subcommands (normal mode):
 ```bash
@@ -42,6 +43,8 @@ The binary has two modes, detected in `main.go` before cobra runs:
 - **Daemon mode** (`runDaemon()` in `main.go`): triggered when `os.Args` contains `--daemon`. Loads config, opens SQLite, calls `storage.RecoverInterruptedJobs` (marks stale `running`/`awaiting_input` jobs as failed), creates the bot, blocks on `bot.RunCtx(ctx)`.
 
 `akama start` forks itself via `daemon.ForkDaemon`. The daemon writes its own PID file; `akama stop` sends SIGTERM and polls until the PID file is gone (the daemon removes it via `defer` on clean exit) — this prevents a race where `make start` would launch a second instance while the first is still draining.
+
+**Platform**: Unix only. `daemon.ForkDaemon` uses `syscall.Setsid` to detach from the parent process group; Windows is not supported.
 
 ## Request Flow
 
@@ -126,6 +129,7 @@ router.handleReply / handleText(await_agent_input)
 - `opencode`: reads prompt file content, passes as message string arg with `--dir <workspacePath> --dangerously-skip-permissions --format json` — outputs NDJSON event stream; exits 0 on API errors, so `extractOpencodeError` scans for `{"type":"api_error"}` events
 - Both use `exec.CommandContext` so the subprocess is killed when the daemon context is cancelled (SIGTERM) or the per-job timeout (`agent_timeout_mins`, default 30) expires.
 - `agent.FetchModels(name)` calls the provider's API to list available models; used to populate the paginated model picker in `/config`.
+- Agent binaries are installed on first use via `agent.Install()` — tries Homebrew, then npm, then curl as fallback. Users must authenticate the installed CLI manually after installation.
 
 **Question detection**: `agent.IsQuestion(text)` returns true when the last non-empty line of agent output ends with `?`. This is the only signal used to enter `awaiting_input` state.
 
@@ -136,6 +140,12 @@ router.handleReply / handleText(await_agent_input)
 **Concurrency model**: Each job goroutine is registered in two structures: a `sync.WaitGroup` (for graceful shutdown) and a `cancelFuncs` map keyed by jobID (for per-job cancellation). On SIGTERM, the daemon context is cancelled, then `wg.Wait()` drains with a 30s hard timeout. `/cancel <id>` looks up the job's `CancelFunc` in the map and calls it directly. Message handlers are dispatched as goroutines; long-polling itself runs in the main goroutine of `RunCtx`.
 
 **Branch confirmation**: The first issue submitted for a given repo triggers the `await_branch_confirm` state — the bot asks the user to confirm or override the default branch before cloning. Subsequent issues for that repo skip this step and use the persisted default branch.
+
+**HTTP timeouts**: Telegram long-poll client timeout is 90 seconds. Provider API calls (GitHub/GitLab) use a 30-second timeout. Agent subprocess timeout is `agent_timeout_mins` (default 30 minutes), enforced via `exec.CommandContext`.
+
+**SQLite driver**: Uses `modernc.org/sqlite` — a pure-Go port with no CGO dependency. This is what makes `CGO_ENABLED=0` static builds possible via `make dist`.
+
+**Provider helpers** (`internal/provider/client.go`): `GetCIStatus(repoURL, token, branch, providerName)` checks pipeline/check-run status and returns `"pending"`, `"success"`, `"failure"`, or `"none"`. `GetDefaultBranch(repoURL, token, providerName)` queries the repo API to resolve the default branch name used during `await_branch_confirm`.
 
 **Conversation state machine** (`conversations` table, `data` column is JSON):
 - `idle` — default
@@ -191,6 +201,8 @@ Uses `github.com/go-telegram-bot-api/telegram-bot-api/v5`. Key v5 notes:
 
 ## Release / CI
 
-`.github/workflows/release.yml` runs semantic-release first (creates the git tag and GitHub release), then builds binaries with the version injected via `-X config.Version=$VERSION`, and uploads them to the release via `gh release upload`. Binaries are named `akama-<os>-<arch>`. The build matrix only runs when semantic-release actually cuts a new release.
+`.github/workflows/release.yml` runs semantic-release first (creates the git tag and GitHub release), then builds binaries with the version injected via `-X github.com/jullury/akama/internal/config.Version=$VERSION`, and uploads them to the release via `gh release upload`. Binaries are named `akama-<os>-<arch>`. The build matrix only runs when semantic-release actually cuts a new release.
+
+Required repository secrets: `OAUTH_GITHUB_CLIENT_ID`, `OAUTH_GITHUB_CLIENT_SECRET`, `OAUTH_GITLAB_CLIENT_ID`, `OAUTH_GITLAB_CLIENT_SECRET`. These are prefixed with `OAUTH_` because GitHub reserves the `GITHUB_*` namespace for its own built-in secrets.
 
 Commits must follow [Conventional Commits](https://www.conventionalcommits.org): `fix:` → patch, `feat:` → minor, `BREAKING CHANGE:` → major.
