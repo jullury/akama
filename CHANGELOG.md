@@ -1,3 +1,10 @@
+# [2.4.0](https://github.com/jullury/akama/compare/v2.3.2...v2.4.0) (2026-05-06)
+
+
+### Features
+
+* **docker:** add Docker deployment with compose setup ([f7ead2a](https://github.com/jullury/akama/commit/f7ead2ad354f1762a175a20bc3b2ec46eaa20610))
+
 ## [2.3.2](https://github.com/jullury/akama/compare/v2.3.1...v2.3.2) (2026-05-06)
 
 
