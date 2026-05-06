@@ -291,6 +291,17 @@ func (b *Bot) handleText(chatID int64, text string) {
 		}
 		if err != nil {
 			if provider.IsAuthError(err) {
+				pendingData := map[string]interface{}{
+					"pending_action": "create_issue",
+					"title":          title,
+					"body":           body,
+					"repo_url":       repoURL,
+					"provider_name":  providerName,
+					"token":          token,
+				}
+				if saveErr := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_token_refresh", pendingData); saveErr != nil {
+					log.Printf("[await_issue_desc] Failed to save pending action: %v", saveErr)
+				}
 				b.send(chatID, fmt.Sprintf(
 					"❌ Authentication failed for %s. Your token may have expired or been revoked.\n\n"+
 						"Use /connect to refresh your token, then /newissue to try again.",
@@ -556,6 +567,15 @@ func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultB
 
 	if err != nil {
 		if provider.IsAuthError(err) {
+			pendingData := map[string]interface{}{
+				"pending_action": "process_issue",
+				"issue_url":     issueURL,
+				"repo_url":      repoURL,
+				"provider_name": providerName,
+			}
+			if saveErr := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_token_refresh", pendingData); saveErr != nil {
+				log.Printf("[continueIssueProcessing] Failed to save pending action: %v", saveErr)
+			}
 			b.send(chatID, fmt.Sprintf(
 				"❌ Authentication failed for %s. Your token may have expired or been revoked.\n\n"+
 					"Use /connect to refresh your token for this repository.",
@@ -701,6 +721,14 @@ func (b *Bot) pollDeviceAuth(chatID int64, p, clientID, clientSecret, deviceCode
 
 			if err == nil {
 				log.Printf("[pollDeviceAuth] Authorization successful for chatID=%d, storing token", chatID)
+				// Check if there's a pending action waiting for token refresh
+				conv, convErr := storage.GetConversation(b.JobsDB, chatID, "telegram")
+				if convErr == nil && conv.State == "await_token_refresh" {
+					// Update the connection token and retry the pending action
+					b.retryAfterTokenRefresh(chatID, p, token)
+					return
+				}
+				// No pending action — proceed with normal flow
 				data := map[string]interface{}{"provider": p, "token": token}
 				if err := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo", data); err != nil {
 					log.Printf("[pollDeviceAuth] Failed to store state for chatID=%d: %v", chatID, err)
@@ -733,6 +761,84 @@ func (b *Bot) pollDeviceAuth(chatID int64, p, clientID, clientSecret, deviceCode
 			log.Printf("[pollDeviceAuth] Waiting %ds before next poll", interval)
 			time.Sleep(time.Duration(interval) * time.Second)
 		}
+	}
+}
+
+func (b *Bot) retryAfterTokenRefresh(chatID int64, providerName, token string) {
+	log.Printf("[retryAfterTokenRefresh] Handling pending action for chatID=%d", chatID)
+	conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
+	if err != nil {
+		log.Printf("[retryAfterTokenRefresh] Failed to get conversation: %v", err)
+		b.send(chatID, "Internal error. Please try again.")
+		return
+	}
+
+	pendingAction, _ := conv.Data["pending_action"].(string)
+	if pendingAction == "" {
+		log.Printf("[retryAfterTokenRefresh] No pending action found")
+		b.send(chatID, "No pending action found. Please try again.")
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		return
+	}
+
+	// Use provider from saved pending action if available, otherwise use the one from OAuth flow
+	savedProvider, _ := conv.Data["provider_name"].(string)
+	if savedProvider != "" {
+		providerName = savedProvider
+	}
+
+	switch pendingAction {
+	case "process_issue":
+		issueURL, _ := conv.Data["issue_url"].(string)
+		repoURL, _ := conv.Data["repo_url"].(string)
+
+		// Update the connection token
+		existing, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, repoURL)
+		if existing != nil {
+			if err := storage.UpdateConnectionToken(b.JobsDB, chatID, repoURL, token); err != nil {
+				log.Printf("[retryAfterTokenRefresh] Failed to update token: %v", err)
+			}
+		}
+
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		b.send(chatID, "✅ Token refreshed! Continuing with your issue...")
+		b.processIssue(chatID, issueURL, token)
+
+	case "create_issue":
+		title, _ := conv.Data["title"].(string)
+		body, _ := conv.Data["body"].(string)
+		repoURL, _ := conv.Data["repo_url"].(string)
+
+		// Update the connection token
+		existing, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, repoURL)
+		if existing != nil {
+			if err := storage.UpdateConnectionToken(b.JobsDB, chatID, repoURL, token); err != nil {
+				log.Printf("[retryAfterTokenRefresh] Failed to update token: %v", err)
+			}
+		}
+
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+		var issueURL string
+		switch providerName {
+		case "github":
+			issueURL, err = provider.CreateGitHubIssue(repoURL, token, title, body)
+		case "gitlab":
+			issueURL, err = provider.CreateGitLabIssue(repoURL, token, title, body)
+		}
+
+		if err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to create issue: %v", err))
+			return
+		}
+
+		b.send(chatID, fmt.Sprintf("Issue created: %s\n\nProcessing it now...", issueURL))
+		b.processIssue(chatID, issueURL, token)
+
+	default:
+		log.Printf("[retryAfterTokenRefresh] Unknown pending action: %s", pendingAction)
+		b.send(chatID, "Unknown pending action. Please try again.")
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 	}
 }
 
