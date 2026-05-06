@@ -1,3 +1,10 @@
+## [2.2.1](https://github.com/jullury/akama/compare/v2.2.0...v2.2.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **skills:** add senior backend, frontend, and devops skills ([1382705](https://github.com/jullury/akama/commit/1382705ff1232a62dc4870ac76153afa323398a3))
+
 # [2.2.0](https://github.com/jullury/akama/compare/v2.1.0...v2.2.0) (2026-05-06)
 
 
