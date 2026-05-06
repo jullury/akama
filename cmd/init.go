@@ -146,7 +146,7 @@ func installSkills() {
 	for _, s := range agent.BuiltinSkills {
 		if s.Required {
 			fmt.Printf("Installing %s (required)... ", s.Name)
-			if err := agent.InstallSkill(s.ID); err != nil {
+			if err := agent.InstallSkill(s); err != nil {
 				fmt.Printf("failed: %v\n", err)
 			} else {
 				fmt.Println("done.")
@@ -192,7 +192,7 @@ func installSkills() {
 
 	for _, s := range toInstall {
 		fmt.Printf("Installing %s... ", s.Name)
-		if err := agent.InstallSkill(s.ID); err != nil {
+		if err := agent.InstallSkill(s); err != nil {
 			fmt.Printf("failed: %v\n", err)
 		} else {
 			fmt.Println("done.")

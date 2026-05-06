@@ -29,7 +29,7 @@ func runStart(cmd *cobra.Command, args []string) {
 
 	for _, s := range agent.BuiltinSkills {
 		if s.Required {
-			if err := agent.InstallSkill(s.ID); err != nil {
+			if err := agent.InstallSkill(s); err != nil {
 				fmt.Fprintf(os.Stderr, "Install skill %s: %v\n", s.Name, err)
 			}
 		}

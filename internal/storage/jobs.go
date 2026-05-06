@@ -159,6 +159,57 @@ func CountActiveJobs(db *sql.DB) (int, error) {
 	return count, err
 }
 
+func CountJobsByChatIDAndStatus(db *sql.DB, chatID int64, filterStatus string) (int, error) {
+	var count int
+	var err error
+	switch filterStatus {
+	case "", "open":
+		err = db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE chat_id = ? AND status != 'done'`, chatID).Scan(&count)
+	case "all":
+		err = db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE chat_id = ?`, chatID).Scan(&count)
+	default:
+		err = db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE chat_id = ? AND status = ?`, chatID, filterStatus).Scan(&count)
+	}
+	return count, err
+}
+
+func ListJobsByChatIDWithOffset(db *sql.DB, chatID int64, filterStatus string, limit, offset int) ([]*Job, error) {
+	var query string
+	var args []interface{}
+	args = append(args, chatID)
+	switch filterStatus {
+	case "", "open":
+		query = `SELECT ` + jobColumns + ` FROM jobs WHERE chat_id = ? AND status != 'done' ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	case "all":
+		query = `SELECT ` + jobColumns + ` FROM jobs WHERE chat_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	default:
+		query = `SELECT ` + jobColumns + ` FROM jobs WHERE chat_id = ? AND status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`
+		args = append(args, filterStatus)
+	}
+	args = append(args, limit, offset)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []*Job
+	for rows.Next() {
+		j := &Job{}
+		var createdAt, updatedAt string
+		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
+			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
+			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &createdAt, &updatedAt)
+		if err != nil {
+			return nil, err
+		}
+		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
+}
+
 func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
 	rows, err := db.Query(`SELECT `+jobColumns+` FROM jobs WHERE chat_id = ? ORDER BY created_at DESC LIMIT ?`, chatID, limit)
 	if err != nil {

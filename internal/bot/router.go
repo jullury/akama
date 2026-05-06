@@ -1,12 +1,10 @@
 package bot
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -361,7 +359,14 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			return
 		}
 		if rest, ok := strings.CutPrefix(data, "issues:"); ok {
-			b.showIssues(chatID, rest)
+			// Parse "status:page:N" or just "status"
+			page := 0
+			filterStatus := rest
+			if idx := strings.LastIndex(rest, ":page:"); idx >= 0 {
+				filterStatus = rest[:idx]
+				fmt.Sscanf(rest[idx+len(":page:"):], "%d", &page)
+			}
+			b.showIssues(chatID, filterStatus, page)
 			return
 		}
 		if connIDStr, ok := strings.CutPrefix(data, "connection:delete:"); ok {
@@ -387,7 +392,7 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 				return
 			}
 			b.send(chatID, fmt.Sprintf("Installing %s...", s.Name))
-			go b.installSkill(chatID, s.ID)
+			go b.installSkill(chatID, *s)
 			return
 		}
 		if data == "skills:custom" {
@@ -542,7 +547,7 @@ func (b *Bot) handleText(chatID int64, text string) {
 		}
 	case "idle":
 		if isIssueURL(text) {
-			b.processIssue(chatID, text, "")
+			b.processIssueWithImages(chatID, text, "", "")
 		} else {
 			b.send(chatID, "Send an issue URL or use /connect to add a repository.")
 		}
@@ -594,7 +599,7 @@ func (b *Bot) handleText(chatID int64, text string) {
 		if err := storage.UpdateConnectionDefaultBranch(b.JobsDB, chatID, repoURL, chosenBranch); err != nil {
 			log.Printf("[await_branch_confirm] Failed to persist branch: %v", err)
 		}
-		b.continueIssueProcessing(chatID, issueURL, gitToken, chosenBranch)
+		b.continueIssueProcessing(chatID, issueURL, gitToken, chosenBranch, "")
 	case "await_logs":
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		var jobID int64
@@ -648,18 +653,18 @@ func (b *Bot) handleText(chatID int64, text string) {
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		skillID := strings.TrimSpace(text)
 		b.send(chatID, fmt.Sprintf("Installing skill %s...", skillID))
-		go b.installSkill(chatID, skillID)
+		go b.installSkill(chatID, agent.Skill{ID: skillID})
 	case "await_issues_filter":
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		filterStatus := strings.ToLower(strings.TrimSpace(text))
 		if filterStatus == "" {
 			filterStatus = "open"
 		}
-		b.showIssues(chatID, filterStatus)
+		b.showIssues(chatID, filterStatus, 0)
 	}
 }
 
-func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
+func (b *Bot) processIssueWithImages(chatID int64, issueURL, gitToken, images string) {
 	providerName := detectProvider(issueURL)
 	if providerName == "" {
 		b.send(chatID, "Unsupported provider. Use GitHub or GitLab issue URL.")
@@ -714,10 +719,10 @@ func (b *Bot) processIssue(chatID int64, issueURL, gitToken string) {
 		return
 	}
 
-	b.continueIssueProcessing(chatID, issueURL, token, defaultBranch)
+	b.continueIssueProcessing(chatID, issueURL, token, defaultBranch, "")
 }
 
-func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultBranch string) {
+func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultBranch, images string) {
 	providerName := detectProvider(issueURL)
 	repoURL := extractRepoURL(issueURL)
 
@@ -783,6 +788,7 @@ func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultB
 		Agent:         b.Config.DefaultAgent,
 		AgentModel:    b.Config.DefaultModel,
 		DefaultBranch: defaultBranch,
+		Images:        images,
 	}
 
 	jobID, err := storage.CreateJob(b.JobsDB, j)
@@ -971,6 +977,7 @@ func (b *Bot) retryAfterTokenRefresh(chatID int64, providerName, token string) {
 	case "process_issue":
 		issueURL, _ := conv.Data["issue_url"].(string)
 		repoURL, _ := conv.Data["repo_url"].(string)
+		images, _ := conv.Data["images"].(string)
 
 		// Update the connection token
 		existing, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, repoURL)
@@ -982,12 +989,13 @@ func (b *Bot) retryAfterTokenRefresh(chatID int64, providerName, token string) {
 
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		b.send(chatID, "✅ Token refreshed! Continuing with your issue...")
-		b.processIssue(chatID, issueURL, token)
+		b.processIssueWithImages(chatID, issueURL, token, images)
 
 	case "create_issue":
 		title, _ := conv.Data["title"].(string)
 		body, _ := conv.Data["body"].(string)
 		repoURL, _ := conv.Data["repo_url"].(string)
+		images, _ := conv.Data["images"].(string)
 
 		// Update the connection token
 		existing, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, repoURL)
@@ -1013,7 +1021,7 @@ func (b *Bot) retryAfterTokenRefresh(chatID int64, providerName, token string) {
 		}
 
 		b.send(chatID, fmt.Sprintf("Issue created: %s\n\nProcessing it now...", issueURL))
-		b.processIssue(chatID, issueURL, token)
+		b.processIssueWithImages(chatID, issueURL, token, images)
 
 	default:
 		log.Printf("[retryAfterTokenRefresh] Unknown pending action: %s", pendingAction)

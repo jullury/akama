@@ -52,6 +52,7 @@ func New(token string) (*Bot, error) {
 		{Command: "newissue", Description: "Create a new issue"},
 		{Command: "queue", Description: "List pending and running jobs"},
 		{Command: "retry", Description: "Retry a failed job"},
+		{Command: "skills", Description: "Browse and install skillhub.club skills"},
 		{Command: "start", Description: "Welcome message"},
 		{Command: "status", Description: "Show last 10 jobs"},
 		{Command: "update_agents", Description: "Update agents to latest version"},

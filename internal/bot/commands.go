@@ -221,30 +221,16 @@ func (b *Bot) handleDeleteConnection(chatID int64) {
 	b.API.Send(msg)
 }
 
-func (b *Bot) showIssues(chatID int64, filterStatus string) {
-	jobs, err := storage.ListJobsByChatID(b.JobsDB, chatID, 50)
+func (b *Bot) showIssues(chatID int64, filterStatus string, page int) {
+	const issuesPerPage = 5
+
+	total, err := storage.CountJobsByChatIDAndStatus(b.JobsDB, chatID, filterStatus)
 	if err != nil {
 		b.send(chatID, fmt.Sprintf("Error: %v", err))
 		return
 	}
 
-	var filtered []*storage.Job
-	for _, j := range jobs {
-		switch filterStatus {
-		case "", "open":
-			if j.Status != "done" {
-				filtered = append(filtered, j)
-			}
-		case "all":
-			filtered = append(filtered, j)
-		default:
-			if j.Status == filterStatus {
-				filtered = append(filtered, j)
-			}
-		}
-	}
-
-	if len(filtered) == 0 {
+	if total == 0 {
 		switch filterStatus {
 		case "all":
 			b.send(chatID, "No jobs.")
@@ -256,9 +242,21 @@ func (b *Bot) showIssues(chatID int64, filterStatus string) {
 		return
 	}
 
+	offset := page * issuesPerPage
+	if offset >= total {
+		page = 0
+		offset = 0
+	}
+
+	jobs, err := storage.ListJobsByChatIDWithOffset(b.JobsDB, chatID, filterStatus, issuesPerPage, offset)
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Error: %v", err))
+		return
+	}
+
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Jobs (%s):\n", filterStatus))
-	for _, j := range filtered {
+	sb.WriteString(fmt.Sprintf("Jobs (%s) - page %d/%d:\n", filterStatus, page+1, (total+issuesPerPage-1)/issuesPerPage))
+	for _, j := range jobs {
 		sb.WriteString(fmt.Sprintf("\n[#%d] %s — %s (%s)", j.ID, j.IssueTitle, j.Status, j.Provider))
 		if j.PRURL != "" {
 			sb.WriteString("\n  " + j.PRURL)
@@ -268,7 +266,24 @@ func (b *Bot) showIssues(chatID int64, filterStatus string) {
 		}
 		sb.WriteString("\n")
 	}
-	b.send(chatID, sb.String())
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var navRow []tgbotapi.InlineKeyboardButton
+	if page > 0 {
+		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("← Back", fmt.Sprintf("issues:%s:page:%d", filterStatus, page-1)))
+	}
+	if offset+issuesPerPage < total {
+		navRow = append(navRow, tgbotapi.NewInlineKeyboardButtonData("Next →", fmt.Sprintf("issues:%s:page:%d", filterStatus, page+1)))
+	}
+	if len(navRow) > 0 {
+		rows = append(rows, navRow)
+	}
+
+	msg := tgbotapi.NewMessage(chatID, sb.String())
+	if len(rows) > 0 {
+		msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	}
+	b.API.Send(msg)
 }
 
 func (b *Bot) handleQueue(chatID int64) {
@@ -507,11 +522,11 @@ func (b *Bot) handleSkills(chatID int64) {
 	b.API.Send(msg)
 }
 
-func (b *Bot) installSkill(chatID int64, skillID string) {
-	if err := agent.InstallSkill(skillID); err != nil {
-		b.send(chatID, fmt.Sprintf("Failed to install skill %s: %v", skillID, err))
+func (b *Bot) installSkill(chatID int64, s agent.Skill) {
+	if err := agent.InstallSkill(s); err != nil {
+		b.send(chatID, fmt.Sprintf("Failed to install skill %s: %v", s.Name, err))
 	} else {
-		b.send(chatID, fmt.Sprintf("✅ Skill installed: %s", skillID))
+		b.send(chatID, fmt.Sprintf("✅ Skill installed: %s", s.Name))
 	}
 }
 
