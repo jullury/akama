@@ -26,22 +26,23 @@ type Job struct {
 	ErrorMsg          string
 	AgentOutput       string
 	DefaultBranch     string
+	Images            string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
 
 func CreateJob(db *sql.DB, j *Job) (int64, error) {
 	res, err := db.Exec(`
-		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, default_branch)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, j.GitToken, j.Agent, j.AgentModel, j.DefaultBranch)
+		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, default_branch, images)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, j.GitToken, j.Agent, j.AgentModel, j.DefaultBranch, j.Images)
 	if err != nil {
 		return 0, fmt.Errorf("create job: %w", err)
 	}
 	return res.LastInsertId()
 }
 
-const jobColumns = `id, chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, status, workspace_path, branch_name, pr_url, notification_msg_id, error_msg, agent_output, default_branch, created_at, updated_at`
+const jobColumns = `id, chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, status, workspace_path, branch_name, pr_url, notification_msg_id, error_msg, agent_output, default_branch, images, created_at, updated_at`
 
 func GetJob(db *sql.DB, id int64) (*Job, error) {
 	row := db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE id = ?`, id)
@@ -59,7 +60,7 @@ func scanJob(row *sql.Row) (*Job, error) {
 	err := row.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 		&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 		&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-		&j.AgentOutput, &j.DefaultBranch, &createdAt, &updatedAt)
+		&j.AgentOutput, &j.DefaultBranch, &j.Images, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +172,7 @@ func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &createdAt, &updatedAt)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &createdAt, &updatedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +202,7 @@ func ListJobs(db *sql.DB, limit, offset int) ([]*Job, error) {
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &createdAt, &updatedAt)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &createdAt, &updatedAt)
 		if err != nil {
 			return nil, err
 		}

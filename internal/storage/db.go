@@ -43,6 +43,7 @@ func migrate(db *sql.DB) error {
 		error_msg           TEXT    NOT NULL DEFAULT '',
 		agent_output        TEXT    NOT NULL DEFAULT '',
 		default_branch      TEXT    NOT NULL DEFAULT 'main',
+		images              TEXT    NOT NULL DEFAULT '',
 		created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -85,6 +86,7 @@ func migrate(db *sql.DB) error {
 	db.Exec(`ALTER TABLE user_config ADD COLUMN agent TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE connections ADD COLUMN default_branch TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE jobs ADD COLUMN default_branch TEXT NOT NULL DEFAULT 'main'`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN images TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
