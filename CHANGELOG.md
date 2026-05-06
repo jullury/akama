@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/jullury/akama/compare/v1.13.0...v1.14.0) (2026-05-06)
+
+
+### Features
+
+* add agent update command and refactor install logic to agent pkg ([490e223](https://github.com/jullury/akama/commit/490e223d5330c21a294f817864f2e059430ad2e4))
+
 # [1.13.0](https://github.com/jullury/akama/compare/v1.12.0...v1.13.0) (2026-05-06)
 
 
