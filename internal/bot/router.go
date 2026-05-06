@@ -84,6 +84,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		b.send(chatID, "Conversation reset.")
 	case strings.HasPrefix(text, "/update_agents"):
 		go b.handleUpdateAgents(chatID)
+	case strings.HasPrefix(text, "/update"):
+		go b.handleUpdateCommand(chatID)
 	default:
 		b.handleText(chatID, text)
 	}
@@ -240,6 +242,14 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 				log.Printf("reset conversation: %v", err)
 			}
 			b.send(chatID, "Connection deleted.")
+			return
+		}
+		if data == "update:confirm" {
+			go b.handleUpdateConfirm(chatID)
+			return
+		}
+		if data == "update:cancel" {
+			b.send(chatID, "Update cancelled.")
 			return
 		}
 		log.Printf("callback: unhandled data: %q", data)
