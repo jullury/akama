@@ -53,6 +53,7 @@ func New(token string) (*Bot, error) {
 		{Command: "retry", Description: "Retry a failed job"},
 		{Command: "cancel", Description: "Reset conversation state"},
 		{Command: "update_agents", Description: "Update agents to latest version"},
+		{Command: "update", Description: "Update Akama server binary to the latest version"},
 	}
 
 	_, cmdErr := api.Request(tgbotapi.NewSetMyCommands(commands...))

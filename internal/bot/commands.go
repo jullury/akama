@@ -1,13 +1,22 @@
 package bot
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/jullury/akama/internal/agent"
+	"github.com/jullury/akama/internal/config"
+	"github.com/jullury/akama/internal/daemon"
 	"github.com/jullury/akama/internal/git"
 	"github.com/jullury/akama/internal/job"
 	"github.com/jullury/akama/internal/storage"
@@ -478,4 +487,195 @@ func (b *Bot) handleUpdateAgents(chatID int64) {
 		}
 	}
 	b.send(chatID, msg.String())
+}
+
+type githubRelease struct {
+	TagName string `json:"tag_name"`
+}
+
+func getLatestVersion() (string, error) {
+	resp, err := http.Get("https://api.github.com/repos/jullury/akama/releases/latest")
+	if err != nil {
+		return "", fmt.Errorf("fetch release: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var release githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	return strings.TrimPrefix(release.TagName, "v"), nil
+}
+
+func isNewerVersion(latest, current string) bool {
+	latest = strings.TrimPrefix(latest, "v")
+	current = strings.TrimPrefix(current, "v")
+
+	if latest == current {
+		return false
+	}
+
+	latestParts := strings.Split(latest, ".")
+	currentParts := strings.Split(current, ".")
+
+	for i := 0; i < len(latestParts) && i < len(currentParts); i++ {
+		if latestParts[i] > currentParts[i] {
+			return true
+		}
+		if latestParts[i] < currentParts[i] {
+			return false
+		}
+	}
+
+	return len(latestParts) > len(currentParts)
+}
+
+func (b *Bot) handleUpdateCommand(chatID int64) {
+	currentVersion := config.Version
+	if currentVersion == "dev" {
+		b.send(chatID, "Running dev build, cannot check for updates.")
+		return
+	}
+
+	b.send(chatID, fmt.Sprintf("Current version: %s\nChecking for updates...", currentVersion))
+
+	latest, err := getLatestVersion()
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Failed to check latest version: %v", err))
+		return
+	}
+
+	if !isNewerVersion(latest, currentVersion) {
+		b.send(chatID, "Already running the latest version.")
+		return
+	}
+
+	b.send(chatID, fmt.Sprintf("New version available: %s\n\nDo you want to update now?", latest))
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Yes, update", "update:confirm"),
+			tgbotapi.NewInlineKeyboardButtonData("No, cancel", "update:cancel"),
+		),
+	)
+	msg := tgbotapi.NewMessage(chatID, "Press a button to continue:")
+	msg.ReplyMarkup = keyboard
+	b.API.Send(msg)
+}
+
+func (b *Bot) handleUpdateConfirm(chatID int64) {
+	b.send(chatID, "Starting update...")
+
+	cfg := b.Config
+
+	if daemon.IsRunning(cfg.PIDPath) {
+		b.send(chatID, "Stopping running daemon...")
+		if err := daemon.StopDaemon(cfg.PIDPath); err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to stop daemon: %v", err))
+			return
+		}
+		b.send(chatID, "Waiting for daemon to stop...")
+		deadline := time.After(35 * time.Second)
+		for {
+			select {
+			case <-deadline:
+				b.send(chatID, "Timed out waiting for daemon to exit.")
+				return
+			case <-time.After(300 * time.Millisecond):
+				if !daemon.IsRunning(cfg.PIDPath) {
+					b.send(chatID, "Daemon stopped.")
+					goto download
+				}
+			}
+		}
+	}
+
+download:
+	b.send(chatID, "Downloading and installing...")
+	if err := b.downloadUpdate(); err != nil {
+		b.send(chatID, fmt.Sprintf("Update failed: %v", err))
+		return
+	}
+
+	b.send(chatID, "Update installed successfully.")
+
+	b.send(chatID, "Starting daemon...")
+	pid, err := daemon.ForkDaemon()
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Failed to start daemon: %v", err))
+		return
+	}
+
+	b.send(chatID, fmt.Sprintf("Akama daemon started (pid %d)", pid))
+}
+
+func (b *Bot) downloadUpdate() error {
+	goos := runtime.GOOS
+	arch := runtime.GOARCH
+
+	asset := fmt.Sprintf("akama-%s-%s", goos, arch)
+	url := fmt.Sprintf("https://github.com/jullury/akama/releases/latest/download/%s", asset)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("download failed: %d", resp.StatusCode)
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("get executable path: %w", err)
+	}
+
+	tmpPath := filepath.Join(os.TempDir(), "akama-update")
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+	out.Close()
+
+	if err := os.Chmod(tmpPath, 0755); err != nil {
+		return fmt.Errorf("chmod: %w", err)
+	}
+
+	if goos == "windows" {
+		exePath = exePath + ".exe"
+	}
+
+	installDir := filepath.Dir(exePath)
+	if err := checkWriteAccess(installDir); err != nil {
+		return fmt.Errorf("cannot write to %s: %w", installDir, err)
+	}
+
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		cmd := exec.Command("mv", tmpPath, exePath)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("replace binary: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func checkWriteAccess(dir string) error {
+	testFile := filepath.Join(dir, ".write-test")
+	if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		return err
+	}
+	os.Remove(testFile)
+	return nil
 }
