@@ -1,3 +1,10 @@
+# [2.2.0](https://github.com/jullury/akama/compare/v2.1.0...v2.2.0) (2026-05-06)
+
+
+### Features
+
+* **bot:** add image attachment support for Telegram issue creation ([cb9d0b1](https://github.com/jullury/akama/commit/cb9d0b18963907ceb5cc9bb53ee757e18bd40f3e))
+
 # [2.1.0](https://github.com/jullury/akama/compare/v2.0.0...v2.1.0) (2026-05-06)
 
 
