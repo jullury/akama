@@ -38,6 +38,9 @@ var BuiltinSkills = []Skill{
 	{ID: "obra-superpowers-executing-plans", Name: "Executing Plans", Description: "Structured plan execution for agents"},
 	{ID: "nextlevelbuilder-ui-ux-pro-max-skill-ui-ux-pro-max", Name: "UI/UX Pro Max", Description: "Advanced UI/UX design guidance"},
 	{ID: "zhayujie-chatgpt-on-wechat-web-fetch", Name: "Web Fetch", Description: "Web content fetching capability"},
+	{ID: "alirezarezvani-claude-skills-senior-backend", Name: "Senior Backend", Description: "Backend development patterns, API design, database optimization, and security practices"},
+	{ID: "alirezarezvani-claude-skills-senior-frontend", Name: "Senior Frontend", Description: "Frontend development patterns, performance optimization, and automation tools for React/Next.js applications"},
+	{ID: "alirezarezvani-claude-skills-senior-devops", Name: "Senior DevOps", Description: "Complete toolkit for senior devops with modern tools and best practices"},
 }
 
 // InjectedSkillsContent returns the concatenated content of all AlwaysInject skills
