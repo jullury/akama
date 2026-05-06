@@ -1,3 +1,10 @@
+# [1.15.0](https://github.com/jullury/akama/compare/v1.14.1...v1.15.0) (2026-05-06)
+
+
+### Features
+
+* **bot:** add /update command to update server binary ([098812a](https://github.com/jullury/akama/commit/098812aa265aecdbcefa08db5eb75411897e2bf3))
+
 ## [1.14.1](https://github.com/jullury/akama/compare/v1.14.0...v1.14.1) (2026-05-06)
 
 
