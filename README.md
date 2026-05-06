@@ -26,6 +26,7 @@ Akama is a coding agent orchestration system controlled via Telegram. Send it a 
   - [Logs](#logs)
   - [Telegram Commands](#telegram-commands)
 - [Building from Source](#building-from-source)
+- [Docker for Fresh Testing](#docker-for-fresh-testing)
 - [Creating a Release](#creating-a-release)
 - [Configuration Reference](#configuration-reference)
 
@@ -213,6 +214,47 @@ GITLAB_CLIENT_SECRET=...
 ```
 
 > OAuth credentials are **not** stored in `config.yaml` — they are embedded at build time via `make build`.
+
+---
+
+## Docker for Fresh Testing
+
+The included `Dockerfile` provides a clean Alpine-based environment for testing Akama in isolation without affecting your host system.
+
+### Build the image
+
+```sh
+docker build -t akama-test .
+```
+
+### Run a container
+
+```sh
+docker run -it --rm \
+  -v "$(pwd):/app" \
+  -w /app \
+  akama-test
+```
+
+### Build and test inside the container
+
+```sh
+# Inside the container
+cd /app
+cp .env.example .env
+# Edit .env with your OAuth credentials
+make build
+./akama init
+./akama start
+```
+
+### Notes
+
+- The container includes `git`, `curl`, `bash`, `nodejs`, and `npm` — sufficient for agent auto-installation and repo operations.
+- Mount your local repository to `/app` to access the source code.
+- OAuth credentials must still be provided via `.env` and baked in at compile time.
+- This is intended for **testing only** — not for production deployments.
+- State (config, database, logs) is ephemeral and lost when the container exits unless you mount additional volumes.
 
 ---
 
