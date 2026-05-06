@@ -1,3 +1,10 @@
+# [2.3.0](https://github.com/jullury/akama/compare/v2.2.1...v2.3.0) (2026-05-06)
+
+
+### Features
+
+* **skills:** add raw skill support and enhance skill management ([4f0c184](https://github.com/jullury/akama/commit/4f0c1841f390c14354212baf0a006a62d4517e3c))
+
 ## [2.2.1](https://github.com/jullury/akama/compare/v2.2.0...v2.2.1) (2026-05-06)
 
 
