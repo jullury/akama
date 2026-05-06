@@ -1,3 +1,10 @@
+# [1.13.0](https://github.com/jullury/akama/compare/v1.12.0...v1.13.0) (2026-05-06)
+
+
+### Features
+
+* **bot:** replace issues filter text input with inline buttons ([4598345](https://github.com/jullury/akama/commit/45983459208ecbca0def7c9fa379376fcdf62b68))
+
 # [1.12.0](https://github.com/jullury/akama/compare/v1.11.2...v1.12.0) (2026-05-05)
 
 
