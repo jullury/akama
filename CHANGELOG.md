@@ -1,3 +1,10 @@
+## [2.3.1](https://github.com/jullury/akama/compare/v2.3.0...v2.3.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **bot:** resolve /done command routing conflict ([591f6a9](https://github.com/jullury/akama/commit/591f6a98fd5c052493b0b436d2aed58598f7b4ed))
+
 # [2.3.0](https://github.com/jullury/akama/compare/v2.2.1...v2.3.0) (2026-05-06)
 
 
