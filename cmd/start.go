@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/config"
 	"github.com/jullury/akama/internal/daemon"
 	"github.com/spf13/cobra"
@@ -24,6 +25,14 @@ func runStart(cmd *cobra.Command, args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Load config: %v\n", err)
 		os.Exit(1)
+	}
+
+	for _, s := range agent.BuiltinSkills {
+		if s.Required {
+			if err := agent.InstallSkill(s.ID); err != nil {
+				fmt.Fprintf(os.Stderr, "Install skill %s: %v\n", s.Name, err)
+			}
+		}
 	}
 
 	if daemon.IsRunning(cfg.PIDPath) {

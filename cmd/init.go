@@ -142,10 +142,31 @@ func installOpencode() {
 }
 
 func installSkills() {
-	fmt.Println("\nAvailable skills (press Enter to skip):")
-	for i, s := range agent.BuiltinSkills {
-		fmt.Printf("  %d. %-25s — %s\n", i+1, s.Name, s.Description)
+	// Required skills are installed unconditionally.
+	for _, s := range agent.BuiltinSkills {
+		if s.Required {
+			fmt.Printf("Installing %s (required)... ", s.Name)
+			if err := agent.InstallSkill(s.ID); err != nil {
+				fmt.Printf("failed: %v\n", err)
+			} else {
+				fmt.Println("done.")
+			}
+		}
 	}
+
+	// Show optional skills for selection.
+	fmt.Println("\nOptional skills (press Enter to skip):")
+	optionalIdx := 0
+	indexMap := map[int]int{} // display number → BuiltinSkills index
+	for i, s := range agent.BuiltinSkills {
+		if s.Required {
+			continue
+		}
+		optionalIdx++
+		indexMap[optionalIdx] = i
+		fmt.Printf("  %d. %-25s — %s\n", optionalIdx, s.Name, s.Description)
+	}
+
 	fmt.Print("\nSelect skills to install [1,2,... or 'all']: ")
 	var input string
 	fmt.Scanln(&input)
@@ -156,14 +177,15 @@ func installSkills() {
 
 	var toInstall []agent.Skill
 	if strings.ToLower(input) == "all" {
-		toInstall = agent.BuiltinSkills
+		for _, i := range indexMap {
+			toInstall = append(toInstall, agent.BuiltinSkills[i])
+		}
 	} else {
 		for _, part := range strings.Split(input, ",") {
-			var idx int
-			fmt.Sscanf(strings.TrimSpace(part), "%d", &idx)
-			s := agent.SkillByIndex(idx - 1)
-			if s != nil {
-				toInstall = append(toInstall, *s)
+			var n int
+			fmt.Sscanf(strings.TrimSpace(part), "%d", &n)
+			if i, ok := indexMap[n]; ok {
+				toInstall = append(toInstall, agent.BuiltinSkills[i])
 			}
 		}
 	}

@@ -478,14 +478,24 @@ func (b *Bot) handleSkills(chatID int64) {
 	var sb strings.Builder
 	sb.WriteString("Available skills from skillhub.club:\n\n")
 	for i, s := range agent.BuiltinSkills {
-		sb.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, s.Name, s.Description))
+		prefix := "  "
+		suffix := ""
+		if s.Required {
+			prefix = "★ "
+			suffix = " (always active)"
+		}
+		sb.WriteString(fmt.Sprintf("%s%d. %s — %s%s\n", prefix, i+1, s.Name, s.Description, suffix))
 	}
-	sb.WriteString("\nTap to install, or use + to add a custom skill by ID.")
+	sb.WriteString("\n★ = required skill, always injected into every agent prompt.\nTap to install, or use + to add a custom skill by ID.")
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for i, s := range agent.BuiltinSkills {
+		label := s.Name
+		if s.Required {
+			label = "★ " + label
+		}
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(s.Name, fmt.Sprintf("skills:install:%d", i)),
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("skills:install:%d", i)),
 		))
 	}
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(

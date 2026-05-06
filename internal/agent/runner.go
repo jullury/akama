@@ -543,7 +543,8 @@ func IsQuestion(text string) bool {
 
 func WritePrompt(workspacePath, content string) (string, error) {
 	promptPath := filepath.Join(workspacePath, ".akama-prompt.txt")
-	if err := os.WriteFile(promptPath, []byte(content), 0644); err != nil {
+	full := InjectedSkillsContent() + content
+	if err := os.WriteFile(promptPath, []byte(full), 0644); err != nil {
 		return "", fmt.Errorf("write prompt: %w", err)
 	}
 	return promptPath, nil
