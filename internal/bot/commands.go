@@ -84,6 +84,7 @@ Jobs
 
 Settings
 /config — set git name, email and AI model
+/update-agents — update agents to latest version
 
 /cancel — reset conversation state
 /help — show this message`
@@ -462,4 +463,19 @@ func (b *Bot) handleCancelJob(chatID int64, jobID int64) {
 	storage.SetJobFailed(b.JobsDB, jobID, "cancelled by user")
 	storage.ResetConversation(b.JobsDB, chatID, "telegram")
 	b.send(chatID, fmt.Sprintf("Job #%d cancelled.", jobID))
+}
+
+func (b *Bot) handleUpdateAgents(chatID int64) {
+	b.send(chatID, "Updating agents to latest version...")
+	results := agent.UpdateAll()
+	var msg strings.Builder
+	msg.WriteString("Agent update results:\n")
+	for name, err := range results {
+		if err != nil {
+			msg.WriteString(fmt.Sprintf("- %s: failed (%v)\n", name, err))
+		} else {
+			msg.WriteString(fmt.Sprintf("- %s: updated\n", name))
+		}
+	}
+	b.send(chatID, msg.String())
 }
