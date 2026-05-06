@@ -1,3 +1,10 @@
+## [1.17.1](https://github.com/jullury/akama/compare/v1.17.0...v1.17.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* **update:** simplify daemon restart process ([d649f35](https://github.com/jullury/akama/commit/d649f350214bbb9df64e19c62abe24e90b33339c))
+
 # [1.17.0](https://github.com/jullury/akama/compare/v1.16.0...v1.17.0) (2026-05-06)
 
 
