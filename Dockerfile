@@ -10,8 +10,11 @@ RUN npm install -g opencode-ai
 # Verify opencode installation
 RUN which opencode && opencode --version || echo "opencode check completed"
 
-# Create workspace directory
-RUN mkdir -p /root/.akama/workspaces
+# Create non-root user
+RUN groupadd -r akama && useradd -r -g akama -m -d /home/akama akama
+
+# Create workspace directory with correct ownership
+RUN mkdir -p /home/akama/.akama/workspaces && chown -R akama:akama /home/akama/.akama
 
 # Copy and run install.sh to get akama binary
 COPY install.sh /tmp/install.sh
@@ -22,6 +25,8 @@ COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 WORKDIR /app
+
+USER akama
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["/usr/local/bin/akama", "start", "--daemon"]
