@@ -1,3 +1,11 @@
+# [2.5.0](https://github.com/jullury/akama/compare/v2.4.1...v2.5.0) (2026-05-07)
+
+
+### Features
+
+* add Telegram bot user authorization and admin user management ([a7d86d7](https://github.com/jullury/akama/commit/a7d86d743d533ebe0a5c4c856b137be8e34200a8))
+* restrict admin commands and user management to admin users only ([fb70698](https://github.com/jullury/akama/commit/fb7069870c0805405b27cd982ae5f8f85eaf8467))
+
 ## [2.4.1](https://github.com/jullury/akama/compare/v2.4.0...v2.4.1) (2026-05-06)
 
 
