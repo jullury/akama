@@ -1,3 +1,10 @@
+## [2.8.1](https://github.com/jullury/akama/compare/v2.8.0...v2.8.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* prevent users from deleting themselves instead of blocking admin... ([6e9dc53](https://github.com/jullury/akama/commit/6e9dc534aaf67ee3247735766b6e2a226283b6c9))
+
 # [2.8.0](https://github.com/jullury/akama/compare/v2.7.0...v2.8.0) (2026-05-07)
 
 
