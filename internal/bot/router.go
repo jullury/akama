@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -91,11 +92,12 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 			var issueURL string
 			var issueErr error
+			fullBody := embedImages(body, images)
 			switch providerName {
 			case "github":
-				issueURL, issueErr = provider.CreateGitHubIssue(repoURL, token, title, body)
+				issueURL, issueErr = provider.CreateGitHubIssue(repoURL, token, title, fullBody)
 			case "gitlab":
-				issueURL, issueErr = provider.CreateGitLabIssue(repoURL, token, title, body)
+				issueURL, issueErr = provider.CreateGitLabIssue(repoURL, token, title, fullBody)
 			}
 			if issueErr != nil {
 				if provider.IsAuthError(issueErr) {
@@ -487,13 +489,14 @@ func (b *Bot) handleText(chatID int64, text string) {
 
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 
+		fullBody := embedImages(body, images)
 		var issueURL string
 		var err error
 		switch providerName {
 		case "github":
-			issueURL, err = provider.CreateGitHubIssue(repoURL, token, title, body)
+			issueURL, err = provider.CreateGitHubIssue(repoURL, token, title, fullBody)
 		case "gitlab":
-			issueURL, err = provider.CreateGitLabIssue(repoURL, token, title, body)
+			issueURL, err = provider.CreateGitLabIssue(repoURL, token, title, fullBody)
 		}
 		if err != nil {
 			if provider.IsAuthError(err) {
@@ -731,6 +734,54 @@ func (b *Bot) handleText(chatID int64, text string) {
 	}
 }
 
+// embedImages downloads images from Telegram URLs and embeds them as data URIs
+// in the issue body. Images that are too large or fail to download are skipped.
+func embedImages(body, images string) string {
+	if images == "" {
+		return body
+	}
+
+	entries := strings.Split(images, ";")
+	var imageMarkdown strings.Builder
+	for _, entry := range entries {
+		parts := strings.SplitN(entry, "|", 2)
+		if len(parts) < 1 || parts[0] == "" {
+			continue
+		}
+		url := parts[0]
+
+		resp, err := http.Get(url)
+		if err != nil {
+			log.Printf("[embedImages] Failed to download image: %v", err)
+			continue
+		}
+		data, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			log.Printf("[embedImages] Failed to read image data: %v", err)
+			continue
+		}
+
+		mimeType := http.DetectContentType(data)
+		encoded := base64.StdEncoding.EncodeToString(data)
+		markdown := fmt.Sprintf("\n\n![image](data:%s;base64,%s)", mimeType, encoded)
+
+		// GitHub API accepts body up to 65536 chars — skip if we'd exceed that
+		if len(body)+imageMarkdown.Len()+len(markdown) > 64000 {
+			log.Printf("[embedImages] Skipping image, body would exceed size limit")
+			continue
+		}
+
+		imageMarkdown.WriteString(markdown)
+	}
+
+	if imageMarkdown.Len() == 0 {
+		return body
+	}
+
+	return body + imageMarkdown.String()
+}
+
 func (b *Bot) processIssueWithImages(chatID int64, issueURL, gitToken, images string) {
 	providerName := detectProvider(issueURL)
 	if providerName == "" {
@@ -841,6 +892,11 @@ func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultB
 	if issueID == "" {
 		b.send(chatID, "Failed to parse issue ID from fetched issue.")
 		return
+	}
+
+	// Enrich issue body with embedded images from markdown and comments
+	if body != "" {
+		body = provider.EnrichIssueBody(providerName, issueURL, gitToken, body)
 	}
 
 	j := &storage.Job{
@@ -1074,12 +1130,13 @@ func (b *Bot) retryAfterTokenRefresh(chatID int64, providerName, token string) {
 
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 
+		fullBody := embedImages(body, images)
 		var issueURL string
 		switch providerName {
 		case "github":
-			issueURL, err = provider.CreateGitHubIssue(repoURL, token, title, body)
+			issueURL, err = provider.CreateGitHubIssue(repoURL, token, title, fullBody)
 		case "gitlab":
-			issueURL, err = provider.CreateGitLabIssue(repoURL, token, title, body)
+			issueURL, err = provider.CreateGitLabIssue(repoURL, token, title, fullBody)
 		}
 
 		if err != nil {

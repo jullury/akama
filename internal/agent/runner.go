@@ -296,8 +296,8 @@ func parseOpencodeOutput(output string) string {
 
 func BuildPrompt(title, url, body string) string {
 	truncated := body
-	if len(body) > 8000 {
-		truncated = body[:8000]
+	if len(body) > 50000 {
+		truncated = body[:50000]
 	}
 	return fmt.Sprintf(`You are a developer fixing an issue in this repository.
 

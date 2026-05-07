@@ -171,6 +171,38 @@ func CreateGitHubIssue(repoURL, token, title, body string) (string, error) {
 	return issue.HTMLURL, nil
 }
 
+// fetchGitHubIssueComments fetches the comments for a GitHub issue.
+func fetchGitHubIssueComments(owner, repo string, issueNum int, token string) []string {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments", owner, repo, issueNum)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var comments []struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
+		return nil
+	}
+
+	var bodies []string
+	for _, c := range comments {
+		if c.Body != "" {
+			bodies = append(bodies, c.Body)
+		}
+	}
+	return bodies
+}
+
 func FetchGitHubIssue(repoURL, token string) (*GitHubIssue, error) {
 	owner, repo, issueNum, err := parseGitHubIssueURL(repoURL)
 	if err != nil {
