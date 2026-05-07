@@ -894,6 +894,11 @@ func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultB
 		return
 	}
 
+	// Enrich issue body with embedded images from markdown and comments
+	if body != "" {
+		body = provider.EnrichIssueBody(providerName, issueURL, gitToken, body)
+	}
+
 	j := &storage.Job{
 		ChatID:        chatID,
 		IssueID:       issueID,

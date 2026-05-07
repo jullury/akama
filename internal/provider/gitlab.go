@@ -146,6 +146,38 @@ func CreateGitLabIssue(repoURL, token, title, body string) (string, error) {
 	return issue.WebURL, nil
 }
 
+// fetchGitLabIssueNotes fetches the notes (comments) for a GitLab issue.
+func fetchGitLabIssueNotes(projectPath string, issueIID int, token string) []string {
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/issues/%d/notes", encodedPath, issueIID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var notes []struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&notes); err != nil {
+		return nil
+	}
+
+	var bodies []string
+	for _, n := range notes {
+		if n.Body != "" {
+			bodies = append(bodies, n.Body)
+		}
+	}
+	return bodies
+}
+
 func FetchGitLabIssue(repoURL, token string) (*GitLabIssue, error) {
 	projectPath, issueIID, err := parseGitLabIssueURL(repoURL)
 	if err != nil {
