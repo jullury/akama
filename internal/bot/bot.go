@@ -57,6 +57,9 @@ func New(token string) (*Bot, error) {
 		{Command: "status", Description: "Show last 10 jobs"},
 		{Command: "update_agents", Description: "Update agents to latest version"},
 		{Command: "update", Description: "Update Akama server binary to the latest version"},
+		{Command: "users", Description: "List authorized users (admin only)"},
+		{Command: "add_user", Description: "Add a user by Telegram user ID (admin only)"},
+		{Command: "delete_user", Description: "Delete a user by Telegram user ID (admin only)"},
 	}
 
 	_, cmdErr := api.Request(tgbotapi.NewSetMyCommands(commands...))
@@ -87,6 +90,22 @@ func (b *Bot) RunCtx(ctx context.Context) {
 
 func (b *Bot) handleUpdate(update tgbotapi.Update) {
 	log.Printf("update %d: msg=%v callback=%v", update.UpdateID, update.Message != nil, update.CallbackQuery != nil)
+
+	var chatID int64
+	if update.Message != nil {
+		chatID = update.Message.Chat.ID
+	} else if update.CallbackQuery != nil && update.CallbackQuery.Message != nil {
+		chatID = update.CallbackQuery.Message.Chat.ID
+	} else {
+		return
+	}
+
+	if !storage.IsAuthorized(b.JobsDB, chatID) {
+		msg := tgbotapi.NewMessage(chatID, "You are not authorized to use this bot. Contact the instance admin to gain access.")
+		b.API.Send(msg)
+		return
+	}
+
 	if update.Message != nil {
 		b.handleMessage(update.Message)
 	} else if update.CallbackQuery != nil {

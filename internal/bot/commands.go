@@ -96,6 +96,11 @@ Settings
 /update — update Akama server binary to the latest version
 /update_agents — update agents to latest version
 
+Admin
+/users — list authorized users
+/add_user — add a user by Telegram user ID
+/delete_user — delete a user by Telegram user ID
+
 /start — welcome message
 /help — show this message`
 	b.send(chatID, msg)
@@ -591,6 +596,28 @@ func isNewerVersion(latest, current string) bool {
 	}
 
 	return len(latestParts) > len(currentParts)
+}
+
+func (b *Bot) handleUsers(chatID int64) {
+	if !storage.IsAdmin(b.JobsDB, chatID) {
+		b.send(chatID, "Only the admin can list users.")
+		return
+	}
+	users, err := storage.ListAuthorizedUsers(b.JobsDB)
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Error: %v", err))
+		return
+	}
+	if len(users) == 0 {
+		b.send(chatID, "No authorized users.")
+		return
+	}
+	var sb strings.Builder
+	sb.WriteString("Authorized users:\n")
+	for _, u := range users {
+		sb.WriteString(fmt.Sprintf("- %d (%s)\n", u.ChatID, u.Role))
+	}
+	b.send(chatID, sb.String())
 }
 
 func (b *Bot) handleUpdateCommand(chatID int64) {

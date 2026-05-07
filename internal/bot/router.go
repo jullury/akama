@@ -135,9 +135,33 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/cancel"):
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		b.send(chatID, "Conversation reset.")
+	case strings.HasPrefix(text, "/users"):
+		b.handleUsers(chatID)
+	case strings.HasPrefix(text, "/add_user"):
+		if !storage.IsAdmin(b.JobsDB, chatID) {
+			b.send(chatID, "Only the admin can add users.")
+			return
+		}
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_add_user", nil)
+		b.send(chatID, "Send the Telegram user ID to add:")
+	case strings.HasPrefix(text, "/delete_user"):
+		if !storage.IsAdmin(b.JobsDB, chatID) {
+			b.send(chatID, "Only the admin can delete users.")
+			return
+		}
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_delete_user", nil)
+		b.send(chatID, "Send the Telegram user ID to delete:")
 	case strings.HasPrefix(text, "/update_agents"):
+		if !storage.IsAdmin(b.JobsDB, chatID) {
+			b.send(chatID, "Only the admin can update agents.")
+			return
+		}
 		go b.handleUpdateAgents(chatID)
 	case strings.HasPrefix(text, "/update"):
+		if !storage.IsAdmin(b.JobsDB, chatID) {
+			b.send(chatID, "Only the admin can update the server.")
+			return
+		}
 		go b.handleUpdateCommand(chatID)
 	default:
 		if msg.Photo != nil {
@@ -400,6 +424,10 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			return
 		}
 		if data == "update:confirm" {
+			if !storage.IsAdmin(b.JobsDB, chatID) {
+				b.send(chatID, "Only the admin can confirm updates.")
+				return
+			}
 			go b.handleUpdateConfirm(chatID)
 			return
 		}
@@ -660,6 +688,46 @@ func (b *Bot) handleText(chatID int64, text string) {
 			filterStatus = "open"
 		}
 		b.showIssues(chatID, filterStatus, 0)
+	case "await_add_user":
+		if !storage.IsAdmin(b.JobsDB, chatID) {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "Only the admin can add users.")
+			return
+		}
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		var userID int64
+		fmt.Sscanf(text, "%d", &userID)
+		if userID == 0 {
+			b.send(chatID, "Invalid user ID. Use /add_user to try again.")
+			return
+		}
+		if err := storage.AddAuthorizedUser(b.JobsDB, userID, "user", chatID); err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to add user: %v", err))
+			return
+		}
+		b.send(chatID, fmt.Sprintf("User %d added.", userID))
+	case "await_delete_user":
+		if !storage.IsAdmin(b.JobsDB, chatID) {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "Only the admin can delete users.")
+			return
+		}
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		var userID int64
+		fmt.Sscanf(text, "%d", &userID)
+		if userID == 0 {
+			b.send(chatID, "Invalid user ID. Use /delete_user to try again.")
+			return
+		}
+		if storage.IsAdmin(b.JobsDB, userID) {
+			b.send(chatID, "Cannot delete the admin. The super admin can not delete himself.")
+			return
+		}
+		if err := storage.RemoveAuthorizedUser(b.JobsDB, userID); err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to delete user: %v", err))
+			return
+		}
+		b.send(chatID, fmt.Sprintf("User %d removed.", userID))
 	}
 }
 

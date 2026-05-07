@@ -21,6 +21,7 @@ type Config struct {
 	DBPath           string `yaml:"db_path"`
 	LogPath          string `yaml:"log_path"`
 	PIDPath          string `yaml:"pid_path"`
+	AdminUserID      int64  `yaml:"admin_user_id"`
 }
 
 // GetAPIKey returns the API key for the given provider, or empty string.
