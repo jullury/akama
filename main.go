@@ -78,6 +78,12 @@ func runDaemon() {
 		log.Printf("recover interrupted jobs: %v", err)
 	}
 
+	if cfg.AdminUserID != 0 {
+		if err := storage.AddAuthorizedUser(db, cfg.AdminUserID, "admin", cfg.AdminUserID); err != nil {
+			log.Printf("add admin user: %v", err)
+		}
+	}
+
 	b, err := bot.New(cfg.TelegramToken)
 	if err != nil {
 		log.Fatalf("Create bot: %v", err)

@@ -78,6 +78,13 @@ func migrate(db *sql.DB) error {
 		agent        TEXT    NOT NULL DEFAULT '',
 		updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS authorized_users (
+		chat_id    INTEGER PRIMARY KEY,
+		role       TEXT    NOT NULL DEFAULT 'user',
+		added_by   INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return err

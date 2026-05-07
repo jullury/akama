@@ -64,6 +64,12 @@ func runInit(cmd *cobra.Command, args []string) {
 	}
 	fmt.Println()
 
+	fmt.Print("Telegram admin user ID (your Telegram user ID): ")
+	var adminID int64
+	fmt.Scanln(&adminID)
+	cfg.AdminUserID = adminID
+	fmt.Println()
+
 	fmt.Print("Default agent [claude/opencode] (default: claude): ")
 	var agent string
 	fmt.Scanln(&agent)
@@ -108,6 +114,13 @@ func runInit(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Open DB: %v\n", err)
 		return
 	}
+
+	if cfg.AdminUserID != 0 {
+		if err := storage.AddAuthorizedUser(db, cfg.AdminUserID, "admin", cfg.AdminUserID); err != nil {
+			fmt.Fprintf(os.Stderr, "Add admin user: %v\n", err)
+		}
+	}
+
 	db.Close()
 
 	fmt.Println("Config saved. Run `akama start` to start the bot.")
