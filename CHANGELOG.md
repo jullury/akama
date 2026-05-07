@@ -1,3 +1,10 @@
+# [2.9.0](https://github.com/jullury/akama/compare/v2.8.1...v2.9.0) (2026-05-07)
+
+
+### Features
+
+* upload images to provider hosting instead of embedding as base64 ([9fe1ebb](https://github.com/jullury/akama/commit/9fe1ebb401abc27ac545d083f3c4138218273a38))
+
 ## [2.8.1](https://github.com/jullury/akama/compare/v2.8.0...v2.8.1) (2026-05-07)
 
 
