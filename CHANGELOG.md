@@ -1,3 +1,10 @@
+# [2.6.0](https://github.com/jullury/akama/compare/v2.5.0...v2.6.0) (2026-05-07)
+
+
+### Features
+
+* **bot:** add storage package dependency to bot ([9702e80](https://github.com/jullury/akama/commit/9702e8037d783f3f58708d18857fa9d528106256))
+
 # [2.5.0](https://github.com/jullury/akama/compare/v2.4.1...v2.5.0) (2026-05-07)
 
 
