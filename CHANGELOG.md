@@ -1,3 +1,11 @@
+# [2.8.0](https://github.com/jullury/akama/compare/v2.7.0...v2.8.0) (2026-05-07)
+
+
+### Features
+
+* embed images as base64 data URIs in issue body ([5a3c353](https://github.com/jullury/akama/commit/5a3c3530473bd2cc886ad70ec0da08fb1a9834fb))
+* enrich issue body with embedded images and comments ([25419b8](https://github.com/jullury/akama/commit/25419b81d2110d774bd92c05dc1a9214c02f12af))
+
 # [2.7.0](https://github.com/jullury/akama/compare/v2.6.1...v2.7.0) (2026-05-07)
 
 
