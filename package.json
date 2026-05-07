@@ -1,6 +1,6 @@
 {
   "name": "akama",
-  "version": "0.0.0-dev",
+  "version": "2.6.0",
   "private": true,
   "scripts": {
     "semantic-release": "semantic-release"
