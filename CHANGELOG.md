@@ -1,3 +1,10 @@
+## [2.6.1](https://github.com/jullury/akama/compare/v2.6.0...v2.6.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* bump version to 2.6.0 ([c25ea90](https://github.com/jullury/akama/commit/c25ea90066aec351d4970fdb02088652eb8819bd))
+
 # [2.6.0](https://github.com/jullury/akama/compare/v2.5.0...v2.6.0) (2026-05-07)
 
 
