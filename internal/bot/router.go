@@ -1,7 +1,6 @@
 package bot
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -92,7 +91,7 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 
 			var issueURL string
 			var issueErr error
-			fullBody := embedImages(body, images)
+		fullBody := embedImages(body, images, providerName, token, repoURL)
 			switch providerName {
 			case "github":
 				issueURL, issueErr = provider.CreateGitHubIssue(repoURL, token, title, fullBody)
@@ -489,7 +488,7 @@ func (b *Bot) handleText(chatID int64, text string) {
 
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 
-		fullBody := embedImages(body, images)
+		fullBody := embedImages(body, images, providerName, token, repoURL)
 		var issueURL string
 		var err error
 		switch providerName {
@@ -734,9 +733,10 @@ func (b *Bot) handleText(chatID int64, text string) {
 	}
 }
 
-// embedImages downloads images from Telegram URLs and embeds them as data URIs
-// in the issue body. Images that are too large or fail to download are skipped.
-func embedImages(body, images string) string {
+// embedImages downloads images from Telegram URLs and embeds them in the issue
+// body by uploading to the provider's hosting. Images that fail to upload or
+// would exceed the body size limit are skipped.
+func embedImages(body, images, providerName, token, repoURL string) string {
 	if images == "" {
 		return body
 	}
@@ -762,9 +762,22 @@ func embedImages(body, images string) string {
 			continue
 		}
 
-		mimeType := http.DetectContentType(data)
-		encoded := base64.StdEncoding.EncodeToString(data)
-		markdown := fmt.Sprintf("\n\n![image](data:%s;base64,%s)", mimeType, encoded)
+		var imgURL string
+		switch providerName {
+		case "github":
+			imgURL, err = provider.UploadGitHubImage(token, repoURL, data)
+		case "gitlab":
+			imgURL, err = provider.UploadGitLabImage(token, repoURL, data)
+		default:
+			log.Printf("[embedImages] Unknown provider: %s", providerName)
+			continue
+		}
+		if err != nil {
+			log.Printf("[embedImages] Failed to upload image: %v", err)
+			continue
+		}
+
+		markdown := fmt.Sprintf("\n\n![image](%s)", imgURL)
 
 		// GitHub API accepts body up to 65536 chars — skip if we'd exceed that
 		if len(body)+imageMarkdown.Len()+len(markdown) > 64000 {
@@ -1130,7 +1143,7 @@ func (b *Bot) retryAfterTokenRefresh(chatID int64, providerName, token string) {
 
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 
-		fullBody := embedImages(body, images)
+		fullBody := embedImages(body, images, providerName, token, repoURL)
 		var issueURL string
 		switch providerName {
 		case "github":

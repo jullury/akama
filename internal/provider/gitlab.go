@@ -1,13 +1,78 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
+
+func UploadGitLabImage(token, repoURL string, imageData []byte) (string, error) {
+	projectPath, err := gitLabProjectPath(repoURL)
+	if err != nil {
+		return "", err
+	}
+
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/uploads", encodedPath)
+
+	mimeType := http.DetectContentType(imageData)
+	ext := ".png"
+	switch {
+	case strings.HasPrefix(mimeType, "image/jpeg"):
+		ext = ".jpg"
+	case strings.HasPrefix(mimeType, "image/gif"):
+		ext = ".gif"
+	case strings.HasPrefix(mimeType, "image/webp"):
+		ext = ".webp"
+	}
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	fw, err := w.CreateFormFile("file", fmt.Sprintf("image%d%s", time.Now().UnixNano(), ext))
+	if err != nil {
+		return "", fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := fw.Write(imageData); err != nil {
+		return "", fmt.Errorf("write image data: %w", err)
+	}
+	if err := w.Close(); err != nil {
+		return "", fmt.Errorf("close multipart: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", url, &buf)
+	if err != nil {
+		return "", fmt.Errorf("create upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitLab API error %d: %s", resp.StatusCode, b)
+	}
+
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode response: %w", err)
+	}
+
+	return result.URL, nil
+}
 
 
 type GitLabDeviceCode struct {
