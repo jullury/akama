@@ -141,6 +141,14 @@ type GitHubIssueResponse struct {
 	Number  int    `json:"number"`
 }
 
+type GitHubAttachmentResponse struct {
+	ID          int    `json:"id"`
+	URL         string `json:"url"`
+	Name        string `json:"name"`
+	ContentType string `json:"content_type"`
+	Size        int    `json:"size"`
+}
+
 func CreateGitHubIssue(repoURL, token, title, body string) (string, error) {
 	owner, repo, err := parseRepoURL(repoURL)
 	if err != nil {
@@ -169,6 +177,61 @@ func CreateGitHubIssue(repoURL, token, title, body string) (string, error) {
 		return "", fmt.Errorf("decode issue: %w", err)
 	}
 	return issue.HTMLURL, nil
+}
+
+func UploadGitHubIssueImage(repoURL, token string, issueNumber int, imageData []byte, filename string) (string, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return "", err
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/attachments", owner, repo, issueNumber)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(imageData))
+	if err != nil {
+		return "", fmt.Errorf("create upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload image: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitHub API error %d uploading image: %s", resp.StatusCode, b)
+	}
+	var attachment GitHubAttachmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&attachment); err != nil {
+		return "", fmt.Errorf("decode attachment: %w", err)
+	}
+	return attachment.URL, nil
+}
+
+func UpdateGitHubIssueBody(repoURL, token string, issueNumber int, body string) error {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d", owner, repo, issueNumber)
+	data, _ := json.Marshal(map[string]string{"body": body})
+	req, err := http.NewRequest("PATCH", url, strings.NewReader(string(data)))
+	if err != nil {
+		return fmt.Errorf("create update request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("update issue: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GitHub API error %d updating issue: %s", resp.StatusCode, b)
+	}
+	return nil
 }
 
 func FetchGitHubIssue(repoURL, token string) (*GitHubIssue, error) {

@@ -121,7 +121,11 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 				b.send(chatID, fmt.Sprintf("❌ Failed to create issue: %v", issueErr))
 				return
 			}
-			b.send(chatID, fmt.Sprintf("✅ Issue created: %s", issueURL))
+			if images != "" {
+				b.attachImagesToIssue(chatID, issueURL, providerName, token, title, body, images)
+			}
+			b.send(chatID, fmt.Sprintf("✅ Issue created: %s\n\nProcessing it now...", issueURL))
+			b.processIssueWithImages(chatID, issueURL, token, images)
 			return
 		}
 		// Normal /done command: mark job as done
@@ -519,6 +523,9 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, fmt.Sprintf("Failed to create issue: %v", err))
 			return
 		}
+		if images != "" {
+			b.attachImagesToIssue(chatID, issueURL, providerName, token, title, body, images)
+		}
 		b.send(chatID, fmt.Sprintf("Issue created: %s\n\nProcessing it now...", issueURL))
 		b.processIssueWithImages(chatID, issueURL, token, images)
 	case "await_config":
@@ -786,7 +793,7 @@ func (b *Bot) processIssueWithImages(chatID int64, issueURL, gitToken, images st
 		return
 	}
 
-	b.continueIssueProcessing(chatID, issueURL, token, defaultBranch, "")
+	b.continueIssueProcessing(chatID, issueURL, token, defaultBranch, images)
 }
 
 func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultBranch, images string) {
@@ -1087,6 +1094,9 @@ func (b *Bot) retryAfterTokenRefresh(chatID int64, providerName, token string) {
 			return
 		}
 
+		if images != "" {
+			b.attachImagesToIssue(chatID, issueURL, providerName, token, title, body, images)
+		}
 		b.send(chatID, fmt.Sprintf("Issue created: %s\n\nProcessing it now...", issueURL))
 		b.processIssueWithImages(chatID, issueURL, token, images)
 
@@ -1094,6 +1104,72 @@ func (b *Bot) retryAfterTokenRefresh(chatID int64, providerName, token string) {
 		log.Printf("[retryAfterTokenRefresh] Unknown pending action: %s", pendingAction)
 		b.send(chatID, "Unknown pending action. Please try again.")
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+	}
+}
+
+func (b *Bot) attachImagesToIssue(chatID int64, issueURL, providerName, token, title, body, images string) {
+	entries := strings.Split(images, ";")
+	var imageURLs []string
+
+	for _, entry := range entries {
+		parts := strings.SplitN(entry, "|", 2)
+		if len(parts) < 1 || parts[0] == "" {
+			continue
+		}
+		fileURL := parts[0]
+
+		resp, err := http.Get(fileURL)
+		if err != nil {
+			log.Printf("[attachImagesToIssue] Failed to download %s: %v", fileURL, err)
+			continue
+		}
+		imageData, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			log.Printf("[attachImagesToIssue] Failed to read image data: %v", err)
+			continue
+		}
+
+		filename := fmt.Sprintf("image_%d.png", len(imageURLs)+1)
+		var uploadedURL string
+		var uploadErr error
+		switch providerName {
+		case "github":
+			issueNum := extractIssueNumber(issueURL)
+			if issueNum == 0 {
+				log.Printf("[attachImagesToIssue] Failed to parse issue number from %s", issueURL)
+				continue
+			}
+			uploadedURL, uploadErr = provider.UploadGitHubIssueImage(issueURL, token, issueNum, imageData, filename)
+		case "gitlab":
+			uploadedURL, uploadErr = provider.UploadGitLabIssueImage(issueURL, token, imageData, filename)
+		}
+		if uploadErr != nil {
+			log.Printf("[attachImagesToIssue] Failed to upload image: %v", uploadErr)
+			continue
+		}
+		imageURLs = append(imageURLs, uploadedURL)
+	}
+
+	if len(imageURLs) > 0 {
+		updatedBody := body
+		for _, url := range imageURLs {
+			updatedBody += fmt.Sprintf("\n![image](%s)", url)
+		}
+
+		issueNum := extractIssueNumber(issueURL)
+		if issueNum > 0 {
+			var updateErr error
+			switch providerName {
+			case "github":
+				updateErr = provider.UpdateGitHubIssueBody(issueURL, token, issueNum, updatedBody)
+			case "gitlab":
+				updateErr = provider.UpdateGitLabIssueBody(issueURL, token, issueNum, updatedBody)
+			}
+			if updateErr != nil {
+				log.Printf("[attachImagesToIssue] Failed to update issue body: %v", updateErr)
+			}
+		}
 	}
 }
 
@@ -1118,4 +1194,17 @@ func extractRepoURL(issueURL string) string {
 		}
 	}
 	return issueURL
+}
+
+func extractIssueNumber(issueURL string) int {
+	for _, pattern := range []string{"/issues/", "/-/issues/", "/-/work_items/"} {
+		idx := strings.Index(issueURL, pattern)
+		if idx != -1 {
+			rest := issueURL[idx+len(pattern):]
+			var num int
+			fmt.Sscanf(rest, "%d", &num)
+			return num
+		}
+	}
+	return 0
 }

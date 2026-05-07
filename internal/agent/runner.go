@@ -294,23 +294,38 @@ func parseOpencodeOutput(output string) string {
 	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
-func BuildPrompt(title, url, body string) string {
+func BuildPrompt(title, url, body, images string) string {
 	truncated := body
 	if len(body) > 8000 {
 		truncated = body[:8000]
 	}
-	return fmt.Sprintf(`You are a developer fixing an issue in this repository.
+	prompt := fmt.Sprintf(`You are a developer fixing an issue in this repository.
 
 Issue Title: %s
 Issue URL:   %s
 Description:
 %s
+`, title, url, truncated)
 
+	if images != "" {
+		entries := strings.Split(images, ";")
+		for i, entry := range entries {
+			parts := strings.SplitN(entry, "|", 2)
+			if len(parts) == 2 {
+				prompt += fmt.Sprintf("![image_%d](%s) (size: %s bytes)\n", i+1, parts[0], parts[1])
+			} else if len(parts) == 1 && parts[0] != "" {
+				prompt += fmt.Sprintf("![image_%d](%s)\n", i+1, parts[0])
+			}
+		}
+	}
+
+	prompt += `
 Implement a complete fix. Make all necessary code changes.
 Do NOT create pull requests or push branches — that is handled separately.
 Do NOT mention AI, bots, automation, or any tool in code comments.
 Write as a human developer would.
-`, title, url, truncated)
+`
+	return prompt
 }
 
 func BuildFollowUpPrompt(userText string) string {

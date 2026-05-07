@@ -1,9 +1,11 @@
 package provider
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -144,6 +146,80 @@ func CreateGitLabIssue(repoURL, token, title, body string) (string, error) {
 		return "", fmt.Errorf("decode issue: %w", err)
 	}
 	return issue.WebURL, nil
+}
+
+type GitLabUploadResponse struct {
+	URL string `json:"url"`
+	Alt string `json:"alt"`
+}
+
+func UploadGitLabIssueImage(repoURL, token string, imageData []byte, filename string) (string, error) {
+	projectPath, err := gitLabProjectPath(repoURL)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("file", filename)
+	if err != nil {
+		return "", fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := fw.Write(imageData); err != nil {
+		return "", fmt.Errorf("write image data: %w", err)
+	}
+	w.Close()
+
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/uploads", encodedPath)
+	req, err := http.NewRequest("POST", url, &buf)
+	if err != nil {
+		return "", fmt.Errorf("create upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload image: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitLab API error %d uploading image: %s", resp.StatusCode, b)
+	}
+	var upload GitLabUploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&upload); err != nil {
+		return "", fmt.Errorf("decode upload: %w", err)
+	}
+	if upload.URL == "" {
+		return "", fmt.Errorf("empty upload URL from GitLab")
+	}
+	return upload.URL, nil
+}
+
+func UpdateGitLabIssueBody(repoURL, token string, issueIID int, body string) error {
+	projectPath, err := gitLabProjectPath(repoURL)
+	if err != nil {
+		return err
+	}
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/issues/%d", encodedPath, issueIID)
+	data, _ := json.Marshal(map[string]string{"description": body})
+	req, err := http.NewRequest("PUT", url, strings.NewReader(string(data)))
+	if err != nil {
+		return fmt.Errorf("create update request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("update issue: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GitLab API error %d updating issue: %s", resp.StatusCode, b)
+	}
+	return nil
 }
 
 func FetchGitLabIssue(repoURL, token string) (*GitLabIssue, error) {

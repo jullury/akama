@@ -127,7 +127,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 
 	notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] %s — running AI agent on: %s", j.Provider, repoName, j.IssueTitle))
 
-	prompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody)
+	prompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody, j.Images)
 	promptPath, err := agent.WritePrompt(workspacePath, prompt)
 	if err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err), workspacePath)
