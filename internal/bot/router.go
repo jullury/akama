@@ -722,8 +722,8 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, "Invalid user ID. Use /delete_user to try again.")
 			return
 		}
-		if storage.IsAdmin(b.JobsDB, userID) {
-			b.send(chatID, "Cannot delete the admin. The super admin can not delete himself.")
+		if userID == chatID {
+			b.send(chatID, "You cannot delete yourself.")
 			return
 		}
 		if err := storage.RemoveAuthorizedUser(b.JobsDB, userID); err != nil {
