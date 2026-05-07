@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +10,63 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
+
+func UploadGitHubImage(token, repoURL string, imageData []byte) (string, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return "", err
+	}
+
+	branch, err := GetGitHubDefaultBranch(repoURL, token)
+	if err != nil {
+		return "", err
+	}
+
+	mimeType := http.DetectContentType(imageData)
+	ext := ".png"
+	switch {
+	case strings.HasPrefix(mimeType, "image/jpeg"):
+		ext = ".jpg"
+	case strings.HasPrefix(mimeType, "image/gif"):
+		ext = ".gif"
+	case strings.HasPrefix(mimeType, "image/webp"):
+		ext = ".webp"
+	}
+
+	filename := fmt.Sprintf(".akama/assets/%d%s", time.Now().UnixNano(), ext)
+
+	encoded := base64.StdEncoding.EncodeToString(imageData)
+	payload := map[string]string{
+		"message": "Add image for issue",
+		"content": encoded,
+		"branch":  branch,
+	}
+	body, _ := json.Marshal(payload)
+
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s", owner, repo, filename)
+	req, err := http.NewRequest("PUT", url, strings.NewReader(string(body)))
+	if err != nil {
+		return "", fmt.Errorf("create upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("upload image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, b)
+	}
+
+	return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, branch, filename), nil
+}
 
 // ErrAuthPending is returned while the user hasn't completed the device flow yet.
 var ErrAuthPending = errors.New("authorization pending")
