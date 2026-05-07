@@ -101,7 +101,7 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 		return
 	}
 
-	if !storage.IsAuthorized(b.JobsDB, chatID) {
+	if authorized, _ := storage.IsAuthorized(b.JobsDB, chatID); !authorized {
 		msg := tgbotapi.NewMessage(chatID, "You are not authorized to use this bot. Contact the instance admin to gain access.")
 		b.API.Send(msg)
 		return

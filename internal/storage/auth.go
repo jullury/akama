@@ -10,13 +10,13 @@ type AuthorizedUser struct {
 	AddedBy   int64
 }
 
-func IsAuthorized(db *sql.DB, chatID int64) bool {
+func IsAuthorized(db *sql.DB, chatID int64) (bool, error) {
 	var count int
 	err := db.QueryRow(`SELECT COUNT(*) FROM authorized_users WHERE chat_id = ?`, chatID).Scan(&count)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return count > 0
+	return count > 0, nil
 }
 
 func IsAdmin(db *sql.DB, chatID int64) bool {
