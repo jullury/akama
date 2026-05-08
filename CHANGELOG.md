@@ -1,3 +1,10 @@
+## [2.11.7](https://github.com/jullury/akama/compare/v2.11.6...v2.11.7) (2026-05-08)
+
+
+### Bug Fixes
+
+* **update:** download before stopping daemon ([c2061eb](https://github.com/jullury/akama/commit/c2061eb89b47dc555f1ec6151f16eb066d979b76))
+
 ## [2.11.6](https://github.com/jullury/akama/compare/v2.11.5...v2.11.6) (2026-05-08)
 
 
