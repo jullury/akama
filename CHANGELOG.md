@@ -1,3 +1,10 @@
+# [2.11.0](https://github.com/jullury/akama/compare/v2.10.0...v2.11.0) (2026-05-08)
+
+
+### Features
+
+* add --version flag and auto-upgrade volume binary from image seed ([06b5b5a](https://github.com/jullury/akama/commit/06b5b5a2dd275796302a016c82a953d93b57a36b))
+
 # [2.10.0](https://github.com/jullury/akama/compare/v2.9.0...v2.10.0) (2026-05-08)
 
 
