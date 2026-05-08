@@ -1,3 +1,10 @@
+# [2.10.0](https://github.com/jullury/akama/compare/v2.9.0...v2.10.0) (2026-05-08)
+
+
+### Features
+
+* **docker:** run container as non-root user with agent seeding ([9d42a89](https://github.com/jullury/akama/commit/9d42a89a2c6266f5b8b0185663fa0eb81ea260b6))
+
 # [2.9.0](https://github.com/jullury/akama/compare/v2.8.1...v2.9.0) (2026-05-07)
 
 
