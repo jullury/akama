@@ -44,12 +44,22 @@ func New(token string) (*Bot, error) {
 	// connection may linger on Telegram's side long enough to collide with
 	// the new daemon's polling. A short-poll (timeout=0) supersedes any
 	// previous long-poll and leaves no active session behind.
-	flush := tgbotapi.NewUpdate(0)
-	flush.Timeout = 0
-	if _, err := api.GetUpdates(flush); err != nil {
-		log.Printf("warning: flush stale getUpdates: %v", err)
-	} else {
-		log.Printf("stale polling flushed")
+	// Retry on 409: a competing session may have beaten our flush; each
+	// retry reclaims the slot by terminating whichever session is currently active.
+	for attempt := 1; attempt <= 5; attempt++ {
+		flush := tgbotapi.NewUpdate(0)
+		flush.Timeout = 0
+		if _, err := api.GetUpdates(flush); err != nil {
+			if attempt < 5 {
+				log.Printf("flush attempt %d/5: %v — retrying in 2s", attempt, err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			log.Printf("warning: could not flush stale getUpdates after 5 attempts: %v", err)
+		} else {
+			log.Printf("stale polling flushed")
+		}
+		break
 	}
 
 	commands := []tgbotapi.BotCommand{
@@ -89,14 +99,27 @@ func (b *Bot) RunCtx(ctx context.Context) {
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
 	u.AllowedUpdates = []string{"message", "callback_query"}
-	updates := b.API.GetUpdatesChan(u)
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("bot context cancelled, stopping")
 			return
-		case update := <-updates:
+		default:
+		}
+
+		updates, err := b.API.GetUpdates(u)
+		if err != nil {
+			if ctx.Err() != nil {
+				continue
+			}
+			log.Printf("getUpdates error: %v, retrying in 3s...", err)
+			time.Sleep(3 * time.Second)
+			continue
+		}
+
+		for _, update := range updates {
+			u.Offset = update.UpdateID + 1
 			go b.handleUpdate(update)
 		}
 	}

@@ -64,18 +64,24 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	fmt.Printf("New version available: %s\n", latest)
 
 	if daemon.IsRunning(cfg.PIDPath) {
+		pid, err := daemon.ReadPID(cfg.PIDPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Read PID: %v\n", err)
+			os.Exit(1)
+		}
+
 		fmt.Println("Stopping running daemon...")
 		if err := daemon.StopDaemon(cfg.PIDPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Stop daemon: %v\n", err)
 		} else {
-			fmt.Println("Waiting for daemon to stop...")
+			fmt.Printf("Waiting for daemon (pid %d) to stop...\n", pid)
 			deadline := time.After(35 * time.Second)
 			for {
 				select {
 				case <-deadline:
 					fmt.Fprintln(os.Stderr, "timed out waiting for daemon to exit")
 				case <-time.After(300 * time.Millisecond):
-					if !daemon.IsRunning(cfg.PIDPath) {
+					if !daemon.IsProcessAlive(pid) {
 						fmt.Println("Daemon stopped")
 						goto download
 					}

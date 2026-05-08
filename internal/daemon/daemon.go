@@ -15,12 +15,15 @@ func IsRunning(pidPath string) bool {
 	if err != nil {
 		return false
 	}
+	return IsProcessAlive(pid)
+}
+
+func IsProcessAlive(pid int) bool {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return false
 	}
-	err = proc.Signal(syscall.Signal(0))
-	return err == nil
+	return proc.Signal(syscall.Signal(0)) == nil
 }
 
 func ForkDaemon() (int, error) {
@@ -42,6 +45,19 @@ func WritePID(pidPath string, pid int) error {
 		return err
 	}
 	return os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", pid)), pidFilePerm)
+}
+
+func ClaimPIDFile(pidPath string, pid int) error {
+	if err := os.MkdirAll(filepath.Dir(pidPath), 0755); err != nil {
+		return err
+	}
+	fd, err := os.OpenFile(pidPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, pidFilePerm)
+	if err != nil {
+		return err
+	}
+	defer fd.Close()
+	_, err = fd.WriteString(fmt.Sprintf("%d", pid))
+	return err
 }
 
 func ReadPID(pidPath string) (int, error) {

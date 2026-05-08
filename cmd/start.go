@@ -35,13 +35,21 @@ func runStart(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	if daemon.IsRunning(cfg.PIDPath) {
-		fmt.Fprintln(os.Stderr, "akama is already running")
+	if err := daemon.ClaimPIDFile(cfg.PIDPath, os.Getpid()); err != nil {
+		// O_EXCL + O_CREATE fails when the file already exists, meaning
+		// a daemon PID is already claimed. This avoids the TOCTOU race
+		// between IsRunning() and ForkDaemon().
+		if os.IsExist(err) {
+			fmt.Fprintln(os.Stderr, "akama is already running")
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Write PID: %v\n", err)
 		os.Exit(1)
 	}
 
 	pid, err := daemon.ForkDaemon()
 	if err != nil {
+		os.Remove(cfg.PIDPath)
 		fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
 		os.Exit(1)
 	}

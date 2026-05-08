@@ -46,7 +46,7 @@ func runStop(cmd *cobra.Command, args []string) {
 			fmt.Fprintln(os.Stderr, "timed out waiting for daemon to exit")
 			os.Exit(1)
 		case <-time.After(300 * time.Millisecond):
-			if !daemon.IsRunning(cfg.PIDPath) {
+			if !daemon.IsProcessAlive(pid) {
 				fmt.Println("akama daemon stopped")
 				return
 			}

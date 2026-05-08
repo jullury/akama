@@ -671,10 +671,11 @@ func (b *Bot) handleUpdateConfirm(chatID int64) {
 
 	if os.Getpid() != 1 {
 		// Non-Docker: spawn a detached helper that waits for this process to
-		// exit, then starts the new daemon. We cannot stop ourselves and then
-		// continue in the same goroutine — sending SIGTERM to the daemon kills
-		// the goroutine running this handler before any restart logic executes.
-		script := fmt.Sprintf("while kill -0 %d 2>/dev/null; do sleep 1; done; '%s' start", os.Getpid(), exePath)
+		// exit, pauses briefly for Telegram to drain the old long-poll connection,
+		// then starts the new daemon. We cannot stop ourselves and then continue
+		// in the same goroutine — sending SIGTERM to the daemon kills the goroutine
+		// running this handler before any restart logic executes.
+		script := fmt.Sprintf("while kill -0 %d 2>/dev/null; do sleep 1; done; sleep 3; '%s' start", os.Getpid(), exePath)
 		helper := exec.Command("sh", "-c", script)
 		helper.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 		if err := helper.Start(); err != nil {

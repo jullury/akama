@@ -1,6 +1,7 @@
 services:
   akama:
-    build: .
+    build:
+      context: .
     container_name: akama
     restart: unless-stopped
     environment:

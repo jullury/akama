@@ -38,13 +38,19 @@ func runRestart(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	pid, err := daemon.ReadPID(cfg.PIDPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "akama is not running")
+		os.Exit(1)
+	}
+
 	fmt.Println("Stopping daemon...")
 	if err := daemon.StopDaemon(cfg.PIDPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Stop daemon: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("Waiting for daemon to stop...")
+	fmt.Printf("Waiting for daemon (pid %d) to stop...\n", pid)
 	deadline := time.After(35 * time.Second)
 	for {
 		select {
@@ -52,7 +58,7 @@ func runRestart(cmd *cobra.Command, args []string) {
 			fmt.Fprintln(os.Stderr, "timed out waiting for daemon to exit")
 			os.Exit(1)
 		case <-time.After(300 * time.Millisecond):
-			if !daemon.IsRunning(cfg.PIDPath) {
+			if !daemon.IsProcessAlive(pid) {
 				fmt.Println("Daemon stopped")
 				goto start
 			}
@@ -61,10 +67,10 @@ func runRestart(cmd *cobra.Command, args []string) {
 
 start:
 	fmt.Println("Starting daemon...")
-	pid, err := daemon.ForkDaemon()
+	newPid, err := daemon.ForkDaemon()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("akama daemon started (pid %d)\n", pid)
+	fmt.Printf("akama daemon started (pid %d)\n", newPid)
 }
