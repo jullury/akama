@@ -1,3 +1,10 @@
+## [2.11.5](https://github.com/jullury/akama/compare/v2.11.4...v2.11.5) (2026-05-08)
+
+
+### Bug Fixes
+
+* **bot:** prevent Telegram polling conflict on daemon restart ([6127ed5](https://github.com/jullury/akama/commit/6127ed55eb3f9eef91e58f361f42a477afdfffed))
+
 ## [2.11.4](https://github.com/jullury/akama/compare/v2.11.3...v2.11.4) (2026-05-08)
 
 
