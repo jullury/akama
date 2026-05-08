@@ -1,3 +1,10 @@
+## [2.11.3](https://github.com/jullury/akama/compare/v2.11.2...v2.11.3) (2026-05-08)
+
+
+### Bug Fixes
+
+* **docker:** use SIGTERM instead of syscall.Exec for update restart ([a27ba5d](https://github.com/jullury/akama/commit/a27ba5d63e07f3d4d8eb6a41ecf9c58f872466de))
+
 ## [2.11.2](https://github.com/jullury/akama/compare/v2.11.1...v2.11.2) (2026-05-08)
 
 
