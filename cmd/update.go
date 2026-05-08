@@ -63,6 +63,16 @@ func runUpdate(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("New version available: %s\n", latest)
 
+	// Download before stopping the daemon so the binary is in place the moment
+	// the daemon restarts. Stopping first causes a race in Docker: the container
+	// restarts immediately and runs the old binary before the download finishes.
+	fmt.Println("Downloading and installing...")
+	if err := downloadUpdate(); err != nil {
+		fmt.Fprintf(os.Stderr, "Update failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Update installed successfully")
+
 	if daemon.IsRunning(cfg.PIDPath) {
 		pid, err := daemon.ReadPID(cfg.PIDPath)
 		if err != nil {
@@ -83,21 +93,14 @@ func runUpdate(cmd *cobra.Command, args []string) {
 				case <-time.After(300 * time.Millisecond):
 					if !daemon.IsProcessAlive(pid) {
 						fmt.Println("Daemon stopped")
-						goto download
+						goto start
 					}
 				}
 			}
 		}
 	}
 
-download:
-	fmt.Println("Downloading and installing...")
-	if err := downloadUpdate(); err != nil {
-		fmt.Fprintf(os.Stderr, "Update failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println("Update installed successfully")
+start:
 
 	fmt.Println("Starting daemon...")
 	pid, err := daemon.ForkDaemon()

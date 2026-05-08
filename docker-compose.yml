@@ -2,6 +2,8 @@ services:
   akama:
     build:
       context: .
+      args:
+        CACHEBUST: 
     container_name: akama
     restart: unless-stopped
     environment:
