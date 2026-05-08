@@ -1,3 +1,10 @@
+## [2.11.6](https://github.com/jullury/akama/compare/v2.11.5...v2.11.6) (2026-05-08)
+
+
+### Bug Fixes
+
+* **bot:** auto-recover from polling conflict ([f04e43e](https://github.com/jullury/akama/commit/f04e43e739502000343eeac2bb55957ce72c88f6))
+
 ## [2.11.5](https://github.com/jullury/akama/compare/v2.11.4...v2.11.5) (2026-05-08)
 
 
