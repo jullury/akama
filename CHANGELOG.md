@@ -1,3 +1,10 @@
+## [2.11.4](https://github.com/jullury/akama/compare/v2.11.3...v2.11.4) (2026-05-08)
+
+
+### Bug Fixes
+
+* **docker:** flush stale getUpdates long-poll on bot startup ([3b03330](https://github.com/jullury/akama/commit/3b03330f8ca66c7b2cf94825bf517b1f7fd969d1))
+
 ## [2.11.3](https://github.com/jullury/akama/compare/v2.11.2...v2.11.3) (2026-05-08)
 
 
