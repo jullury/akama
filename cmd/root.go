@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jullury/akama/internal/config"
 	"github.com/spf13/cobra"
 )
 
 var cfgPath string
 
 var rootCmd = &cobra.Command{
-	Use:   "akama",
-	Short: "Akama — AI coding agent orchestration via Telegram",
+	Use:     "akama",
+	Short:   "Akama — AI coding agent orchestration via Telegram",
+	Version: config.Version,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 	},
 }

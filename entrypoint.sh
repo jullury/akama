@@ -9,8 +9,13 @@ if [ "$(id -u)" = "0" ]; then
     # daemon think another instance is running (the PID may be reused).
     rm -f /home/akama/.akama/akama.pid
 
-    # Seed akama binary into volume on first run
-    if [ ! -f /home/akama/.akama/bin/akama ]; then
+    # Seed or upgrade the akama binary in the volume.
+    # Compare versions so a rebuilt image (newer seed) replaces a stale volume binary,
+    # while a user-updated binary (newer in volume) is left untouched.
+    SEED_VER=$(/opt/akama/bin/akama --version 2>/dev/null || echo "seed-unknown")
+    VOL_VER=$(/home/akama/.akama/bin/akama --version 2>/dev/null || echo "none")
+    if [ "$SEED_VER" != "$VOL_VER" ]; then
+        echo "Updating akama binary: $VOL_VER -> $SEED_VER"
         mkdir -p /home/akama/.akama/bin
         cp /opt/akama/bin/akama /home/akama/.akama/bin/akama
         chmod +x /home/akama/.akama/bin/akama
