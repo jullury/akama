@@ -93,7 +93,7 @@ func (r *claudeRunner) Run(ctx context.Context, model, workspacePath, promptPath
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("agent claude cancelled: %w", ctx.Err())
 		}
-		return "", fmt.Errorf("agent claude failed: %w\nstderr: %s", err, stderr.String())
+		return "", fmt.Errorf("agent claude failed: %w\nstderr: %s\nstdout: %s", err, stderr.String(), stdout.String())
 	}
 	return stdout.String() + stderr.String(), nil
 }
