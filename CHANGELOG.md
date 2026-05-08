@@ -1,3 +1,10 @@
+## [2.11.8](https://github.com/jullury/akama/compare/v2.11.7...v2.11.8) (2026-05-08)
+
+
+### Bug Fixes
+
+* **bot:** reset Telegram session state on startup ([dc77dc2](https://github.com/jullury/akama/commit/dc77dc2036924ff859c98e07d35b79ec11b2617c))
+
 ## [2.11.7](https://github.com/jullury/akama/compare/v2.11.6...v2.11.7) (2026-05-08)
 
 
