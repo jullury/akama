@@ -285,6 +285,7 @@ docker exec akama gosu akama npm install -g @anthropic-ai/claude-code@latest
 - The container runs as user `akama` (UID determined at build time). Root is only used briefly at startup to fix volume ownership, then dropped via `gosu`.
 - All binaries (`akama`, `opencode`, `claude`) are stored inside the volume so in-app updates (`akama update`, `npm install -g`) persist across `docker compose down && up` without a rebuild.
 - `opencode` is the default agent. Change `default_agent` via the `/config` command in Telegram.
+- All `akama` CLI commands inside the container must be run as the `akama` user or they will use the wrong home directory. Use `docker exec akama gosu akama <command>` (e.g. `docker exec akama gosu akama akama init`, `docker exec -it akama gosu akama opencode login`). The examples in this section use this pattern.
 - No OAuth credentials are baked into the image — the pre-built binary from GitHub releases is used as-is.
 
 ---
