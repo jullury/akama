@@ -48,7 +48,7 @@ func runLogs(cmd *cobra.Command, args []string) {
 	curLog := filepath.Join(logsDir, fmt.Sprintf("%s-%s%s", name, today, ext))
 
 	if logsAll {
-		// Print all log files (including archives), then optionally follow current
+		// Print all archived log files first, then fall through to today's log.
 		entries, err := os.ReadDir(logsDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Read log dir: %v\n", err)
@@ -59,22 +59,26 @@ func runLogs(cmd *cobra.Command, args []string) {
 				continue
 			}
 			fpath := filepath.Join(logsDir, e.Name())
+			if fpath == curLog {
+				continue // today's log is handled below
+			}
 			if strings.HasSuffix(fpath, archiveSuffix) {
 				printGzipFile(fpath)
 			} else {
 				printFile(fpath)
 			}
 		}
-	} else {
-		// Just print today's log
-		printFile(curLog)
 	}
 
 	if !logsFollow {
+		// Print today's log and exit.
+		printFile(curLog)
 		return
 	}
 
-	// Tail mode: watch the current log file from current end
+	// Follow mode: open today's log once and stream from the beginning,
+	// then keep polling for new content. This captures everything written
+	// before and after the tail starts (including daemon startup messages).
 	f, err := os.Open(curLog)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Open log: %v\n", err)
@@ -82,10 +86,7 @@ func runLogs(cmd *cobra.Command, args []string) {
 	}
 	defer f.Close()
 
-	// Seek to end so we only see new writes
-	f.Seek(0, 2)
-
-	buf := make([]byte, 1024)
+	buf := make([]byte, 4096)
 	for {
 		n, err := f.Read(buf)
 		if n > 0 {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -19,12 +20,13 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "start" {
-		for _, arg := range os.Args[2:] {
-			if arg == "--daemon" {
-				runDaemon()
-				return
-			}
+	// --daemon can appear as any argument (direct: `akama --daemon`, or
+	// forked: `akama start --daemon`). Handle it before cobra so the daemon
+	// process never goes through the command router.
+	for _, arg := range os.Args[1:] {
+		if arg == "--daemon" {
+			runDaemon()
+			return
 		}
 	}
 
@@ -48,7 +50,13 @@ func runDaemon() {
 		log.Fatalf("Create logger: %v", err)
 	}
 	defer lw.Close()
-	log.SetOutput(lw)
+	// When running as PID 1 (Docker container), tee logs to stdout so
+	// `docker logs` captures them without needing a separate tail process.
+	if os.Getpid() == 1 {
+		log.SetOutput(io.MultiWriter(os.Stdout, lw))
+	} else {
+		log.SetOutput(lw)
+	}
 
 	// Write PID file from the daemon process itself so there is no
 	// race between the parent's IsRunning check and fork.

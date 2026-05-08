@@ -127,9 +127,12 @@ func runInit(cmd *cobra.Command, args []string) {
 }
 
 func installClaude() {
+	if _, err := exec.LookPath("claude"); err == nil {
+		fmt.Println("claude already installed, skipping.")
+		return
+	}
 	fmt.Print("Installing claude... ")
-	err := agent.InstallClaudeCmd()
-	if err != nil {
+	if err := agent.InstallClaudeCmd(); err != nil {
 		fmt.Printf("failed: %v\n", err)
 		return
 	}
@@ -141,9 +144,12 @@ func installClaude() {
 }
 
 func installOpencode() {
+	if _, err := exec.LookPath("opencode"); err == nil {
+		fmt.Println("opencode already installed, skipping.")
+		return
+	}
 	fmt.Print("Installing opencode... ")
-	err := agent.InstallOpencodeCmd()
-	if err != nil {
+	if err := agent.InstallOpencodeCmd(); err != nil {
 		fmt.Printf("failed: %v\n", err)
 		return
 	}

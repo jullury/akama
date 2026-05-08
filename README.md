@@ -219,7 +219,7 @@ GITLAB_CLIENT_SECRET=...
 
 ## Docker Deployment
 
-The included `Dockerfile` and `docker-compose.yml` provide an isolated environment for running Akama in production mode without affecting your host system.
+The included `Dockerfile` and `docker-compose.yml` provide an isolated, non-root environment for running Akama in production.
 
 ### Prerequisites
 
@@ -230,43 +230,62 @@ cp .env.example .env
 ```
 
 Edit `.env` with your values:
-- `TELEGRAM_BOT_TOKEN` — from [@BotFather](https://t.me/BotFather)
-- `OPENAI_API_KEY` — required for opencode (default agent)
-- `ANTHROPIC_API_KEY` — required for claude agent
 
-### Start with docker-compose
+| Variable              | Description                                      |
+|-----------------------|--------------------------------------------------|
+| `TELEGRAM_BOT_TOKEN`  | From [@BotFather](https://t.me/BotFather)        |
+| `OPENAI_API_KEY`      | Required for opencode                            |
+| `ANTHROPIC_API_KEY`   | Required for claude                              |
+
+### Start
 
 ```sh
-docker-compose up -d
+docker compose up -d
 ```
 
 This will:
-- Build the image using `install.sh` to download the latest akama binary
-- Install `opencode` as the default agent globally
-- Generate `config.yaml` from environment variables at runtime
-- Start akama as a background daemon
-- Persist state (config, database, logs) via the `akama-data` volume
-- Automatically restart the container unless explicitly stopped
+- Build the image — downloads the latest akama binary via `install.sh` and pre-installs both `opencode` and `claude`
+- On first run, seed binaries into the persistent volume so `akama update` and agent updates survive container recreation
+- Check for outdated agents (`opencode`, `claude`) on every container start and update them if needed
+- Generate `~/.akama/config.yaml` from environment variables at runtime
+- Run as a non-root user (`akama`) for security
+- Persist all state (config, database, workspaces, logs, binaries) in the `akama-data` volume mounted at `/home/akama/.akama`
+- Automatically restart unless explicitly stopped
 
 ### View logs
 
 ```sh
-docker-compose logs -f
+docker logs -f akama
 ```
 
-### Stop the container
+### Stop
 
 ```sh
-docker-compose down
+docker compose down
+```
+
+### Updating
+
+**Akama binary:**
+Send `/update` in Telegram or run:
+```sh
+docker exec akama gosu akama akama update
+```
+The new binary is written to the volume and survives container recreation.
+
+**Agents (opencode / claude):**
+Checked and updated automatically on every container start. To force an immediate update:
+```sh
+docker exec akama gosu akama npm install -g opencode-ai@latest
+docker exec akama gosu akama npm install -g @anthropic-ai/claude-code@latest
 ```
 
 ### Notes
 
-- The container includes `git`, `curl`, `bash`, `nodejs`, and `npm` — sufficient for agent auto-installation and repo operations.
-- State is persisted in the `akama-data` Docker volume (mounted to `/root/.akama` inside the container).
-- `opencode` is set as the default agent; change `default_agent` in your `.env` if needed.
-- No build from source is required — the image downloads the pre-built binary via `install.sh`.
-- Configuration is generated at runtime from environment variables — no need to bake in OAuth credentials.
+- The container runs as user `akama` (UID determined at build time). Root is only used briefly at startup to fix volume ownership, then dropped via `gosu`.
+- All binaries (`akama`, `opencode`, `claude`) are stored inside the volume so in-app updates (`akama update`, `npm install -g`) persist across `docker compose down && up` without a rebuild.
+- `opencode` is the default agent. Change `default_agent` via the `/config` command in Telegram.
+- No OAuth credentials are baked into the image — the pre-built binary from GitHub releases is used as-is.
 
 ---
 
