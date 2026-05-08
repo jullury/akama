@@ -100,6 +100,8 @@ func (b *Bot) RunCtx(ctx context.Context) {
 	u.Timeout = 60
 	u.AllowedUpdates = []string{"message", "callback_query"}
 
+	consecutiveErrors := 0
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -111,13 +113,29 @@ func (b *Bot) RunCtx(ctx context.Context) {
 		updates, err := b.API.GetUpdates(u)
 		if err != nil {
 			if ctx.Err() != nil {
-				continue
+				return
 			}
+			consecutiveErrors++
 			log.Printf("getUpdates error: %v, retrying in 3s...", err)
-			time.Sleep(3 * time.Second)
+
+			// After 3 consecutive failures (likely a competing instance), re-flush
+			// to reclaim the polling slot rather than just waiting and retrying.
+			if consecutiveErrors%3 == 0 {
+				log.Printf("persistent conflict, re-flushing to reclaim polling slot...")
+				flush := tgbotapi.NewUpdate(0)
+				flush.Timeout = 0
+				b.API.GetUpdates(flush) //nolint:errcheck
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
 			continue
 		}
 
+		consecutiveErrors = 0
 		for _, update := range updates {
 			u.Offset = update.UpdateID + 1
 			go b.handleUpdate(update)
