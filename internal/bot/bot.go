@@ -30,7 +30,7 @@ func New(token string) (*Bot, error) {
 	api.Client = &http.Client{Timeout: 90 * time.Second}
 	log.Printf("authorized on account %s", api.Self.UserName)
 
-	resp, err := api.Request(tgbotapi.DeleteWebhookConfig{DropPendingUpdates: false})
+	resp, err := api.Request(tgbotapi.DeleteWebhookConfig{DropPendingUpdates: true})
 	if err != nil {
 		return nil, fmt.Errorf("delete webhook: %w", err)
 	}
@@ -40,27 +40,30 @@ func New(token string) (*Bot, error) {
 	log.Printf("webhook cleared")
 
 	// Flush any stale long-poll session from a previous daemon instance.
-	// When a daemon exits (e.g. after an update), its getUpdates TCP
-	// connection may linger on Telegram's side long enough to collide with
-	// the new daemon's polling. A short-poll (timeout=0) supersedes any
-	// previous long-poll and leaves no active session behind.
-	// Retry on 409: a competing session may have beaten our flush; each
-	// retry reclaims the slot by terminating whichever session is currently active.
+	// A short-poll (timeout=0) supersedes any previous long-poll and
+	// leaves no active session behind. Retry on 409: a competing session
+	// may have beaten our flush; each retry reclaims the slot.
+	log.Printf("clearing stale polling session...")
 	for attempt := 1; attempt <= 5; attempt++ {
 		flush := tgbotapi.NewUpdate(0)
 		flush.Timeout = 0
 		if _, err := api.GetUpdates(flush); err != nil {
 			if attempt < 5 {
-				log.Printf("flush attempt %d/5: %v — retrying in 2s", attempt, err)
+				log.Printf("  attempt %d/5: %v — retry in 2s", attempt, err)
 				time.Sleep(2 * time.Second)
 				continue
 			}
-			log.Printf("warning: could not flush stale getUpdates after 5 attempts: %v", err)
+			log.Printf("  warning: could not clear stale session after 5 attempts: %v", err)
 		} else {
-			log.Printf("stale polling flushed")
+			log.Printf("  stale polling session cleared")
 		}
 		break
 	}
+
+	// Give Telegram's server time to fully release the previous session
+	// before starting our long-poll. Without this delay, the new poll can
+	// conflict with a ghost session from a container that was just killed.
+	time.Sleep(3 * time.Second)
 
 	commands := []tgbotapi.BotCommand{
 		{Command: "cancel", Description: "Reset conversation state"},
