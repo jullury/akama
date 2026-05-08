@@ -1,3 +1,10 @@
+## [2.11.2](https://github.com/jullury/akama/compare/v2.11.1...v2.11.2) (2026-05-08)
+
+
+### Bug Fixes
+
+* **docker:** restart daemon in-place and preserve updated binary ([96af4ed](https://github.com/jullury/akama/commit/96af4ed5a83e161dabe3c2f7e86310e00e29cb0c))
+
 ## [2.11.1](https://github.com/jullury/akama/compare/v2.11.0...v2.11.1) (2026-05-08)
 
 
