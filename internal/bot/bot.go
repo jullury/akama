@@ -39,6 +39,19 @@ func New(token string) (*Bot, error) {
 	}
 	log.Printf("webhook cleared")
 
+	// Flush any stale long-poll session from a previous daemon instance.
+	// When a daemon exits (e.g. after an update), its getUpdates TCP
+	// connection may linger on Telegram's side long enough to collide with
+	// the new daemon's polling. A short-poll (timeout=0) supersedes any
+	// previous long-poll and leaves no active session behind.
+	flush := tgbotapi.NewUpdate(0)
+	flush.Timeout = 0
+	if _, err := api.GetUpdates(flush); err != nil {
+		log.Printf("warning: flush stale getUpdates: %v", err)
+	} else {
+		log.Printf("stale polling flushed")
+	}
+
 	commands := []tgbotapi.BotCommand{
 		{Command: "cancel", Description: "Reset conversation state"},
 		{Command: "config", Description: "Configure git name, email, and model"},
