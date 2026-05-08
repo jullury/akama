@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -670,20 +669,25 @@ func (b *Bot) handleUpdateConfirm(chatID int64) {
 
 	b.send(chatID, "Update installed. Restarting now...")
 
-	// Remove PID file so the new process can start fresh.
-	pidPath := b.Config.PIDPath
-	if strings.HasPrefix(pidPath, "~/") {
-		home, _ := os.UserHomeDir()
-		pidPath = filepath.Join(home, pidPath[2:])
+	if os.Getpid() != 1 {
+		// Non-Docker: spawn a detached helper that waits for this process to
+		// exit, then starts the new daemon. We cannot stop ourselves and then
+		// continue in the same goroutine — sending SIGTERM to the daemon kills
+		// the goroutine running this handler before any restart logic executes.
+		script := fmt.Sprintf("while kill -0 %d 2>/dev/null; do sleep 1; done; '%s' start", os.Getpid(), exePath)
+		helper := exec.Command("sh", "-c", script)
+		helper.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := helper.Start(); err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to schedule restart: %v", err))
+			return
+		}
 	}
-	os.Remove(pidPath)
 
-	// Replace the current process with the updated binary in-place.
-	// This reuses the same PID and keeps the daemon as PID 1 in Docker.
-	// The alternative (helper script + SIGTERM) cannot work when PID 1,
-	// because exiting PID 1 kills the container.
-	time.Sleep(500 * time.Millisecond)
-	syscall.Exec(exePath, os.Args, os.Environ())
+	// Signal ourselves to shut down cleanly (closes all connections).
+	// Docker: PID 1 exits → container restarts → entrypoint preserves the
+	// updated binary on the volume.
+	proc, _ := os.FindProcess(os.Getpid())
+	proc.Signal(syscall.SIGTERM)
 }
 
 func (b *Bot) downloadUpdate() error {
