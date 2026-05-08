@@ -10,15 +10,23 @@ if [ "$(id -u)" = "0" ]; then
     rm -f /home/akama/.akama/akama.pid
 
     # Seed or upgrade the akama binary in the volume.
-    # Compare versions so a rebuilt image (newer seed) replaces a stale volume binary,
-    # while a user-updated binary (newer in volume) is left untouched.
-    SEED_VER=$(/opt/akama/bin/akama --version 2>/dev/null || echo "seed-unknown")
-    VOL_VER=$(/home/akama/.akama/bin/akama --version 2>/dev/null || echo "none")
-    if [ "$SEED_VER" != "$VOL_VER" ]; then
-        echo "Updating akama binary: $VOL_VER -> $SEED_VER"
+    # Only overwrite if the volume is empty or the seed is newer,
+    # so a user-updated binary (newer in volume) is left untouched.
+    SEED_VER=$(/opt/akama/bin/akama --version 2>/dev/null || echo "0")
+    VOL_VER=$(/home/akama/.akama/bin/akama --version 2>/dev/null || echo "")
+    if [ -z "$VOL_VER" ]; then
+        echo "Installing akama binary to volume..."
         mkdir -p /home/akama/.akama/bin
         cp /opt/akama/bin/akama /home/akama/.akama/bin/akama
         chmod +x /home/akama/.akama/bin/akama
+    elif [ "$SEED_VER" != "$VOL_VER" ]; then
+        # Compare versions numerically to avoid overwriting a newer volume binary.
+        # Uses sort -V (version sort) — if seed is strictly older, skip.
+        if [ "$(echo -e "$SEED_VER\n$VOL_VER" | sort -V | head -n1)" = "$VOL_VER" ]; then
+            echo "Updating akama binary: $VOL_VER -> $SEED_VER"
+            cp /opt/akama/bin/akama /home/akama/.akama/bin/akama
+            chmod +x /home/akama/.akama/bin/akama
+        fi
     fi
 
     # Seed npm packages (opencode, claude etc.) into volume on first run
