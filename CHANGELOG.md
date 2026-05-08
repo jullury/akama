@@ -1,3 +1,10 @@
+## [2.11.1](https://github.com/jullury/akama/compare/v2.11.0...v2.11.1) (2026-05-08)
+
+
+### Bug Fixes
+
+* **agent:** include stdout in error messages when agent fails ([560e2b2](https://github.com/jullury/akama/commit/560e2b2848502913ead70f13dbd4046b27ce457f))
+
 # [2.11.0](https://github.com/jullury/akama/compare/v2.10.0...v2.11.0) (2026-05-08)
 
 
