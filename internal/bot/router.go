@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/config"
+	"github.com/jullury/akama/internal/git"
 	"github.com/jullury/akama/internal/job"
 	"github.com/jullury/akama/internal/provider"
 	"github.com/jullury/akama/internal/storage"
@@ -602,6 +604,12 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			return
 		}
 		if data == "plan:cancel" {
+			conv, convErr := storage.GetConversation(b.JobsDB, chatID, "telegram")
+			if convErr == nil {
+				if ws, _ := conv.Data["plan_workspace"].(string); ws != "" {
+					os.RemoveAll(ws)
+				}
+			}
 			storage.ResetConversation(b.JobsDB, chatID, "telegram")
 			b.send(chatID, "Plan cancelled. You can send another issue URL to start over.")
 			return
@@ -823,8 +831,9 @@ func (b *Bot) handleText(chatID int64, text string) {
 
 		b.send(chatID, "Generating implementation plan...")
 
+		planWorkspace, _ := conv.Data["plan_workspace"].(string)
 		prompt := agent.BuildPlanFromAnswers(title, body, answers)
-		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
+		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
 		if agentErr != nil {
 			log.Printf("[await_clarifying_questions] Failed to generate plan: %v", agentErr)
 			b.send(chatID, fmt.Sprintf("Failed to generate plan: %v. Please try again or use /cancel to abort.", agentErr))
@@ -903,8 +912,9 @@ func (b *Bot) handleText(chatID int64, text string) {
 				}
 			}()
 
+			planWorkspace, _ := savedData["plan_workspace"].(string)
 			prompt := agent.BuildPlanFromAnswers(title, body, updatedAnswers)
-			planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
+			planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
 			close(heartbeatStop)
 
 			if agentErr != nil {
@@ -1356,10 +1366,24 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 		TimeoutMins: b.Config.AgentTimeoutMins,
 	}
 
-	b.send(chatID, "Analyzing issue to generate clarifying questions...")
+	b.send(chatID, "🔍 Cloning repository for analysis...")
+
+	planWorkspace, cloneErr := os.MkdirTemp("", "akama-plan-*")
+	if cloneErr != nil {
+		b.send(chatID, fmt.Sprintf("❌ Failed to create workspace: %v", cloneErr))
+		return
+	}
+
+	if cloneErr := git.Clone(repoURL, gitToken, planWorkspace, defaultBranch); cloneErr != nil {
+		os.RemoveAll(planWorkspace)
+		log.Printf("[startPlanMode] Failed to clone repo for plan context: %v", cloneErr)
+		planWorkspace = ""
+	}
+
+	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
 
 	prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
-	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
+	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
 	if agentErr != nil {
 		log.Printf("[startPlanMode] Failed to generate questions: %v", agentErr)
 	}
@@ -1385,6 +1409,7 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 		"issue_id":       issueID,
 		"agent_name":     agentName,
 		"agent_model":    agentModel,
+		"plan_workspace": planWorkspace,
 	})
 
 	var qb strings.Builder
@@ -1409,6 +1434,10 @@ func (b *Bot) proceedWithPlan(chatID int64, conv *storage.Conversation) {
 	plan, _ := conv.Data["plan"].(string)
 
 	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+	if ws, _ := conv.Data["plan_workspace"].(string); ws != "" {
+		os.RemoveAll(ws)
+	}
 
 	fullBody := body
 	if plan != "" {
@@ -1459,6 +1488,10 @@ func (b *Bot) proceedWithMultiPlan(chatID int64, conv *storage.Conversation) {
 	reposInterface, _ := conv.Data["repos"].([]interface{})
 
 	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+	if ws, _ := conv.Data["plan_workspace"].(string); ws != "" {
+		os.RemoveAll(ws)
+	}
 
 	fullBody := body
 	if plan != "" {
@@ -1671,10 +1704,22 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		TimeoutMins: b.Config.AgentTimeoutMins,
 	}
 
-	b.send(chatID, "Analyzing issue to generate clarifying questions...")
+	b.send(chatID, "🔍 Cloning repository for analysis...")
+
+	planWorkspace, cloneErr := os.MkdirTemp("", "akama-plan-*")
+	if cloneErr != nil {
+		log.Printf("[processMultiIssue] Failed to create workspace: %v", cloneErr)
+		planWorkspace = ""
+	} else if cloneErr := git.Clone(repos[0]["repo_url"].(string), repos[0]["token"].(string), planWorkspace, repos[0]["default_branch"].(string)); cloneErr != nil {
+		os.RemoveAll(planWorkspace)
+		log.Printf("[processMultiIssue] Failed to clone for plan context: %v", cloneErr)
+		planWorkspace = ""
+	}
+
+	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
 
 	prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
-	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
+	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
 	if agentErr != nil {
 		log.Printf("[processMultiIssue] Failed to generate questions: %v", agentErr)
 	}
@@ -1691,17 +1736,18 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 	groupID := fmt.Sprintf("group_%d_%s", chatID, issueID)
 
 	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", map[string]interface{}{
-		"issue_url":   issueURL,
-		"provider":    providerName,
-		"title":       title,
-		"body":        body,
-		"issue_id":    issueID,
-		"images":      images,
-		"agent_name":  agentName,
-		"agent_model": agentModel,
-		"group_id":    groupID,
-		"multi_repo":  true,
-		"repos":       repos,
+		"issue_url":      issueURL,
+		"provider":       providerName,
+		"title":          title,
+		"body":           body,
+		"issue_id":       issueID,
+		"images":         images,
+		"agent_name":     agentName,
+		"agent_model":    agentModel,
+		"group_id":       groupID,
+		"multi_repo":     true,
+		"repos":          repos,
+		"plan_workspace": planWorkspace,
 	})
 
 	var qb strings.Builder
