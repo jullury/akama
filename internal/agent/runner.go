@@ -617,22 +617,27 @@ func IsQuestion(text string) bool {
 	return false
 }
 
-// RunPlanAgent runs the agent in a temporary workspace to generate plan-related
-// content (clarifying questions or implementation plans) without a codebase.
-func RunPlanAgent(ctx context.Context, agentName, model string, promptContent string, cfg *Config) (string, error) {
-	tmpDir, err := os.MkdirTemp("", "akama-plan-*")
-	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w", err)
+// RunPlanAgent runs the agent to generate plan-related content.
+// If workspacePath is non-empty it is used directly (caller owns cleanup).
+// If empty, a fresh temporary directory is created and removed on return.
+func RunPlanAgent(ctx context.Context, agentName, model, workspacePath, promptContent string, cfg *Config) (string, error) {
+	ownDir := workspacePath == ""
+	if ownDir {
+		var err error
+		workspacePath, err = os.MkdirTemp("", "akama-plan-*")
+		if err != nil {
+			return "", fmt.Errorf("create temp dir: %w", err)
+		}
+		defer os.RemoveAll(workspacePath)
 	}
-	defer os.RemoveAll(tmpDir)
 
-	promptPath, err := WritePrompt(tmpDir, promptContent)
+	promptPath, err := WritePrompt(workspacePath, promptContent)
 	if err != nil {
 		return "", fmt.Errorf("write plan prompt: %w", err)
 	}
 	defer os.Remove(promptPath)
 
-	output, err := Run(ctx, agentName, model, tmpDir, promptPath, cfg)
+	output, err := Run(ctx, agentName, model, workspacePath, promptPath, cfg)
 	if err != nil {
 		return "", err
 	}

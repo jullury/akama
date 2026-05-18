@@ -824,7 +824,7 @@ func (b *Bot) handleText(chatID int64, text string) {
 		b.send(chatID, "Generating implementation plan...")
 
 		prompt := agent.BuildPlanFromAnswers(title, body, answers)
-		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, prompt, agentCfg)
+		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
 		if agentErr != nil {
 			log.Printf("[await_clarifying_questions] Failed to generate plan: %v", agentErr)
 			b.send(chatID, fmt.Sprintf("Failed to generate plan: %v. Please try again or use /cancel to abort.", agentErr))
@@ -884,7 +884,7 @@ func (b *Bot) handleText(chatID int64, text string) {
 		b.send(chatID, "Regenerating plan with your changes...")
 
 		prompt := agent.BuildPlanFromAnswers(title, body, updatedAnswers)
-		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, prompt, agentCfg)
+		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
 		if agentErr != nil {
 			log.Printf("[await_plan_review] Failed to regenerate plan: %v", agentErr)
 			b.send(chatID, fmt.Sprintf("Failed to regenerate plan: %v. Please try again.", agentErr))
@@ -1332,7 +1332,7 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 	b.send(chatID, "Analyzing issue to generate clarifying questions...")
 
 	prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
-	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, prompt, agentCfg)
+	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
 	if agentErr != nil {
 		log.Printf("[startPlanMode] Failed to generate questions: %v", agentErr)
 	}
@@ -1647,7 +1647,7 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 	b.send(chatID, "Analyzing issue to generate clarifying questions...")
 
 	prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
-	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, prompt, agentCfg)
+	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
 	if agentErr != nil {
 		log.Printf("[processMultiIssue] Failed to generate questions: %v", agentErr)
 	}
