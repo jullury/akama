@@ -1,7 +1,7 @@
 # Build configuration from .env file
 # Usage: make build
 
-.PHONY: build clean start dist release
+.PHONY: setup build clean start dist release
 
 # Load .env file if it exists
 ifneq (,$(wildcard .env))
@@ -10,6 +10,17 @@ ifneq (,$(wildcard .env))
 endif
 
 VERSION ?= $(shell git describe --tags --always --abbrev=0 2>/dev/null || echo "dev")
+
+setup:
+	@echo "Installing mise and toolchain..."
+	@if command -v mise > /dev/null 2>&1; then \
+		MISE=$$(command -v mise); \
+	else \
+		curl -sS https://mise.run/ | sh; \
+		MISE="$$HOME/.local/bin/mise"; \
+	fi; \
+	$$MISE install
+	@echo "Toolchain ready."
 
 build:
 	@echo "Building akama with OAuth credentials from .env..."

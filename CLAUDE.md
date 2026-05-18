@@ -8,6 +8,20 @@ Akama is a Go CLI that acts as a coding agent orchestration system. A Telegram b
 
 ## Build and Run
 
+Toolchain is managed by [mise](https://mise.run/) via `.mise.toml`. After cloning:
+
+```bash
+curl https://mise.run/ | sh   # install mise if not present
+eval "$(mise activate bash)"   # activate in current shell
+mise install                   # install Go, Node, etc.
+```
+
+Or use the Make shortcut:
+
+```bash
+make setup      # install mise + toolchain
+```
+
 OAuth credentials are baked in at compile time via `-ldflags`. Always build through `make`:
 
 ```bash

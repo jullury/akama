@@ -4,6 +4,7 @@ Compact guidance for agents working in the Akama repository.
 
 ## Build & Verify
 
+- **Toolchain**: After clone, run `make setup` or `curl https://mise.run/ | sh && mise install` to install Go and Node via [mise](https://mise.run/) (defined in `.mise.toml`).
 - **Always build via `make build`** — OAuth credentials injected via `-ldflags` from `.env` at compile time.
 - `.env` must contain: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET` (case-sensitive).
 - Quick compile check without OAuth: `go build ./...` (sets `Version = "dev"`; `akama update` refuses dev builds).
