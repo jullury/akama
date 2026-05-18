@@ -70,18 +70,27 @@ Telegram update
 ```
 
 **Bot commands** (handled before the state machine in `router.handleMessage`):
-- `/start` — welcome message
+- `/start` / `/help` — welcome message and command list
 - `/connect` — OAuth device flow (GitHub or GitLab inline button)
 - `/connections` — list saved repo connections
+- `/delete_connection` — delete a specific connection (prompts for selection)
 - `/disconnect` — delete all connections for this chat
-- `/config` — inline keyboard to set git name, email, and model (model list from `agent.FetchModels`, paginated)
-- `/newissue` — pick a connected repo, then send issue title + body; bot creates the issue and immediately starts a job
-- `/issues` — list jobs with status `pr_created`
+- `/config` — inline keyboard to set git name, email, agent, and model (model list from `agent.FetchModels`, paginated)
+- `/newissue` — select one or more connected repos, then send issue title + body + optional images; creates the issue and starts jobs
+- `/issues` — show job filter keyboard (Open / Running / Failed / Pending / All)
 - `/queue` — list jobs with status `pending` or `running`
-- `/status` — show last 5 jobs
-- `/done <id>` — mark job done, clean up workspace
-- `/retry <id>` — reset a `failed` job to `pending` and requeue it
+- `/status` — show last 10 jobs
+- `/logs` — prompt for job ID, show that job's agent output (`agent_output` column)
+- `/done` — prompt for job ID, mark done and clean up workspace
+- `/retry` — prompt for job ID, reset a `failed` job to `pending` and requeue it
+- `/followup` — prompt for job ID, resume working on a completed job
 - `/cancel` — reset conversation state to `idle`
+- `/skills` — browse and install skillhub.club skills
+- `/update` — check for latest Akama release; prompts to download and restart
+- `/update_agents` — update `claude` and `opencode` CLI tools to latest version
+- `/users` — list authorized users (admin only)
+- `/add_user` — add a user by Telegram ID (admin only)
+- `/delete_user` — remove a user by Telegram ID (admin only)
 
 **`/connect` OAuth device flow:**
 1. User taps provider button → `startDeviceFlow` calls GitHub/GitLab device code endpoint
@@ -94,9 +103,15 @@ Telegram update
 router.processIssue
   → FindActiveJobByIssue — block duplicate submissions
   → fetch issue title/body from provider API
-  → storage.CreateJob
+      provider.EnrichIssueBody — downloads images from issue body + comments for agent context
+  → agent.BuildClarifyingQuestionsPrompt → agent.RunPlanAgent — generates 3-5 clarifying questions
+  → state: await_clarifying_questions
+  → user answers → agent.BuildPlanFromAnswers → agent.RunPlanAgent — generates implementation plan
+  → state: await_plan_review; user confirms or requests modifications (→ await_plan_regen)
+  → on confirmation: storage.CreateJob (plan stored in jobs.plan)
   → job.Run(ctx, jobID, ...)           ← goroutine tracked by sync.WaitGroup + cancelFuncs map
         git.Clone (retry ×3)
+        setupMise — runs `mise install` in cloned repo (silent, installs runtime deps)
         agent.Run(ctx, ...)            ← exec.CommandContext — killed on ctx cancel
         heartbeat goroutine sends "still working..." every 5 min while agent runs
         if agent output ends with "?":
@@ -105,7 +120,21 @@ router.processIssue
         provider.CreatePR/MR (retry ×3, handles "already exists")
         → Telegram notification with PR URL
         → storage.SetJobNotifMsgID     ← enables reply-threading
+        → pollCI goroutine: polls provider.GetCIStatus until branch merged or CI fails
 ```
+
+**Multi-repo issue flow** (when multiple repos selected via `/newissue`):
+```
+b.processMultiIssue
+  → jobs created with shared group_id = "group_<chatID>_<issueID>"
+  → job.RunGrouped — workspace at workspaceDir/multi/<groupID>/
+      each repo cloned as <owner>-<repo>/ subdirectory
+      agent runs across all repos simultaneously
+      CreatePR/MR per repo in parallel
+  → consolidated Telegram notification after all repos complete
+```
+
+**Image attachment** (via `/newissue`): after issue body, state enters `await_issue_images`. User sends photos or `/done` to skip. Images downloaded from Telegram, uploaded via `provider.UploadGitHubImage` / `provider.UploadGitLabImage`, embedded as `![image](url)` in the issue body. 64KB body limit enforced; failed uploads silently skipped.
 
 **Agent question flow** (`awaiting_input` status):
 - Conversation state set to `await_agent_input` with `{job_id}` in data
@@ -161,13 +190,41 @@ router.handleReply / handleText(await_agent_input)
 
 **Provider helpers** (`internal/provider/client.go`): `GetCIStatus(repoURL, token, branch, providerName)` checks pipeline/check-run status and returns `"pending"`, `"success"`, `"failure"`, or `"none"`. `GetDefaultBranch(repoURL, token, providerName)` queries the repo API to resolve the default branch name used during `await_branch_confirm`.
 
+**Plan mode**: Issue URLs trigger a two-phase pre-execution flow. `agent.BuildClarifyingQuestionsPrompt` → `agent.RunPlanAgent` generates 3-5 clarifying questions; user answers → `agent.BuildPlanFromAnswers` → `agent.RunPlanAgent` generates an implementation plan stored in `jobs.plan` and included in the job prompt. User can request modifications (`await_plan_regen`) or confirm to proceed. `proceedWithPlan` / `proceedWithMultiPlan` create jobs and start execution. A temporary clone is created for plan generation and cleaned up after confirmation.
+
+**Multi-repo jobs**: `/newissue` opens a checkbox selector (`await_repo_select` state) for picking multiple repos. Per-repo branch overrides use `await_branch_select`. Jobs share `group_id` (`"group_<chatID>_<issueID>"`); `job.RunGrouped` (`internal/job/runner.go`) clones all repos into `workspaceDir/multi/<groupID>/<owner>-<repo>/` and runs the agent across them simultaneously. PRs created in parallel; single consolidated notification sent after all complete.
+
+**Authorization**: When `admin_user_id` is non-zero, all incoming messages are checked against `authorized_users` — unrecognized users are silently ignored. Admin can add/remove users via `/add_user` and `/delete_user`. `admin_user_id: 0` (default) disables the check entirely.
+
+**Skills system**: `agent.InjectedSkillsContent()` prepends `AlwaysInject: true` skill content to every agent prompt. `/skills` lists and installs skills from skillhub.club or a `RawURL` (GitHub raw). `Required: true` skills are always pre-checked and cannot be skipped. `agent.InstallSkill` handles both download methods.
+
+**Image enrichment**: `provider.EnrichIssueBody` downloads images referenced in existing issue bodies and comments for agent context. For bot-created issues, `await_issue_images` state collects user-sent photos, uploads them to GitHub/GitLab, and embeds them as `![image](url)` in the issue body (64KB limit; failed uploads silently skipped). Send `/done` to skip.
+
+**Token refresh**: When a provider API call returns 401, conversation state switches to `await_token_refresh` with `pending_action` data (`"process_issue"` or `"create_issue"`). After re-OAuth, `retryAfterTokenRefresh` replays the interrupted action automatically.
+
+**Update mechanism**: `/update` calls `isNewerVersion` against GitHub releases. On non-Docker hosts, a detached helper script replaces the binary and restarts the daemon. On Docker (PID 1), the process exits and the container restarts.
+
+**Mise in workspace**: `setupMise` runs `mise install` in each cloned repo before the agent runs, to install runtime dependencies declared in `.mise.toml`. Silent and non-blocking on failure.
+
 **Conversation state machine** (`conversations` table, `data` column is JSON):
 - `idle` — default
 - `await_repo` — after OAuth approval; `data`: `{provider, token}`
 - `await_agent_input` — agent asked a question pre-commit; `data`: `{job_id}`
-- `await_config` — user tapped a `/config` inline button; `data`: `{field: "git_name"|"git_email"|"model"}`
-- `await_new_issue_title` / `await_new_issue_body` — `/newissue` multi-step flow; `data`: `{connection_id}`
+- `await_config` — user tapped a `/config` inline button; `data`: `{field: "git_name"|"git_email"|"agent"|"model"}`
+- `await_new_issue_title` / `await_new_issue_body` — `/newissue` multi-step flow
+- `await_issue_images` — collecting optional images after issue body; `data`: `{title, body, repo_url, provider, token}` (or `repos` array for multi-repo)
+- `await_repo_select` — multi-repo checkbox selection for `/newissue`; `data`: `{title, body, repos}`
+- `await_branch_select` — per-repo branch selection in multi-repo flow
 - `await_branch_confirm` — first job for a repo; bot asks user to confirm default branch; `data`: `{connection_id, branch}`
+- `await_clarifying_questions` — user answering agent's questions about an issue before plan generation
+- `await_plan_review` — user reviewing generated implementation plan; `data`: `{plan, workspace_path, connection_id, ...}`
+- `await_plan_regen` — plan is regenerating with user's modification request
+- `await_token_refresh` — OAuth re-auth required after 401; `data`: `{pending_action: "process_issue"|"create_issue", ...}` — action replayed after re-auth via `retryAfterTokenRefresh`
+- `await_skill_id` — user entering a custom skill ID to install
+- `await_logs` — user entering a job ID to view agent output
+- `await_retry` — user entering a job ID to retry
+- `await_followup_id` — user entering a job ID for follow-up
+- `await_add_user` / `await_delete_user` — admin user management
 
 ## Config (`~/.akama/config.yaml`)
 
@@ -183,6 +240,7 @@ workspace_dir: "~/.akama/workspaces"
 db_path:        "~/.akama/akama.db"
 log_path:       "~/.akama/akama.log"
 pid_path:       "~/.akama/akama.pid"
+admin_user_id:  0                # Telegram user ID of admin; 0 = no auth required (all users allowed)
 ```
 
 OAuth client IDs/secrets are **not** in config.yaml — they are baked in at build time via `make build` from `.env`.
@@ -197,12 +255,13 @@ API keys are stored in the `api_keys` map (keyed by provider name like `anthropi
 
 The canonical schema is inline in `storage.migrate()` (`internal/storage/db.go`), auto-applied on `storage.Open()`. The file `migrations/001_akama.sql` is a stale Postgres draft and is not used.
 
-Four tables:
+Five tables:
 
-- **`jobs`**: one row per issue fix job; `status`: `pending → running → pr_created ⇄ updating → done/failed`; also `awaiting_input` when agent asks a question before committing. `notification_msg_id` links reply messages to jobs.
+- **`jobs`**: one row per issue fix job; `status`: `pending → running → pr_created ⇄ updating → done/failed`; also `awaiting_input` when agent asks a question. Key columns: `group_id` (links multi-repo jobs; indexed), `plan` (generated implementation plan included in agent prompt), `images` (attached image URLs), `agent_output` (raw agent output for debugging), `notification_msg_id` (enables reply-threading).
 - **`conversations`**: one row per chat; `state` + `data` (JSON) drive the multi-turn flow.
-- **`connections`**: `(chat_id, provider, repo_url, git_token)` — queried by `FindConnectionByRepo`.
-- **`user_config`**: per-chat `(git_name, git_email, agent_model)` set via `/config` command.
+- **`connections`**: `(chat_id, provider, repo_url, git_token, default_branch)` — `default_branch` persisted after first `await_branch_confirm`.
+- **`user_config`**: per-chat `(git_name, git_email, agent_model, agent)` — `agent` stores the preferred agent provider name.
+- **`authorized_users`**: `(chat_id, role, added_by)` — access control; role is `"admin"` or `"user"`. `admin_user_id` from config is inserted as admin on daemon startup. `admin_user_id: 0` disables the check.
 
 ## Telegram Library
 
