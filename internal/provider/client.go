@@ -185,6 +185,15 @@ func GetDefaultBranch(repoURL, token, providerName string) string {
 	return branch
 }
 
+// IsWorkflowScopeError returns true when GitHub rejects a push because the
+// token lacks the `workflow` scope (needed to modify .github/workflows/ files).
+func IsWorkflowScopeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "refusing to allow an OAuth App to create or update workflow")
+}
+
 // IsAuthError returns true when the error indicates an authentication failure.
 // Covers HTTP-level errors (401/403) and git-level auth failures.
 func IsAuthError(err error) bool {

@@ -94,7 +94,7 @@ type GitHubTokenResponse struct {
 func StartGitHubDeviceFlow(clientID string) (*GitHubDeviceCode, error) {
 	body, _ := json.Marshal(map[string]string{
 		"client_id": clientID,
-		"scope":     "repo",
+		"scope":     "repo workflow",
 	})
 	req, err := http.NewRequest("POST", "https://github.com/login/device/code", bytes.NewReader(body))
 	if err != nil {

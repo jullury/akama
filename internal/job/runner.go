@@ -603,8 +603,15 @@ func notifyChunked(bot *tgbotapi.BotAPI, chatID int64, header, body string) {
 
 func failJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, workspacePath string) {
 	storage.SetJobFailed(jobsDB, j.ID, errMsg)
-	// Check if the failure is auth-related and give specific guidance
-	if provider.IsAuthError(fmt.Errorf(errMsg)) {
+	err := fmt.Errorf(errMsg)
+	if provider.IsWorkflowScopeError(err) {
+		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
+			"❌ Job %d failed: the changes include a GitHub Actions workflow file but your token lacks the `workflow` scope.\n\n"+
+				"Use /connect to re-authenticate (the new token will include workflow permissions), then /retry %d.",
+			j.ID, j.ID,
+		))
+		bot.Send(msg)
+	} else if provider.IsAuthError(err) {
 		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
 			"❌ Job %d failed: authentication error.\n\n"+
 				"Your token for %s may have expired or been revoked.\n"+
