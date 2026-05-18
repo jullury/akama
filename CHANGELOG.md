@@ -1,3 +1,16 @@
+# [2.16.0](https://github.com/jullury/akama/compare/v2.15.0...v2.16.0) (2026-05-18)
+
+
+### Bug Fixes
+
+* **bot:** fix plan review hang — async regen with heartbeat and guard state ([80d3cba](https://github.com/jullury/akama/commit/80d3cbaa955a30784ad5ed29cf7448c6666e0712))
+* **bot:** respond gracefully when plan:confirm tapped during await_plan_regen ([36384e1](https://github.com/jullury/akama/commit/36384e179f6e306eb18b86c1375c6a00d578901f))
+
+
+### Features
+
+* **bot:** clone repo before plan generation for codebase context ([619b6f5](https://github.com/jullury/akama/commit/619b6f59212a0f7cdc3ff3afb8cb6ef2f908ffbc))
+
 # [2.15.0](https://github.com/jullury/akama/compare/v2.14.0...v2.15.0) (2026-05-18)
 
 
