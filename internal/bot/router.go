@@ -881,30 +881,57 @@ func (b *Bot) handleText(chatID int64, text string) {
 			conv.Data["answers"] = updatedAnswers
 		}
 
-		b.send(chatID, "Regenerating plan with your changes...")
+		// Persist modifications before running the agent so a daemon restart
+		// doesn't lose the user's changes.
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_plan_regen", conv.Data)
 
-		prompt := agent.BuildPlanFromAnswers(title, body, updatedAnswers)
-		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
-		if agentErr != nil {
-			log.Printf("[await_plan_review] Failed to regenerate plan: %v", agentErr)
-			b.send(chatID, fmt.Sprintf("Failed to regenerate plan: %v. Please try again.", agentErr))
-			return
-		}
+		b.send(chatID, "⏳ Regenerating plan with your changes...")
 
-		conv.Data["plan"] = planOutput
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_plan_review", conv.Data)
+		savedData := conv.Data
+		go func() {
+			heartbeatStop := make(chan struct{})
+			go func() {
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-heartbeatStop:
+						return
+					case <-ticker.C:
+						b.send(chatID, "⏳ Still thinking...")
+					}
+				}
+			}()
 
-		keyboard := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Confirm", "plan:confirm"),
-				tgbotapi.NewInlineKeyboardButtonData("Cancel", "plan:cancel"),
-			),
-		)
+			prompt := agent.BuildPlanFromAnswers(title, body, updatedAnswers)
+			planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, "", prompt, agentCfg)
+			close(heartbeatStop)
 
-		msgText := fmt.Sprintf("Updated plan:\n\n%s\n\nReply with further changes or tap Confirm.", planOutput)
-		msg := tgbotapi.NewMessage(chatID, msgText)
-		msg.ReplyMarkup = keyboard
-		b.API.Send(msg)
+			if agentErr != nil {
+				log.Printf("[await_plan_review] Failed to regenerate plan: %v", agentErr)
+				// Restore state so the user can try again
+				storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_plan_review", savedData)
+				b.send(chatID, fmt.Sprintf("❌ Failed to regenerate plan: %v\n\nReply again to retry.", agentErr))
+				return
+			}
+
+			savedData["plan"] = planOutput
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_plan_review", savedData)
+
+			keyboard := tgbotapi.NewInlineKeyboardMarkup(
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("Confirm", "plan:confirm"),
+					tgbotapi.NewInlineKeyboardButtonData("Cancel", "plan:cancel"),
+				),
+			)
+			msgText := fmt.Sprintf("Updated plan:\n\n%s\n\nReply with further changes or tap Confirm.", planOutput)
+			msg := tgbotapi.NewMessage(chatID, msgText)
+			msg.ReplyMarkup = keyboard
+			b.API.Send(msg)
+		}()
+
+	case "await_plan_regen":
+		b.send(chatID, "⏳ Still regenerating the plan — please wait a moment.")
 
 	case "await_followup":
 		jobIDFloat, _ := conv.Data["job_id"].(float64)
