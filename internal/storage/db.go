@@ -96,6 +96,7 @@ func migrate(db *sql.DB) error {
 	db.Exec(`ALTER TABLE jobs ADD COLUMN images TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE jobs ADD COLUMN group_id TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_group ON jobs(group_id)`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN plan TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 

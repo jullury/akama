@@ -583,6 +583,29 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			b.send(chatID, "Update cancelled.")
 			return
 		}
+		if data == "plan:confirm" {
+			conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
+			if err != nil {
+				log.Printf("plan confirm: get conversation: %v", err)
+				b.send(chatID, "Failed to load conversation state.")
+				return
+			}
+			if conv.State != "await_plan_review" {
+				b.send(chatID, "No plan to confirm. Use /cancel to reset.")
+				return
+			}
+			if multiRepo, _ := conv.Data["multi_repo"].(bool); multiRepo {
+				b.proceedWithMultiPlan(chatID, conv)
+			} else {
+				b.proceedWithPlan(chatID, conv)
+			}
+			return
+		}
+		if data == "plan:cancel" {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "Plan cancelled. You can send another issue URL to start over.")
+			return
+		}
 		log.Printf("callback: unhandled data: %q", data)
 	}
 }
@@ -776,6 +799,113 @@ func (b *Bot) handleText(chatID int64, text string) {
 		}
 		go job.RunFollowUp(b.ctx, jobID, text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, "Got it, continuing work on the issue...")
+	case "await_clarifying_questions":
+		answers := strings.TrimSpace(text)
+		if answers == "" {
+			b.send(chatID, "Please answer the questions to help me create a plan.")
+			return
+		}
+
+		conv.Data["answers"] = answers
+		title, _ := conv.Data["title"].(string)
+		body, _ := conv.Data["body"].(string)
+		agentName, _ := conv.Data["agent_name"].(string)
+		agentModel, _ := conv.Data["agent_model"].(string)
+
+		if agentName == "" {
+			agentName = b.Config.DefaultAgent
+		}
+
+		agentCfg := &agent.Config{
+			APIKeys:     b.Config.APIKeys,
+			TimeoutMins: b.Config.AgentTimeoutMins,
+		}
+
+		b.send(chatID, "Generating implementation plan...")
+
+		prompt := agent.BuildPlanFromAnswers(title, body, answers)
+		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, prompt, agentCfg)
+		if agentErr != nil {
+			log.Printf("[await_clarifying_questions] Failed to generate plan: %v", agentErr)
+			b.send(chatID, fmt.Sprintf("Failed to generate plan: %v. Please try again or use /cancel to abort.", agentErr))
+			return
+		}
+
+		issueURL, _ := conv.Data["issue_url"].(string)
+		gitToken, _ := conv.Data["git_token"].(string)
+		providerName, _ := conv.Data["provider"].(string)
+
+		comment := fmt.Sprintf("## Implementation Plan\n\n%s", planOutput)
+		if err := provider.PostIssueComment(providerName, issueURL, gitToken, comment); err != nil {
+			log.Printf("[await_clarifying_questions] Failed to post plan comment: %v", err)
+		} else {
+			b.send(chatID, "Plan posted as comment on the issue.")
+		}
+
+		conv.Data["plan"] = planOutput
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_plan_review", conv.Data)
+
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Confirm", "plan:confirm"),
+				tgbotapi.NewInlineKeyboardButtonData("Cancel", "plan:cancel"),
+			),
+		)
+
+		msgText := fmt.Sprintf("Implementation plan ready:\n\n%s\n\nDo you want to proceed with this plan? Reply with changes or tap Confirm.", planOutput)
+		msg := tgbotapi.NewMessage(chatID, msgText)
+		msg.ReplyMarkup = keyboard
+		b.API.Send(msg)
+
+	case "await_plan_review":
+		mods := strings.TrimSpace(text)
+
+		title, _ := conv.Data["title"].(string)
+		body, _ := conv.Data["body"].(string)
+		answers, _ := conv.Data["answers"].(string)
+		agentName, _ := conv.Data["agent_name"].(string)
+		agentModel, _ := conv.Data["agent_model"].(string)
+
+		if agentName == "" {
+			agentName = b.Config.DefaultAgent
+		}
+
+		agentCfg := &agent.Config{
+			APIKeys:     b.Config.APIKeys,
+			TimeoutMins: b.Config.AgentTimeoutMins,
+		}
+
+		updatedAnswers := answers
+		if mods != "" {
+			updatedAnswers = fmt.Sprintf("%s\n\nUser requested changes:\n%s", answers, mods)
+			conv.Data["answers"] = updatedAnswers
+		}
+
+		b.send(chatID, "Regenerating plan with your changes...")
+
+		prompt := agent.BuildPlanFromAnswers(title, body, updatedAnswers)
+		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, prompt, agentCfg)
+		if agentErr != nil {
+			log.Printf("[await_plan_review] Failed to regenerate plan: %v", agentErr)
+			b.send(chatID, fmt.Sprintf("Failed to regenerate plan: %v. Please try again.", agentErr))
+			return
+		}
+
+		conv.Data["plan"] = planOutput
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_plan_review", conv.Data)
+
+		keyboard := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Confirm", "plan:confirm"),
+				tgbotapi.NewInlineKeyboardButtonData("Cancel", "plan:cancel"),
+			),
+		)
+
+		msgText := fmt.Sprintf("Updated plan:\n\n%s\n\nReply with further changes or tap Confirm.", planOutput)
+		msg := tgbotapi.NewMessage(chatID, msgText)
+		msg.ReplyMarkup = keyboard
+		b.API.Send(msg)
+
 	case "await_followup":
 		jobIDFloat, _ := conv.Data["job_id"].(float64)
 		jobID := int64(jobIDFloat)
@@ -839,7 +969,7 @@ func (b *Bot) handleText(chatID int64, text string) {
 		if err := storage.UpdateConnectionDefaultBranch(b.JobsDB, chatID, repoURL, chosenBranch); err != nil {
 			log.Printf("[await_branch_confirm] Failed to persist branch: %v", err)
 		}
-		b.continueIssueProcessing(chatID, issueURL, gitToken, chosenBranch, "")
+		b.startPlanMode(chatID, issueURL, gitToken, chosenBranch, "")
 	case "await_branch_select":
 		reposInterface, _ := conv.Data["repos"].([]interface{})
 		repos := make([]map[string]interface{}, 0, len(reposInterface))
@@ -1122,7 +1252,242 @@ func (b *Bot) processIssueWithImages(chatID int64, issueURL, gitToken, images st
 		return
 	}
 
-	b.continueIssueProcessing(chatID, issueURL, token, defaultBranch, "")
+	b.startPlanMode(chatID, issueURL, token, defaultBranch, images)
+}
+
+func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, images string) {
+	providerName := detectProvider(issueURL)
+	repoURL := extractRepoURL(issueURL)
+
+	var title, body, issueID string
+	var err error
+
+	switch providerName {
+	case "github":
+		issue, e := provider.FetchGitHubIssue(issueURL, gitToken)
+		if e != nil {
+			err = e
+		} else {
+			title = issue.Title
+			body = issue.Body
+			issueID = fmt.Sprintf("%d", issue.Number)
+		}
+	case "gitlab":
+		issue, e := provider.FetchGitLabIssue(issueURL, gitToken)
+		if e != nil {
+			err = e
+		} else {
+			title = issue.Title
+			body = issue.Description
+			issueID = fmt.Sprintf("%d", issue.IID)
+		}
+	}
+
+	if err != nil {
+		if provider.IsAuthError(err) {
+			pendingData := map[string]interface{}{
+				"pending_action": "process_issue",
+				"issue_url":     issueURL,
+				"repo_url":      repoURL,
+				"provider_name": providerName,
+			}
+			if saveErr := storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_token_refresh", pendingData); saveErr != nil {
+				log.Printf("[startPlanMode] Failed to save pending action: %v", saveErr)
+			}
+			b.send(chatID, fmt.Sprintf(
+				"Authentication failed for %s. Your token may have expired or been revoked.\n\n"+
+					"Use /connect to refresh your token for this repository.", providerName,
+			))
+			return
+		}
+		b.send(chatID, fmt.Sprintf("Failed to fetch issue: %v", err))
+		return
+	}
+	if issueID == "" {
+		b.send(chatID, "Failed to parse issue ID from fetched issue.")
+		return
+	}
+
+	if body != "" {
+		body = provider.EnrichIssueBody(providerName, issueURL, gitToken, body)
+	}
+
+	userCfg, _ := storage.GetUserConfig(b.JobsDB, chatID)
+	agentName := b.Config.DefaultAgent
+	agentModel := b.Config.DefaultModel
+	if userCfg != nil {
+		if userCfg.Agent != "" {
+			agentName = userCfg.Agent
+		}
+		if userCfg.AgentModel != "" {
+			agentModel = userCfg.AgentModel
+		}
+	}
+
+	agentCfg := &agent.Config{
+		APIKeys:     b.Config.APIKeys,
+		TimeoutMins: b.Config.AgentTimeoutMins,
+	}
+
+	b.send(chatID, "Analyzing issue to generate clarifying questions...")
+
+	prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
+	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, prompt, agentCfg)
+	if agentErr != nil {
+		log.Printf("[startPlanMode] Failed to generate questions: %v", agentErr)
+	}
+
+	questions := agent.ParseClarifyingQuestions(output)
+	if len(questions) < 2 {
+		questions = []string{
+			"What specific behavior or output do you expect after the fix?",
+			"Are there any edge cases or specific scenarios to consider?",
+			"What is the expected timeline or priority for this fix?",
+		}
+	}
+
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", map[string]interface{}{
+		"issue_url":      issueURL,
+		"git_token":      gitToken,
+		"default_branch": defaultBranch,
+		"images":         images,
+		"provider":       providerName,
+		"repo_url":       repoURL,
+		"title":          title,
+		"body":           body,
+		"issue_id":       issueID,
+		"agent_name":     agentName,
+		"agent_model":    agentModel,
+	})
+
+	var qb strings.Builder
+	qb.WriteString("I have a few questions to better understand the issue:\n\n")
+	for i, q := range questions {
+		qb.WriteString(fmt.Sprintf("%d. %s\n", i+1, q))
+	}
+	qb.WriteString("\nPlease answer all questions in a single message.")
+	b.send(chatID, qb.String())
+}
+
+func (b *Bot) proceedWithPlan(chatID int64, conv *storage.Conversation) {
+	issueURL, _ := conv.Data["issue_url"].(string)
+	gitToken, _ := conv.Data["git_token"].(string)
+	defaultBranch, _ := conv.Data["default_branch"].(string)
+	images, _ := conv.Data["images"].(string)
+	providerName, _ := conv.Data["provider"].(string)
+	repoURL, _ := conv.Data["repo_url"].(string)
+	title, _ := conv.Data["title"].(string)
+	body, _ := conv.Data["body"].(string)
+	issueID, _ := conv.Data["issue_id"].(string)
+	plan, _ := conv.Data["plan"].(string)
+
+	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+	fullBody := body
+	if plan != "" {
+		planSection := fmt.Sprintf("\n\n## Implementation Plan\n\n%s", plan)
+		fullBody = body + planSection
+	}
+
+	j := &storage.Job{
+		ChatID:        chatID,
+		IssueID:       issueID,
+		IssueTitle:    title,
+		IssueBody:     fullBody,
+		IssueURL:      issueURL,
+		RepoURL:       repoURL,
+		Provider:      providerName,
+		GitToken:      gitToken,
+		Agent:         b.Config.DefaultAgent,
+		AgentModel:    b.Config.DefaultModel,
+		DefaultBranch: defaultBranch,
+		Images:        images,
+		Plan:          plan,
+	}
+
+	jobID, err := storage.CreateJob(b.JobsDB, j)
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Failed to create job: %v", err))
+		return
+	}
+
+	agentCfg := &agent.Config{
+		APIKeys:     b.Config.APIKeys,
+		TimeoutMins: b.Config.AgentTimeoutMins,
+	}
+
+	b.send(chatID, "✅ Plan confirmed! Starting implementation...")
+	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
+}
+
+func (b *Bot) proceedWithMultiPlan(chatID int64, conv *storage.Conversation) {
+	issueURL, _ := conv.Data["issue_url"].(string)
+	title, _ := conv.Data["title"].(string)
+	body, _ := conv.Data["body"].(string)
+	issueID, _ := conv.Data["issue_id"].(string)
+	images, _ := conv.Data["images"].(string)
+	plan, _ := conv.Data["plan"].(string)
+	groupID, _ := conv.Data["group_id"].(string)
+
+	reposInterface, _ := conv.Data["repos"].([]interface{})
+
+	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+	fullBody := body
+	if plan != "" {
+		fullBody = body + fmt.Sprintf("\n\n## Implementation Plan\n\n%s", plan)
+	}
+
+	createdIDs := make([]int64, 0, len(reposInterface))
+	for _, ri := range reposInterface {
+		repo, ok := ri.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		rURL, _ := repo["repo_url"].(string)
+		rProvider, _ := repo["provider"].(string)
+		rToken, _ := repo["token"].(string)
+		rBranch, _ := repo["default_branch"].(string)
+		if rBranch == "" {
+			rBranch = "main"
+		}
+
+		j := &storage.Job{
+			ChatID:        chatID,
+			IssueID:       issueID,
+			IssueTitle:    title,
+			IssueBody:     fullBody,
+			IssueURL:      issueURL,
+			RepoURL:       rURL,
+			Provider:      rProvider,
+			GitToken:      rToken,
+			Agent:         b.Config.DefaultAgent,
+			AgentModel:    b.Config.DefaultModel,
+			DefaultBranch: rBranch,
+			Images:        images,
+			GroupID:       groupID,
+			Plan:          plan,
+		}
+		jobID, err := storage.CreateJob(b.JobsDB, j)
+		if err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to create job for %s: %v", rURL, err))
+			continue
+		}
+		createdIDs = append(createdIDs, jobID)
+	}
+
+	if len(createdIDs) == 0 {
+		b.send(chatID, "Failed to create any jobs.")
+		return
+	}
+
+	agentCfg := &agent.Config{
+		APIKeys:     b.Config.APIKeys,
+		TimeoutMins: b.Config.AgentTimeoutMins,
+	}
+
+	b.send(chatID, "✅ Plan confirmed! Starting implementation across all repositories...")
+	job.RunGrouped(b.ctx, groupID, createdIDs, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
 }
 
 func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultBranch, images string) {
@@ -1262,52 +1627,63 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		body = provider.EnrichIssueBody(providerName, issueURL, repos[0]["token"].(string), body)
 	}
 
-	// Create jobs for each repo with a shared group_id
-	groupID := fmt.Sprintf("group_%d_%s", chatID, issueID)
-	createdIDs := make([]int64, 0, len(repos))
-
-	for _, repo := range repos {
-		rURL := repo["repo_url"].(string)
-		rProvider := repo["provider"].(string)
-		rToken := repo["token"].(string)
-		rBranch := repo["default_branch"].(string)
-		if rBranch == "" {
-			rBranch = "main"
+	userCfg, _ := storage.GetUserConfig(b.JobsDB, chatID)
+	agentName := b.Config.DefaultAgent
+	agentModel := b.Config.DefaultModel
+	if userCfg != nil {
+		if userCfg.Agent != "" {
+			agentName = userCfg.Agent
 		}
-
-		j := &storage.Job{
-			ChatID:        chatID,
-			IssueID:       issueID,
-			IssueTitle:    title,
-			IssueBody:     body,
-			IssueURL:      issueURL,
-			RepoURL:       rURL,
-			Provider:      rProvider,
-			GitToken:      rToken,
-			Agent:         b.Config.DefaultAgent,
-			AgentModel:    b.Config.DefaultModel,
-			DefaultBranch: rBranch,
-			Images:        images,
-			GroupID:       groupID,
+		if userCfg.AgentModel != "" {
+			agentModel = userCfg.AgentModel
 		}
-		jobID, err := storage.CreateJob(b.JobsDB, j)
-		if err != nil {
-			b.send(chatID, fmt.Sprintf("Failed to create job for %s: %v", rURL, err))
-			continue
-		}
-		createdIDs = append(createdIDs, jobID)
-	}
-
-	if len(createdIDs) == 0 {
-		b.send(chatID, "Failed to create any jobs.")
-		return
 	}
 
 	agentCfg := &agent.Config{
-		APIKeys:      b.Config.APIKeys,
-		TimeoutMins:  b.Config.AgentTimeoutMins,
+		APIKeys:     b.Config.APIKeys,
+		TimeoutMins: b.Config.AgentTimeoutMins,
 	}
-	job.RunGrouped(b.ctx, groupID, createdIDs, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
+
+	b.send(chatID, "Analyzing issue to generate clarifying questions...")
+
+	prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
+	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, prompt, agentCfg)
+	if agentErr != nil {
+		log.Printf("[processMultiIssue] Failed to generate questions: %v", agentErr)
+	}
+
+	questions := agent.ParseClarifyingQuestions(output)
+	if len(questions) < 2 {
+		questions = []string{
+			"What specific behavior or output do you expect after the fix?",
+			"Are there any edge cases or specific scenarios to consider?",
+			"What is the expected timeline or priority for this fix?",
+		}
+	}
+
+	groupID := fmt.Sprintf("group_%d_%s", chatID, issueID)
+
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", map[string]interface{}{
+		"issue_url":   issueURL,
+		"provider":    providerName,
+		"title":       title,
+		"body":        body,
+		"issue_id":    issueID,
+		"images":      images,
+		"agent_name":  agentName,
+		"agent_model": agentModel,
+		"group_id":    groupID,
+		"multi_repo":  true,
+		"repos":       repos,
+	})
+
+	var qb strings.Builder
+	qb.WriteString("I have a few questions to better understand the issue (across all repositories):\n\n")
+	for i, q := range questions {
+		qb.WriteString(fmt.Sprintf("%d. %s\n", i+1, q))
+	}
+	qb.WriteString("\nPlease answer all questions in a single message.")
+	b.send(chatID, qb.String())
 }
 
 func (b *Bot) send(chatID int64, text string) {
