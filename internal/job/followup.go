@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -19,6 +22,12 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 	j, err := storage.GetJob(jobsDB, jobID)
 	if err != nil {
 		log.Printf("get job %d: %v", jobID, err)
+		return
+	}
+
+	// Check if this is part of a group
+	if j.GroupID != "" {
+		runGroupedFollowUp(ctx, j, userText, jobsDB, bot, agentCfg)
 		return
 	}
 
@@ -114,6 +123,130 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 		storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
 	}
 
+	os.Remove(promptPath)
+}
+
+func runGroupedFollowUp(ctx context.Context, primary *storage.Job, userText string, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config) {
+	jobs, err := storage.FindJobsByGroupID(jobsDB, primary.GroupID)
+	if err != nil || len(jobs) == 0 {
+		log.Printf("runGroupedFollowUp: no jobs found for group %s: %v", primary.GroupID, err)
+		return
+	}
+
+	chatID := primary.ChatID
+	groupWorkspace := primary.WorkspacePath
+	if groupWorkspace == "" && len(jobs) > 0 {
+		groupWorkspace = jobs[0].WorkspacePath
+	}
+
+	// Set all jobs to updating
+	for _, j := range jobs {
+		storage.SetJobStatus(jobsDB, j.ID, "updating")
+
+		// Refresh tokens
+		if conn, err := storage.FindConnectionByRepo(jobsDB, j.ChatID, j.RepoURL); err == nil && conn != nil {
+			if conn.GitToken != j.GitToken {
+				j.GitToken = conn.GitToken
+				storage.UpdateJobToken(jobsDB, j.ID, conn.GitToken)
+			}
+		}
+	}
+
+	userCfg, _ := storage.GetUserConfig(jobsDB, chatID)
+	gitName, gitEmail := "", ""
+	if userCfg != nil {
+		gitName = userCfg.GitName
+		gitEmail = userCfg.GitEmail
+	}
+
+	prompt := agent.BuildFollowUpPrompt(userText)
+	promptPath, err := agent.WritePrompt(groupWorkspace, prompt)
+	if err != nil {
+		for _, j := range jobs {
+			failFollowUp(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
+		}
+		return
+	}
+
+	var followUpOutput string
+	if err := withRetry(ctx, "agent run", 3, func() error {
+		var e error
+		followUpOutput, e = agent.Run(ctx, primary.Agent, primary.AgentModel, groupWorkspace, promptPath, agentCfg)
+		return e
+	}); err != nil {
+		for _, j := range jobs {
+			failFollowUp(jobsDB, bot, j, fmt.Sprintf("agent run: %v", err))
+		}
+		return
+	}
+
+	followUpText := agent.ParseOutput(primary.Agent, followUpOutput)
+	if followUpText != "" {
+		notifyChunked(bot, chatID, "📋 Agent output across all repositories:", followUpText)
+	}
+
+	// Process each repo's git operations
+	var prURLs []string
+	for _, j := range jobs {
+		owner, repo, _ := git.OwnerRepo(j.RepoURL)
+		repoPath, _ := url.Parse(j.RepoURL)
+		parts := strings.Split(strings.Trim(repoPath.Path, "/"), "/")
+		clonePath := filepath.Join(groupWorkspace, j.Provider, parts[0], parts[1], j.IssueID)
+		repoName := owner + "/" + repo
+
+		branchName := j.BranchName
+		if branchName == "" {
+			branchName = fmt.Sprintf("fix/issue-%s", j.IssueID)
+		}
+
+		commitMsg, prBody := agent.GenerateSummary(ctx, j.Agent, j.AgentModel, clonePath, j.IssueURL, agentCfg)
+		if err := git.Commit(clonePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
+			failFollowUp(jobsDB, bot, j, fmt.Sprintf("git commit: %v", err))
+			continue
+		}
+		if err := withRetry(ctx, "git push", 3, func() error {
+			return git.Push(clonePath, branchName, j.GitToken)
+		}); err != nil {
+			failFollowUp(jobsDB, bot, j, fmt.Sprintf("git push: %v", err))
+			continue
+		}
+
+		if j.Status == "awaiting_input" || j.PRURL == "" {
+			var prURL string
+			if err := withRetry(ctx, "create PR", 3, func() error {
+				var e error
+				switch j.Provider {
+				case "github":
+					prURL, e = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, j.DefaultBranch, prBody)
+				case "gitlab":
+					prURL, e = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, j.DefaultBranch, prBody)
+				}
+				if e != nil && provider.IsPRAlreadyExists(e) {
+					prURL, e = provider.FindExistingPR(j.RepoURL, j.GitToken, branchName, j.Provider)
+				}
+				return e
+			}); err != nil {
+				failFollowUp(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err))
+				continue
+			}
+			storage.SetJobPRCreated(jobsDB, j.ID, branchName, prURL)
+			j.PRURL = prURL
+		} else {
+			storage.SetJobStatus(jobsDB, j.ID, "pr_created")
+		}
+
+		prURLs = append(prURLs, fmt.Sprintf("[%s] %s — %s", j.Provider, repoName, j.PRURL))
+	}
+
+	if len(prURLs) > 0 {
+		msg := tgbotapi.NewMessage(chatID, "Updated across all repositories:\n"+strings.Join(prURLs, "\n"))
+		sent, _ := bot.Send(msg)
+		if sent.MessageID != 0 {
+			storage.SetJobNotifMsgID(jobsDB, primary.ID, int64(sent.MessageID))
+		}
+	}
+
+	storage.SetJobStatus(jobsDB, primary.ID, "pr_created")
 	os.Remove(promptPath)
 }
 

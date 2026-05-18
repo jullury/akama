@@ -65,6 +65,261 @@ func Run(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI,
 	}()
 }
 
+func RunGrouped(ctx context.Context, groupID string, jobIDs []int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
+	groupCtx, cancel := context.WithCancel(ctx)
+	for _, jobID := range jobIDs {
+		registerCancel(jobID, cancel)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for _, jobID := range jobIDs {
+			deregisterCancel(jobID)
+		}
+		defer cancel()
+		runGrouped(groupCtx, groupID, jobIDs, jobsDB, bot, agentCfg, workspaceDir)
+	}()
+}
+
+func runGrouped(ctx context.Context, groupID string, jobIDs []int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
+	jobs, err := storage.FindJobsByGroupID(jobsDB, groupID)
+	if err != nil || len(jobs) == 0 {
+		log.Printf("runGrouped: no jobs found for group %s: %v", groupID, err)
+		return
+	}
+
+	chatID := jobs[0].ChatID
+	issueTitle := jobs[0].IssueTitle
+	issueURL := jobs[0].IssueURL
+	issueBody := jobs[0].IssueBody
+
+	groupWorkspace := filepath.Join(workspaceDir, "multi", groupID)
+
+	// Load user config and apply to all jobs
+	userCfg, _ := storage.GetUserConfig(jobsDB, chatID)
+	gitName, gitEmail := "", ""
+	agentName, agentModel := jobs[0].Agent, jobs[0].AgentModel
+	if userCfg != nil {
+		gitName = userCfg.GitName
+		gitEmail = userCfg.GitEmail
+		if userCfg.Agent != "" {
+			agentName = userCfg.Agent
+		}
+		if userCfg.AgentModel != "" {
+			agentModel = userCfg.AgentModel
+		}
+	}
+
+	// Refresh tokens from connections and set workspace for all jobs
+	for _, j := range jobs {
+		if conn, err := storage.FindConnectionByRepo(jobsDB, j.ChatID, j.RepoURL); err == nil && conn != nil {
+			if conn.GitToken != j.GitToken {
+				j.GitToken = conn.GitToken
+				storage.UpdateJobToken(jobsDB, j.ID, conn.GitToken)
+			}
+		}
+		storage.SetJobRunning(jobsDB, j.ID, groupWorkspace)
+	}
+
+	notify(bot, chatID, fmt.Sprintf("🔍 Cloning %d repositories for: %s...", len(jobs), issueTitle))
+
+	// Clone all repos into subdirectories of the shared workspace
+	clonePaths := make(map[int64]string)
+	cloneFailedJobs := make(map[int64]bool)
+	for _, j := range jobs {
+		repoPath, _ := url.Parse(j.RepoURL)
+		parts := strings.Split(strings.Trim(repoPath.Path, "/"), "/")
+		clonePath := filepath.Join(groupWorkspace, j.Provider, parts[0], parts[1], j.IssueID)
+		clonePaths[j.ID] = clonePath
+
+		if err := withRetry(ctx, "git clone", 3, func() error {
+			return git.Clone(j.RepoURL, j.GitToken, clonePath, j.DefaultBranch)
+		}); err != nil {
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), groupWorkspace)
+			cloneFailedJobs[j.ID] = true
+			continue
+		}
+	}
+
+	if len(cloneFailedJobs) > 0 {
+		// Only cleanup if ALL clones failed
+		if len(cloneFailedJobs) == len(jobs) {
+			cleanupGroupWorkspace(jobsDB, groupID, groupWorkspace)
+		}
+	}
+
+	// Build multi-repo prompt
+	repoList := make([]string, 0, len(jobs))
+	for _, j := range jobs {
+		owner, repo, _ := git.OwnerRepo(j.RepoURL)
+		repoList = append(repoList, fmt.Sprintf("  - %s/%s (%s)", owner, repo, j.Provider))
+	}
+
+	truncated := issueBody
+	if len(issueBody) > 50000 {
+		truncated = issueBody[:50000]
+	}
+
+	prompt := fmt.Sprintf(`You are a developer fixing an issue across %d repositories.
+
+The workspace contains the following repositories:
+%s
+
+Issue Title: %s
+Issue URL:   %s
+Description:
+%s
+
+Implement a complete fix across all repositories. Make all necessary code changes.
+Do NOT create pull requests or push branches — that is handled separately.
+Do NOT mention AI, bots, automation, or any tool in code comments.
+Write as a human developer would.
+`, len(jobs), strings.Join(repoList, "\n"), issueTitle, issueURL, truncated)
+
+	promptPath, err := agent.WritePrompt(groupWorkspace, prompt)
+	if err != nil {
+		for _, j := range jobs {
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err), groupWorkspace)
+		}
+		return
+	}
+
+	notify(bot, chatID, fmt.Sprintf("🤖 Running AI agent across %d repositories for: %s", len(jobs), issueTitle))
+
+	heartbeatStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		elapsed := 0
+		for {
+			select {
+			case <-heartbeatStop:
+				return
+			case <-ticker.C:
+				elapsed += 5
+				notify(bot, chatID, fmt.Sprintf("⏳ Agent still working... (%d min elapsed across %d repos)", elapsed, len(jobs)))
+			}
+		}
+	}()
+
+	var rawOutput string
+	agentErr := withRetry(ctx, "agent run", 3, func() error {
+		var e error
+		rawOutput, e = agent.Run(ctx, agentName, agentModel, groupWorkspace, promptPath, agentCfg)
+		return e
+	})
+	close(heartbeatStop)
+
+	if agentErr != nil {
+		for _, j := range jobs {
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr), groupWorkspace)
+		}
+		return
+	}
+	// Store agent output on the first job
+	if len(jobs) > 0 {
+		storage.SetJobAgentOutput(jobsDB, jobs[0].ID, rawOutput)
+	}
+
+	agentText := agent.ParseOutput(agentName, rawOutput)
+
+	// Check for question
+	if agent.IsQuestion(agentText) {
+		if len(jobs) > 0 {
+			storage.SetJobAwaitingInput(jobsDB, jobs[0].ID, agentText)
+		}
+		storage.SetConversationState(jobsDB, chatID, "telegram", "await_agent_input",
+			map[string]interface{}{"job_id": float64(jobs[0].ID)})
+		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(
+			"🤔 Agent needs your input across %d repositories:\n\n%s\n\nJust reply with your answer.",
+			len(jobs), agentText,
+		))
+		sent, _ := bot.Send(msg)
+		if sent.MessageID != 0 && len(jobs) > 0 {
+			storage.SetJobNotifMsgID(jobsDB, jobs[0].ID, int64(sent.MessageID))
+		}
+		return
+	}
+
+	if agentText != "" {
+		notifyChunked(bot, chatID, "📋 Agent output across all repositories:", agentText)
+	}
+
+	// Process each repo: commit, push, create PR
+	var prURLs []string
+	for _, j := range jobs {
+		if cloneFailedJobs[j.ID] {
+			continue
+		}
+		owner, repo, _ := git.OwnerRepo(j.RepoURL)
+		repoName := owner + "/" + repo
+		clonePath := clonePaths[j.ID]
+
+		notify(bot, chatID, fmt.Sprintf("📦 [%s] %s — committing and pushing changes...", j.Provider, repoName))
+
+		commitMsg, prBody := agent.GenerateSummary(ctx, agentName, agentModel, clonePath, issueURL, agentCfg)
+		branchName := agent.BranchFromCommit(commitMsg, fmt.Sprintf("fix/issue-%s", j.IssueID))
+
+		if err := git.Commit(clonePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git commit: %v", err), groupWorkspace)
+			continue
+		}
+		if err := withRetry(ctx, "git push", 3, func() error {
+			return git.Push(clonePath, branchName, j.GitToken)
+		}); err != nil {
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git push: %v", err), groupWorkspace)
+			continue
+		}
+
+		diffStat := git.DiffStat(clonePath)
+
+		notify(bot, chatID, fmt.Sprintf("🔗 [%s] %s — creating pull request...", j.Provider, repoName))
+		var prURL string
+		if err := withRetry(ctx, "create PR", 3, func() error {
+			var e error
+			switch j.Provider {
+			case "github":
+				prURL, e = provider.CreateGitHubPR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, j.DefaultBranch, prBody)
+			case "gitlab":
+				prURL, e = provider.CreateGitLabMR(j.RepoURL, j.GitToken, j.IssueTitle, branchName, j.DefaultBranch, prBody)
+			}
+			if e != nil && provider.IsPRAlreadyExists(e) {
+				prURL, e = provider.FindExistingPR(j.RepoURL, j.GitToken, branchName, j.Provider)
+			}
+			return e
+		}); err != nil {
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err), groupWorkspace)
+			continue
+		}
+
+		storage.SetJobPRCreated(jobsDB, j.ID, branchName, prURL)
+		prURLs = append(prURLs, fmt.Sprintf("[%s] %s — %s", j.Provider, repoName, prURL))
+
+		if diffStat != "" {
+			notify(bot, chatID, fmt.Sprintf("[%s] %s diff:\n%s", j.Provider, repoName, diffStat))
+		}
+
+		// Poll CI for this repo
+		go pollCI(ctx, j, branchName, jobsDB, bot)
+	}
+
+	// Send consolidated notification
+	if len(prURLs) > 0 {
+		msgText := "PRs ready across all repositories:\n" + strings.Join(prURLs, "\n")
+		msgText += fmt.Sprintf("\n\nReply for follow-up or /done %d", jobs[0].ID)
+		msg := tgbotapi.NewMessage(chatID, msgText)
+		sent, _ := bot.Send(msg)
+		if sent.MessageID != 0 && len(jobs) > 0 {
+			storage.SetJobNotifMsgID(jobsDB, jobs[0].ID, int64(sent.MessageID))
+		}
+	}
+
+	storage.SetConversationState(jobsDB, chatID, "telegram", "await_agent_input",
+		map[string]interface{}{"job_id": float64(jobs[0].ID)})
+
+	os.Remove(promptPath)
+}
+
 func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
 	j, err := storage.GetJob(jobsDB, jobID)
 	if err != nil {
@@ -340,6 +595,29 @@ func failJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, works
 		bot.Send(msg)
 	}
 	os.RemoveAll(workspacePath)
+}
+
+func failGroupedJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, workspacePath string) {
+	storage.SetJobFailed(jobsDB, j.ID, errMsg)
+	if provider.IsAuthError(fmt.Errorf(errMsg)) {
+		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
+			"❌ Job %d failed: authentication error for %s.\n\n"+
+				"Your token for %s may have expired or been revoked.\n"+
+				"Use /connect to refresh your token.",
+			j.ID, j.RepoURL, j.Provider,
+		))
+		bot.Send(msg)
+	} else {
+		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Job %d (%s) failed: %s\n\nUse /logs %d to view details.", j.ID, j.RepoURL, errMsg, j.ID))
+		bot.Send(msg)
+	}
+}
+
+func cleanupGroupWorkspace(jobsDB *sql.DB, groupID, workspacePath string) {
+	active, _ := storage.CountActiveJobsByGroupID(jobsDB, groupID)
+	if active == 0 {
+		os.RemoveAll(workspacePath)
+	}
 }
 
 func WaitForJobs(timeoutSec int) {
