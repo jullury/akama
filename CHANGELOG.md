@@ -1,3 +1,15 @@
+# [2.14.0](https://github.com/jullury/akama/compare/v2.13.1...v2.14.0) (2026-05-18)
+
+
+### Bug Fixes
+
+* fall back to "main" when default branch is empty ([fabe4ad](https://github.com/jullury/akama/commit/fabe4ad9e6de04e13c8ee6b18db6796355b99495))
+
+
+### Features
+
+* add per-repo branch selection before issue description ([10c44b7](https://github.com/jullury/akama/commit/10c44b71bca71c235fe39e17978e3dc76fbc8ec4))
+
 ## [2.13.1](https://github.com/jullury/akama/compare/v2.13.0...v2.13.1) (2026-05-18)
 
 
