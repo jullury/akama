@@ -847,10 +847,17 @@ func (b *Bot) handleText(chatID int64, text string) {
 		issueURL, _ := conv.Data["issue_url"].(string)
 		gitToken, _ := conv.Data["git_token"].(string)
 		providerName, _ := conv.Data["provider"].(string)
+		repoURL, _ := conv.Data["repo_url"].(string)
+
+		// Refresh token from connections so a stale conv.Data token doesn't cause 401.
+		if conn, err := storage.FindConnectionByRepo(b.JobsDB, chatID, repoURL); err == nil && conn != nil {
+			gitToken = conn.GitToken
+		}
 
 		comment := fmt.Sprintf("## Implementation Plan\n\n%s", planOutput)
 		if err := provider.PostIssueComment(providerName, issueURL, gitToken, comment); err != nil {
 			log.Printf("[await_clarifying_questions] Failed to post plan comment: %v", err)
+			b.send(chatID, "⚠️ Couldn't post plan as a GitHub comment (check token permissions), but it's shown below.")
 		} else {
 			b.send(chatID, "Plan posted as comment on the issue.")
 		}
