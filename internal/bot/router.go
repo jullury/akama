@@ -872,10 +872,10 @@ func (b *Bot) handleText(chatID int64, text string) {
 			),
 		)
 
-		msgText := fmt.Sprintf("Implementation plan ready:\n\n%s\n\nDo you want to proceed with this plan? Reply with changes or tap Confirm.", planOutput)
-		msg := tgbotapi.NewMessage(chatID, msgText)
-		msg.ReplyMarkup = keyboard
-		b.API.Send(msg)
+		b.sendChunked(chatID, "Implementation plan ready:", planOutput)
+		confirm := tgbotapi.NewMessage(chatID, "Do you want to proceed with this plan? Reply with changes or tap Confirm.")
+		confirm.ReplyMarkup = keyboard
+		b.API.Send(confirm)
 
 	case "await_plan_review":
 		mods := strings.TrimSpace(text)
@@ -945,10 +945,10 @@ func (b *Bot) handleText(chatID int64, text string) {
 					tgbotapi.NewInlineKeyboardButtonData("Cancel", "plan:cancel"),
 				),
 			)
-			msgText := fmt.Sprintf("Updated plan:\n\n%s\n\nReply with further changes or tap Confirm.", planOutput)
-			msg := tgbotapi.NewMessage(chatID, msgText)
-			msg.ReplyMarkup = keyboard
-			b.API.Send(msg)
+			b.sendChunked(chatID, "Updated plan:", planOutput)
+			confirm := tgbotapi.NewMessage(chatID, "Reply with further changes or tap Confirm.")
+			confirm.ReplyMarkup = keyboard
+			b.API.Send(confirm)
 		}()
 
 	case "await_plan_regen":
@@ -1773,6 +1773,38 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 func (b *Bot) send(chatID int64, text string) {
 	if _, err := b.API.Send(tgbotapi.NewMessage(chatID, text)); err != nil {
 		log.Printf("send to %d: %v", chatID, err)
+	}
+}
+
+// sendChunked splits body into ≤4000-char messages to stay within Telegram's limit.
+func (b *Bot) sendChunked(chatID int64, header, body string) {
+	const maxLen = 4000
+	prefix := header + "\n\n"
+	remaining := strings.TrimSpace(body)
+	first := true
+	for remaining != "" {
+		avail := maxLen
+		if first {
+			avail -= len(prefix)
+		}
+		var chunk string
+		if len(remaining) <= avail {
+			chunk = remaining
+			remaining = ""
+		} else {
+			cutAt := avail
+			if idx := strings.LastIndex(remaining[:cutAt], "\n"); idx > 0 {
+				cutAt = idx
+			}
+			chunk = remaining[:cutAt]
+			remaining = strings.TrimSpace(remaining[cutAt:])
+		}
+		text := chunk
+		if first {
+			text = prefix + chunk
+			first = false
+		}
+		b.send(chatID, text)
 	}
 }
 
