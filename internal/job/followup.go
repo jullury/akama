@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -189,9 +188,8 @@ func runGroupedFollowUp(ctx context.Context, primary *storage.Job, userText stri
 	var prURLs []string
 	for _, j := range jobs {
 		owner, repo, _ := git.OwnerRepo(j.RepoURL)
-		repoPath, _ := url.Parse(j.RepoURL)
-		parts := strings.Split(strings.Trim(repoPath.Path, "/"), "/")
-		clonePath := filepath.Join(groupWorkspace, j.Provider, parts[0], parts[1], j.IssueID)
+		dirName := owner + "-" + repo
+		clonePath := filepath.Join(groupWorkspace, dirName)
 		repoName := owner + "/" + repo
 
 		branchName := j.BranchName
