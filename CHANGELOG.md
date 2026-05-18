@@ -1,3 +1,10 @@
+## [2.13.1](https://github.com/jullury/akama/compare/v2.13.0...v2.13.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* use url.Parse for repository URL parsing in workspace path const... ([10e1951](https://github.com/jullury/akama/commit/10e1951e26c99d9fede7597f0511ee47c179ccc7))
+
 # [2.13.0](https://github.com/jullury/akama/compare/v2.12.0...v2.13.0) (2026-05-18)
 
 
