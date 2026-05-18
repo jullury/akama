@@ -428,6 +428,32 @@ func gitLabProjectPath(rawURL string) (string, error) {
 	return path, nil
 }
 
+func PostGitLabComment(issueURL, token, comment string) error {
+	projectPath, issueIID, err := parseGitLabIssueURL(issueURL)
+	if err != nil {
+		return fmt.Errorf("parse issue URL: %w", err)
+	}
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/issues/%d/notes", encodedPath, issueIID)
+	data, _ := json.Marshal(map[string]string{"body": comment})
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(data)))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("post comment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GitLab API error %d: %s", resp.StatusCode, b)
+	}
+	return nil
+}
+
 func parseGitLabIssueURL(repoURL string) (projectPath string, issueIID int, err error) {
 	repoURL = strings.TrimSuffix(repoURL, ".git")
 	for _, sep := range []string{"/-/issues/", "/-/work_items/", "/issues/"} {

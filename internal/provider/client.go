@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -154,6 +155,17 @@ func EnrichIssueBody(providerName, issueURL, token, body string) string {
 	}
 
 	return body
+}
+
+// PostIssueComment posts a comment on the given issue.
+func PostIssueComment(providerName, issueURL, token, comment string) error {
+	switch providerName {
+	case "github":
+		return PostGitHubComment(issueURL, token, comment)
+	case "gitlab":
+		return PostGitLabComment(issueURL, token, comment)
+	}
+	return fmt.Errorf("unsupported provider: %s", providerName)
 }
 
 // GetDefaultBranch returns the default branch for the given repository.

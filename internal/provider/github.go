@@ -488,6 +488,32 @@ func GetGitHubCIStatus(repoURL, token, branch string) (CIStatus, error) {
 	return CIStatus{State: "success", URL: checkURL}, nil
 }
 
+func PostGitHubComment(issueURL, token, comment string) error {
+	owner, repo, issueNum, err := parseGitHubIssueURL(issueURL)
+	if err != nil {
+		return fmt.Errorf("parse issue URL: %w", err)
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues/%d/comments", owner, repo, issueNum)
+	data, _ := json.Marshal(map[string]string{"body": comment})
+	req, err := http.NewRequest("POST", url, strings.NewReader(string(data)))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("post comment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, b)
+	}
+	return nil
+}
+
 func parseGitHubIssueURL(issueURL string) (owner, repo string, issueNum int, err error) {
 	owner, repo, err = parseRepoURL(issueURL)
 	if err != nil {

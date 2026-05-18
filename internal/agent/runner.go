@@ -520,12 +520,88 @@ func truncate(s string, max int) string {
 
 // ParseOutput extracts the human-readable text from agent output.
 // Delegates to the specific agent's parser.
+// ParseOutput extracts the human-readable text from agent output.
+// Delegates to the specific agent's parser.
 func ParseOutput(agentName, output string) string {
 	r := Get(agentName)
 	if r != nil {
 		return r.ParseOutput(output)
 	}
 	return output
+}
+
+// BuildClarifyingQuestionsPrompt returns a prompt that asks the agent to generate
+// 3-5 clarifying questions about the issue.
+func BuildClarifyingQuestionsPrompt(title, body string) string {
+	truncated := body
+	if len(body) > 30000 {
+		truncated = body[:30000]
+	}
+	return fmt.Sprintf(`You are reviewing an issue that needs to be fixed.
+
+Issue Title: %s
+Description:
+%s
+
+Generate 3-5 clarifying questions that would help you understand the issue better before creating an implementation plan.
+Ask about requirements, expected behavior, edge cases, or anything unclear.
+Output ONLY the questions, one per line, starting with "Q: ".`, title, truncated)
+}
+
+// ParseClarifyingQuestions extracts questions from agent output.
+func ParseClarifyingQuestions(output string) []string {
+	var questions []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Q:") || strings.HasPrefix(line, "Q:") {
+			q := strings.TrimSpace(strings.TrimPrefix(line, "Q:"))
+			q = strings.TrimSpace(strings.TrimPrefix(q, "Q:"))
+			if q != "" {
+				questions = append(questions, q)
+			}
+		}
+	}
+	if len(questions) == 0 {
+		fallback := strings.Split(output, "\n")
+		for _, line := range fallback {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "-") || strings.HasPrefix(line, "*") || (len(line) > 0 && line[0] >= '0' && line[0] <= '9') {
+				q := strings.TrimSpace(strings.TrimLeft(line, "-* 1234567890."))
+				if q != "" && strings.Contains(q, "?") {
+					questions = append(questions, q)
+				}
+			}
+		}
+	}
+	return questions
+}
+
+// BuildPlanFromAnswers creates a plan prompt using the issue details and user
+// answers to clarifying questions.
+func BuildPlanFromAnswers(title, body, answers string) string {
+	truncated := body
+	if len(body) > 30000 {
+		truncated = body[:30000]
+	}
+	return fmt.Sprintf(`You are a developer planning how to fix an issue in a codebase.
+
+Issue Title: %s
+Issue Description:
+%s
+
+Additional context from the user:
+%s
+
+Create a detailed, step-by-step implementation plan for fixing this issue.
+Include:
+1. Files that need to be modified
+2. What changes each file needs
+3. Any new files that need to be created
+4. Potential risks or edge cases
+5. Testing strategy
+
+Be specific and actionable. Do NOT implement the changes — only describe what needs to be done.
+Do NOT mention AI, bots, or automation tools.`, title, truncated, answers)
 }
 
 // IsQuestion returns true when the agent's last non-empty line ends with "?",
@@ -539,6 +615,29 @@ func IsQuestion(text string) bool {
 		}
 	}
 	return false
+}
+
+// RunPlanAgent runs the agent in a temporary workspace to generate plan-related
+// content (clarifying questions or implementation plans) without a codebase.
+func RunPlanAgent(ctx context.Context, agentName, model string, promptContent string, cfg *Config) (string, error) {
+	tmpDir, err := os.MkdirTemp("", "akama-plan-*")
+	if err != nil {
+		return "", fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	promptPath, err := WritePrompt(tmpDir, promptContent)
+	if err != nil {
+		return "", fmt.Errorf("write plan prompt: %w", err)
+	}
+	defer os.Remove(promptPath)
+
+	output, err := Run(ctx, agentName, model, tmpDir, promptPath, cfg)
+	if err != nil {
+		return "", err
+	}
+
+	return ParseOutput(agentName, output), nil
 }
 
 func WritePrompt(workspacePath, content string) (string, error) {
