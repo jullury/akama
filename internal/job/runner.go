@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,9 +127,9 @@ func runGrouped(ctx context.Context, groupID string, jobIDs []int64, jobsDB *sql
 	clonePaths := make(map[int64]string)
 	cloneFailedJobs := make(map[int64]bool)
 	for _, j := range jobs {
-		repoPath, _ := url.Parse(j.RepoURL)
-		parts := strings.Split(strings.Trim(repoPath.Path, "/"), "/")
-		clonePath := filepath.Join(groupWorkspace, j.Provider, parts[0], parts[1], j.IssueID)
+		owner, repo, _ := git.OwnerRepo(j.RepoURL)
+		dirName := owner + "-" + repo
+		clonePath := filepath.Join(groupWorkspace, dirName)
 		clonePaths[j.ID] = clonePath
 
 		if err := withRetry(ctx, "git clone", 3, func() error {
@@ -167,8 +166,10 @@ func runGrouped(ctx context.Context, groupID string, jobIDs []int64, jobsDB *sql
 
 	prompt := fmt.Sprintf(`You are a developer fixing an issue across %d repositories.
 
-The workspace contains the following repositories:
+The workspace contains the following repositories as subdirectories:
 %s
+
+All repository code may be interdependent. Process all repositories at once and make changes across them as needed.
 
 Issue Title: %s
 Issue URL:   %s
