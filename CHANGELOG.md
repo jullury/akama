@@ -1,3 +1,11 @@
+# [2.13.0](https://github.com/jullury/akama/compare/v2.12.0...v2.13.0) (2026-05-18)
+
+
+### Features
+
+* add mise-based toolchain management with make setup ([19b147c](https://github.com/jullury/akama/commit/19b147ccc53dfd7ef89e30470b81617fdb965200))
+* automatically install mise tools after clone and before job exe... ([85ae4f3](https://github.com/jullury/akama/commit/85ae4f357da6f2460c0c9dd8d81c62f9460fb0e1))
+
 # [2.12.0](https://github.com/jullury/akama/compare/v2.11.8...v2.12.0) (2026-05-18)
 
 
