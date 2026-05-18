@@ -1,3 +1,10 @@
+## [2.16.2](https://github.com/jullury/akama/compare/v2.16.1...v2.16.2) (2026-05-18)
+
+
+### Bug Fixes
+
+* **bot:** send plan in chunks to avoid Telegram 4096-char limit ([f3335d4](https://github.com/jullury/akama/commit/f3335d487492b5b3fed2feafbcc34c9ebdbb05ec))
+
 ## [2.16.1](https://github.com/jullury/akama/compare/v2.16.0...v2.16.1) (2026-05-18)
 
 
