@@ -477,17 +477,18 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 				}
 			}
 
-			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issue_desc",
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_branch_select",
 				map[string]interface{}{
-					"repos": repos,
+					"repos":            repos,
+					"current_repo_idx": float64(0),
 				})
 
-			repoList := make([]string, len(repos))
-			for i, r := range repos {
-				repoList[i] = r["repo_url"].(string)
-			}
-			b.send(chatID, fmt.Sprintf("Describe the issue for the selected repositories:\n%s\n\nFirst line = title, rest = description.",
-				strings.Join(repoList, "\n")))
+			firstRepo := repos[0]
+			b.send(chatID, fmt.Sprintf(
+				"Select branch for [%s] %s:\nDetected default branch: *%s*\n\n"+
+					"Send a branch name or press Enter to use the detected branch.",
+				firstRepo["provider"], firstRepo["repo_url"], firstRepo["default_branch"],
+			))
 			return
 		}
 		if rest, ok := strings.CutPrefix(data, "config:model:page:"); ok {
@@ -835,6 +836,61 @@ func (b *Bot) handleText(chatID int64, text string) {
 			log.Printf("[await_branch_confirm] Failed to persist branch: %v", err)
 		}
 		b.continueIssueProcessing(chatID, issueURL, gitToken, chosenBranch, "")
+	case "await_branch_select":
+		reposInterface, _ := conv.Data["repos"].([]interface{})
+		repos := make([]map[string]interface{}, 0, len(reposInterface))
+		for _, ri := range reposInterface {
+			if m, ok := ri.(map[string]interface{}); ok {
+				repos = append(repos, m)
+			}
+		}
+		currentIdxFloat, _ := conv.Data["current_repo_idx"].(float64)
+		currentIdx := int(currentIdxFloat)
+
+		if currentIdx >= len(repos) {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "Something went wrong. Use /newissue to start over.")
+			return
+		}
+
+		repo := repos[currentIdx]
+		chosenBranch := strings.TrimSpace(text)
+		if chosenBranch == "" {
+			chosenBranch = repo["default_branch"].(string)
+		}
+		repo["default_branch"] = chosenBranch
+
+		repoURL := repo["repo_url"].(string)
+		if err := storage.UpdateConnectionDefaultBranch(b.JobsDB, chatID, repoURL, chosenBranch); err != nil {
+			log.Printf("[await_branch_select] Failed to persist branch for %s: %v", repoURL, err)
+		}
+
+		currentIdx++
+		if currentIdx < len(repos) {
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_branch_select",
+				map[string]interface{}{
+					"repos":            repos,
+					"current_repo_idx": float64(currentIdx),
+				})
+			nextRepo := repos[currentIdx]
+			b.send(chatID, fmt.Sprintf(
+				"Select branch for [%s] %s:\nDetected default branch: *%s*\n\n"+
+					"Send a branch name or press Enter to use the detected branch.",
+				nextRepo["provider"], nextRepo["repo_url"], nextRepo["default_branch"],
+			))
+		} else {
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issue_desc",
+				map[string]interface{}{
+					"repos": repos,
+				})
+			repoBranchList := make([]string, len(repos))
+			for i, r := range repos {
+				repoBranchList[i] = fmt.Sprintf("%s (branch: %s)", r["repo_url"], r["default_branch"])
+			}
+			b.send(chatID, fmt.Sprintf("Describe the issue for the selected repositories:\n%s\n\nFirst line = title, rest = description.",
+				strings.Join(repoBranchList, "\n")))
+		}
+		return
 	case "await_repo_select":
 		b.send(chatID, "Please select repositories using the buttons above, then tap \"Done\".")
 		return
