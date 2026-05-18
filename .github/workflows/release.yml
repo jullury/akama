@@ -77,7 +77,9 @@ jobs:
               -X github.com/jullury/akama/internal/config.GitHubClientSecret=${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }} \
               -X github.com/jullury/akama/internal/config.GitLabClientID=${{ secrets.OAUTH_GITLAB_CLIENT_ID }} \
               -X github.com/jullury/akama/internal/config.GitLabClientSecret=${{ secrets.OAUTH_GITLAB_CLIENT_SECRET }} \
-              -X github.com/jullury/akama/internal/config.Version=$VERSION" \
+              -X github.com/jullury/akama/internal/config.Version=$VERSION \
+              -X github.com/jullury/akama/internal/config.BuildTime=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+              -X github.com/jullury/akama/internal/config.BuildPlatform=${{ matrix.goos }}/${{ matrix.goarch }}" \
             -o akama-${{ matrix.goos }}-${{ matrix.goarch }} .
 
       - name: Upload binary to release

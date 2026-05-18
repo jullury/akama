@@ -95,8 +95,10 @@ Settings
 /skills — browse and install skillhub.club skills
 /update — update Akama server binary to the latest version
 /update_agents — update agents to latest version
+/version — show version information
 
 Admin
+/restart — restart the daemon (admin only)
 /users — list authorized users
 /add_user — add a user by Telegram user ID
 /delete_user — delete a user by Telegram user ID
@@ -755,6 +757,47 @@ func (b *Bot) handleUpdateConfirm(chatID int64) {
 	// Signal ourselves to shut down cleanly (closes all connections).
 	// Docker: PID 1 exits → container restarts → entrypoint preserves the
 	// updated binary on the volume.
+	proc, _ := os.FindProcess(os.Getpid())
+	proc.Signal(syscall.SIGTERM)
+}
+
+func (b *Bot) handleVersionCommand(chatID int64) {
+	msg := fmt.Sprintf("Akama %s\nBuild time: %s\nPlatform: %s",
+		config.Version, config.BuildTime, config.BuildPlatform)
+	b.send(chatID, msg)
+}
+
+func (b *Bot) handleRestartCommand(chatID int64) {
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Yes, restart", "restart:confirm"),
+			tgbotapi.NewInlineKeyboardButtonData("No, cancel", "restart:cancel"),
+		),
+	)
+	msg := tgbotapi.NewMessage(chatID, "Are you sure you want to restart the daemon?")
+	msg.ReplyMarkup = keyboard
+	b.API.Send(msg)
+}
+
+func (b *Bot) handleRestartConfirm(chatID int64) {
+	b.send(chatID, "Restarting now...")
+
+	exePath, err := os.Executable()
+	if err != nil {
+		b.send(chatID, fmt.Sprintf("Could not determine binary path: %v", err))
+		return
+	}
+
+	if os.Getpid() != 1 {
+		script := fmt.Sprintf("while kill -0 %d 2>/dev/null; do sleep 1; done; sleep 3; '%s' start", os.Getpid(), exePath)
+		helper := exec.Command("sh", "-c", script)
+		helper.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := helper.Start(); err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to schedule restart: %v", err))
+			return
+		}
+	}
+
 	proc, _ := os.FindProcess(os.Getpid())
 	proc.Signal(syscall.SIGTERM)
 }
