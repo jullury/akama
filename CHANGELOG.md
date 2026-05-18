@@ -1,3 +1,10 @@
+# [2.17.0](https://github.com/jullury/akama/compare/v2.16.3...v2.17.0) (2026-05-18)
+
+
+### Features
+
+* add version command, restart command, and build metadata injection ([d63a063](https://github.com/jullury/akama/commit/d63a0636ab2fea5fb7e1968def3d2bad07265e10))
+
 ## [2.16.3](https://github.com/jullury/akama/compare/v2.16.2...v2.16.3) (2026-05-18)
 
 
