@@ -156,12 +156,16 @@ func (b *Bot) handleNewIssue(chatID int64) {
 	// Store connections in conv data so toggle callbacks can look them up.
 	connData := make([]map[string]interface{}, 0, len(conns))
 	for _, c := range conns {
+		branch := c.DefaultBranch
+		if branch == "" {
+			branch = "main"
+		}
 		connData = append(connData, map[string]interface{}{
 			"id":             float64(c.ID),
 			"repo_url":       c.RepoURL,
 			"provider":       c.Provider,
 			"token":          c.GitToken,
-			"default_branch": c.DefaultBranch,
+			"default_branch": branch,
 		})
 	}
 	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo_select",

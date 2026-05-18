@@ -466,11 +466,15 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 				id := int64(m["id"].(float64))
 				for _, selID := range selectedIDs {
 					if id == selID {
+						branch, _ := m["default_branch"].(string)
+						if branch == "" {
+							branch = "main"
+						}
 						repos = append(repos, map[string]interface{}{
 							"repo_url":       m["repo_url"],
 							"provider":       m["provider"],
 							"token":          m["token"],
-							"default_branch": m["default_branch"],
+							"default_branch": branch,
 						})
 						break
 					}
@@ -856,7 +860,10 @@ func (b *Bot) handleText(chatID int64, text string) {
 		repo := repos[currentIdx]
 		chosenBranch := strings.TrimSpace(text)
 		if chosenBranch == "" {
-			chosenBranch = repo["default_branch"].(string)
+			chosenBranch, _ = repo["default_branch"].(string)
+			if chosenBranch == "" {
+				chosenBranch = "main"
+			}
 		}
 		repo["default_branch"] = chosenBranch
 
@@ -1097,7 +1104,7 @@ func (b *Bot) processIssueWithImages(chatID int64, issueURL, gitToken, images st
 	}
 
 	jobCount, _ := storage.CountJobsByRepo(b.JobsDB, chatID, lookupURL)
-	if jobCount == 0 && conn != nil && conn.DefaultBranch != "" {
+	if jobCount == 0 && conn != nil {
 		log.Printf("[processIssue] First issue for repo, prompting for branch confirmation")
 		data := map[string]interface{}{
 			"issue_url":       issueURL,
