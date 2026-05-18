@@ -1,3 +1,10 @@
+## [2.16.3](https://github.com/jullury/akama/compare/v2.16.2...v2.16.3) (2026-05-18)
+
+
+### Bug Fixes
+
+* **provider:** add workflow scope to GitHub OAuth and surface workflow push errors ([81b302a](https://github.com/jullury/akama/commit/81b302ad3936cc3048e3b585980355d0319931ee))
+
 ## [2.16.2](https://github.com/jullury/akama/compare/v2.16.1...v2.16.2) (2026-05-18)
 
 
