@@ -6,3 +6,4 @@ akama-linux-*
 .akama-prompt.txt
 node_modules
 .dockerignore
+.mise/

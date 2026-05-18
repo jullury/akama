@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -138,6 +139,10 @@ func runGrouped(ctx context.Context, groupID string, jobIDs []int64, jobsDB *sql
 			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), groupWorkspace)
 			cloneFailedJobs[j.ID] = true
 			continue
+		}
+
+		if err := setupMise(clonePath); err != nil {
+			log.Printf("mise install: %v", err)
 		}
 	}
 
@@ -320,6 +325,17 @@ Write as a human developer would.
 	os.Remove(promptPath)
 }
 
+func setupMise(dir string) error {
+	cmd := exec.Command("mise", "install")
+	cmd.Dir = dir
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("mise install: %w", err)
+	}
+	return nil
+}
+
 func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
 	j, err := storage.GetJob(jobsDB, jobID)
 	if err != nil {
@@ -378,6 +394,10 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}); err != nil {
 		failJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), workspacePath)
 		return
+	}
+
+	if err := setupMise(workspacePath); err != nil {
+		log.Printf("mise install: %v", err)
 	}
 
 	notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] %s — running AI agent on: %s", j.Provider, repoName, j.IssueTitle))
