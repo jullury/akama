@@ -10,6 +10,8 @@ import (
 )
 
 var Version = "dev"
+var BuildTime = "unknown"
+var BuildPlatform = "unknown"
 
 type Config struct {
 	TelegramToken    string            `yaml:"telegram_token"`

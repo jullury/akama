@@ -77,6 +77,12 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/retry"):
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_retry", nil)
 		b.send(chatID, "Enter the job ID to retry:")
+	case strings.HasPrefix(text, "/restart"):
+		if !storage.IsAdmin(b.JobsDB, chatID) {
+			b.send(chatID, "Only the admin can restart the server.")
+			return
+		}
+		b.handleRestartCommand(chatID)
 	case strings.HasPrefix(text, "/done"):
 		// Check if user is in issue image collection mode first
 		conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
@@ -203,6 +209,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 			return
 		}
 		go b.handleUpdateAgents(chatID)
+	case strings.HasPrefix(text, "/version"):
+		b.handleVersionCommand(chatID)
 	case strings.HasPrefix(text, "/update"):
 		if !storage.IsAdmin(b.JobsDB, chatID) {
 			b.send(chatID, "Only the admin can update the server.")
@@ -583,6 +591,18 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		}
 		if data == "update:cancel" {
 			b.send(chatID, "Update cancelled.")
+			return
+		}
+		if data == "restart:confirm" {
+			if !storage.IsAdmin(b.JobsDB, chatID) {
+				b.send(chatID, "Only the admin can confirm restart.")
+				return
+			}
+			go b.handleRestartConfirm(chatID)
+			return
+		}
+		if data == "restart:cancel" {
+			b.send(chatID, "Restart cancelled.")
 			return
 		}
 		if data == "plan:confirm" {

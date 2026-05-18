@@ -78,6 +78,7 @@ func New(token string) (*Bot, error) {
 		{Command: "logs", Description: "View agent output for a job"},
 		{Command: "newissue", Description: "Create a new issue"},
 		{Command: "queue", Description: "List pending and running jobs"},
+		{Command: "restart", Description: "Restart the Akama daemon (admin only)"},
 		{Command: "retry", Description: "Retry a failed job"},
 		{Command: "skills", Description: "Browse and install skillhub.club skills"},
 		{Command: "start", Description: "Welcome message"},
@@ -85,6 +86,7 @@ func New(token string) (*Bot, error) {
 		{Command: "update_agents", Description: "Update agents to latest version"},
 		{Command: "update", Description: "Update Akama server binary to the latest version"},
 		{Command: "users", Description: "List authorized users (admin only)"},
+		{Command: "version", Description: "Show Akama version information"},
 		{Command: "add_user", Description: "Add a user by Telegram user ID (admin only)"},
 		{Command: "delete_user", Description: "Delete a user by Telegram user ID (admin only)"},
 	}

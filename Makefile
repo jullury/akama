@@ -10,6 +10,8 @@ ifneq (,$(wildcard .env))
 endif
 
 VERSION ?= $(shell git describe --tags --always --abbrev=0 2>/dev/null || echo "dev")
+BUILD_TIME ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+BUILD_PLATFORM ?= $(shell go env GOOS)/$(shell go env GOARCH)
 
 setup:
 	@echo "Installing mise and toolchain..."
@@ -29,7 +31,9 @@ build:
 	-X github.com/jullury/akama/internal/config.GitHubClientSecret=$(GITHUB_CLIENT_SECRET) \
 	-X github.com/jullury/akama/internal/config.GitLabClientID=$(GITLAB_CLIENT_ID) \
 	-X github.com/jullury/akama/internal/config.GitLabClientSecret=$(GITLAB_CLIENT_SECRET) \
-	-X github.com/jullury/akama/internal/config.Version=$(VERSION)" \
+	-X github.com/jullury/akama/internal/config.Version=$(VERSION) \
+	-X github.com/jullury/akama/internal/config.BuildTime=$(BUILD_TIME) \
+	-X github.com/jullury/akama/internal/config.BuildPlatform=$(BUILD_PLATFORM)" \
 	-o akama .
 	@echo "Build complete: ./akama (version: $(VERSION))"
 
@@ -53,7 +57,9 @@ dist:
 		-X github.com/jullury/akama/internal/config.GitHubClientSecret=$(GITHUB_CLIENT_SECRET) \
 		-X github.com/jullury/akama/internal/config.GitLabClientID=$(GITLAB_CLIENT_ID) \
 		-X github.com/jullury/akama/internal/config.GitLabClientSecret=$(GITLAB_CLIENT_SECRET) \
-		-X github.com/jullury/akama/internal/config.Version=$(VERSION)" \
+		-X github.com/jullury/akama/internal/config.Version=$(VERSION) \
+		-X github.com/jullury/akama/internal/config.BuildTime=$(BUILD_TIME) \
+		-X github.com/jullury/akama/internal/config.BuildPlatform=$$os/$$arch" \
 		-o dist/akama-$$os-$$arch . ; \
 	done
 	@echo "Binaries written to dist/"
