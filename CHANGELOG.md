@@ -1,3 +1,15 @@
+# [2.15.0](https://github.com/jullury/akama/compare/v2.14.0...v2.15.0) (2026-05-18)
+
+
+### Bug Fixes
+
+* apply changes ([dec16b9](https://github.com/jullury/akama/commit/dec16b909487ea42584766e795b9705bc5ff3fd5))
+
+
+### Features
+
+* add clarifying questions and plan review workflow for issue triage ([5402674](https://github.com/jullury/akama/commit/54026741e14c7da3ad3bc92de95fc123f96bd863))
+
 # [2.14.0](https://github.com/jullury/akama/compare/v2.13.1...v2.14.0) (2026-05-18)
 
 
