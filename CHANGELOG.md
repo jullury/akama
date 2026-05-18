@@ -1,3 +1,10 @@
+## [2.16.1](https://github.com/jullury/akama/compare/v2.16.0...v2.16.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **bot:** refresh token from connections before posting plan comment ([5a20113](https://github.com/jullury/akama/commit/5a2011365b16b4c7e6a00435410d0d202d539138))
+
 # [2.16.0](https://github.com/jullury/akama/compare/v2.15.0...v2.16.0) (2026-05-18)
 
 
