@@ -1,3 +1,10 @@
+# [2.12.0](https://github.com/jullury/akama/compare/v2.11.8...v2.12.0) (2026-05-18)
+
+
+### Features
+
+* support multi-repo selection for new issues with group-aware cl... ([f838da4](https://github.com/jullury/akama/commit/f838da4301ca219b138e36adf1449e2ef04cd261))
+
 ## [2.11.8](https://github.com/jullury/akama/compare/v2.11.7...v2.11.8) (2026-05-08)
 
 
