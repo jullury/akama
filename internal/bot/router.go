@@ -592,6 +592,10 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 				b.send(chatID, "Failed to load conversation state.")
 				return
 			}
+			if conv.State == "await_plan_regen" {
+				b.send(chatID, "⏳ Plan is still being regenerated — please wait.")
+				return
+			}
 			if conv.State != "await_plan_review" {
 				b.send(chatID, "No plan to confirm. Use /cancel to reset.")
 				return
