@@ -1151,7 +1151,6 @@ func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultB
 
 func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[string]interface{}, images string) {
 	providerName := detectProvider(issueURL)
-	repoURL := extractRepoURL(issueURL)
 
 	// Fetch issue details from the first repo
 	var title, body, issueID string
