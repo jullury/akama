@@ -152,17 +152,54 @@ func (b *Bot) handleNewIssue(chatID int64) {
 		b.send(chatID, "No repositories connected. Use /connect to add one first.")
 		return
 	}
-	var rows [][]tgbotapi.InlineKeyboardButton
+
+	// Store connections in conv data so toggle callbacks can look them up.
+	connData := make([]map[string]interface{}, 0, len(conns))
 	for _, c := range conns {
-		label := fmt.Sprintf("[%s] %s", c.Provider, c.RepoURL)
-		data := fmt.Sprintf("newissue:conn:%d", c.ID)
+		connData = append(connData, map[string]interface{}{
+			"id":             float64(c.ID),
+			"repo_url":       c.RepoURL,
+			"provider":       c.Provider,
+			"token":          c.GitToken,
+			"default_branch": c.DefaultBranch,
+		})
+	}
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo_select",
+		map[string]interface{}{
+			"connections":  connData,
+			"selected_ids": []interface{}{},
+		})
+
+	msg := tgbotapi.NewMessage(chatID, "Select repositories for the new issue (tap to toggle, then press Done):")
+	msg.ReplyMarkup = b.buildMultiRepoKeyboard(conns, nil)
+	b.API.Send(msg)
+}
+
+func (b *Bot) buildMultiRepoKeyboard(conns []*storage.Connection, selectedIDs []int64) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	selectedSet := make(map[int64]bool)
+	for _, id := range selectedIDs {
+		selectedSet[id] = true
+	}
+	for _, c := range conns {
+		check := "☐"
+		if selectedSet[c.ID] {
+			check = "☑"
+		}
+		label := fmt.Sprintf("%s [%s] %s", check, c.Provider, c.RepoURL)
+		data := fmt.Sprintf("newissue:toggle:%d", c.ID)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(label, data),
 		))
 	}
-	msg := tgbotapi.NewMessage(chatID, "Select the repository for the new issue:")
-	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
-	b.API.Send(msg)
+	confirmLabel := "✓ Done selecting"
+	if len(selectedIDs) > 0 {
+		confirmLabel = fmt.Sprintf("✓ Done selecting (%d)", len(selectedIDs))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData(confirmLabel, "newissue:confirm"),
+	))
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 func (b *Bot) handleConnect(chatID int64) {
@@ -438,6 +475,16 @@ func (b *Bot) doneJob(chatID int64, jobID int64) {
 
 	storage.SetJobStatus(b.JobsDB, jobID, "done")
 	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+	// For grouped jobs, only remove workspace when all jobs in the group are done
+	if j.GroupID != "" {
+		active, _ := storage.CountActiveJobsByGroupID(b.JobsDB, j.GroupID)
+		if active > 0 {
+			b.send(chatID, fmt.Sprintf("Job %d marked as done. Other jobs in the same group are still active.", jobID))
+			return
+		}
+	}
+
 	os.RemoveAll(j.WorkspacePath)
 	b.send(chatID, fmt.Sprintf("Job %d marked as done. Workspace cleaned up.", jobID))
 }
@@ -448,12 +495,29 @@ func (b *Bot) doneAll(chatID int64) {
 		b.send(chatID, fmt.Sprintf("Error: %v", err))
 		return
 	}
+
+	cleanedPaths := make(map[string]bool)
 	count := 0
 	for _, j := range jobs {
 		if j.Status == "pr_created" || j.Status == "failed" || j.Status == "done" {
 			storage.SetJobStatus(b.JobsDB, j.ID, "done")
-			if j.WorkspacePath != "" {
-				os.RemoveAll(j.WorkspacePath)
+
+			// For grouped jobs, only remove workspace once
+			if j.GroupID != "" {
+				if !cleanedPaths[j.WorkspacePath] {
+					active, _ := storage.CountActiveJobsByGroupID(b.JobsDB, j.GroupID)
+					if active == 0 {
+						if j.WorkspacePath != "" {
+							os.RemoveAll(j.WorkspacePath)
+							cleanedPaths[j.WorkspacePath] = true
+						}
+					}
+				}
+			} else if j.WorkspacePath != "" {
+				if !cleanedPaths[j.WorkspacePath] {
+					os.RemoveAll(j.WorkspacePath)
+					cleanedPaths[j.WorkspacePath] = true
+				}
 			}
 			count++
 		}

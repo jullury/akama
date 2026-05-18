@@ -79,19 +79,62 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		// Check if user is in issue image collection mode first
 		conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
 		if err == nil && conv.State == "await_issue_images" {
-			// Image skipper: process issue with collected images
-			repoURL, _ := conv.Data["repo_url"].(string)
-			providerName, _ := conv.Data["provider"].(string)
-			token, _ := conv.Data["token"].(string)
 			title, _ := conv.Data["title"].(string)
 			body, _ := conv.Data["body"].(string)
 			images, _ := conv.Data["images"].(string)
+
+			reposInterface, hasRepos := conv.Data["repos"].([]interface{})
+			if hasRepos && len(reposInterface) > 0 {
+				// Multi-repo image skipper
+				repos := make([]map[string]interface{}, 0, len(reposInterface))
+				for _, ri := range reposInterface {
+					if m, ok := ri.(map[string]interface{}); ok {
+						repos = append(repos, m)
+					}
+				}
+				storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+				firstRepo := repos[0]
+				firstRepoURL := firstRepo["repo_url"].(string)
+				firstProvider := firstRepo["provider"].(string)
+				firstToken := firstRepo["token"].(string)
+
+				fullBody := embedImages(body, images, firstProvider, firstToken, firstRepoURL)
+				var issueURL string
+				var issueErr error
+				switch firstProvider {
+				case "github":
+					issueURL, issueErr = provider.CreateGitHubIssue(firstRepoURL, firstToken, title, fullBody)
+				case "gitlab":
+					issueURL, issueErr = provider.CreateGitLabIssue(firstRepoURL, firstToken, title, fullBody)
+				}
+				if issueErr != nil {
+					if provider.IsAuthError(issueErr) {
+						b.send(chatID, fmt.Sprintf(
+							"❌ Authentication failed for %s. Your token may have expired.\n"+
+								"Use /connect to refresh your token, then /newissue to try again.",
+							firstProvider,
+						))
+						return
+					}
+					b.send(chatID, fmt.Sprintf("❌ Failed to create issue: %v", issueErr))
+					return
+				}
+				b.send(chatID, fmt.Sprintf("✅ Issue created: %s\n\nProcessing it across %d repositories...", issueURL, len(repos)))
+				b.processMultiIssue(chatID, issueURL, repos, images)
+				return
+			}
+
+			// Single-repo image skipper
+			repoURL, _ := conv.Data["repo_url"].(string)
+			providerName, _ := conv.Data["provider"].(string)
+			token, _ := conv.Data["token"].(string)
 
 			storage.ResetConversation(b.JobsDB, chatID, "telegram")
 
 			var issueURL string
 			var issueErr error
-		fullBody := embedImages(body, images, providerName, token, repoURL)
+			fullBody := embedImages(body, images, providerName, token, repoURL)
 			switch providerName {
 			case "github":
 				issueURL, issueErr = provider.CreateGitHubIssue(repoURL, token, title, fullBody)
@@ -331,21 +374,120 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		msg.ReplyMarkup = keyboard
 		b.API.Send(msg)
 	default:
-		if connIDStr, ok := strings.CutPrefix(data, "newissue:conn:"); ok {
+		if connIDStr, ok := strings.CutPrefix(data, "newissue:toggle:"); ok {
 			var connID int64
 			fmt.Sscanf(connIDStr, "%d", &connID)
-			conn, err := storage.GetConnectionByID(b.JobsDB, connID)
-			if err != nil || conn == nil {
-				b.send(chatID, "Repository not found.")
+			conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
+			if err != nil || conv.State != "await_repo_select" {
 				return
 			}
+			connsInterface, _ := conv.Data["connections"].([]interface{})
+			selInterface, _ := conv.Data["selected_ids"].([]interface{})
+
+			selectedIDs := make([]int64, 0, len(selInterface))
+			selSet := make(map[int64]bool)
+			for _, s := range selInterface {
+				if id, ok := s.(float64); ok {
+					selectedIDs = append(selectedIDs, int64(id))
+					selSet[int64(id)] = true
+				}
+			}
+
+			if selSet[connID] {
+				// Remove from selection
+				newSel := make([]int64, 0, len(selectedIDs)-1)
+				for _, id := range selectedIDs {
+					if id != connID {
+						newSel = append(newSel, id)
+					}
+				}
+				selectedIDs = newSel
+			} else {
+				selectedIDs = append(selectedIDs, connID)
+			}
+
+			selFloats := make([]interface{}, len(selectedIDs))
+			for i, id := range selectedIDs {
+				selFloats[i] = float64(id)
+			}
+			conv.Data["selected_ids"] = selFloats
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_repo_select", conv.Data)
+
+			// Rebuild connections list
+			var conns []*storage.Connection
+			for _, ci := range connsInterface {
+				if m, ok := ci.(map[string]interface{}); ok {
+					c := &storage.Connection{
+						ID:            int64(m["id"].(float64)),
+						RepoURL:       m["repo_url"].(string),
+						Provider:      m["provider"].(string),
+						GitToken:      m["token"].(string),
+						DefaultBranch: m["default_branch"].(string),
+					}
+					conns = append(conns, c)
+				}
+			}
+
+			// Edit the original message with updated keyboard
+			editMsg := tgbotapi.NewEditMessageText(chatID, query.Message.MessageID,
+				"Select repositories for the new issue (tap to toggle, then press Done):")
+			kb := b.buildMultiRepoKeyboard(conns, selectedIDs)
+			editMsg.ReplyMarkup = &kb
+			b.API.Send(editMsg)
+			return
+		}
+		if data == "newissue:confirm" {
+			conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
+			if err != nil || conv.State != "await_repo_select" {
+				b.send(chatID, "No active repository selection. Use /newissue to start over.")
+				return
+			}
+			selInterface, _ := conv.Data["selected_ids"].([]interface{})
+			if len(selInterface) == 0 {
+				b.send(chatID, "Please select at least one repository.")
+				return
+			}
+			connsInterface, _ := conv.Data["connections"].([]interface{})
+
+			selectedIDs := make([]int64, 0, len(selInterface))
+			for _, s := range selInterface {
+				if id, ok := s.(float64); ok {
+					selectedIDs = append(selectedIDs, int64(id))
+				}
+			}
+
+			// Build repos array for conversation data
+			repos := make([]map[string]interface{}, 0)
+			for _, ci := range connsInterface {
+				m, ok := ci.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				id := int64(m["id"].(float64))
+				for _, selID := range selectedIDs {
+					if id == selID {
+						repos = append(repos, map[string]interface{}{
+							"repo_url":       m["repo_url"],
+							"provider":       m["provider"],
+							"token":          m["token"],
+							"default_branch": m["default_branch"],
+						})
+						break
+					}
+				}
+			}
+
 			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issue_desc",
 				map[string]interface{}{
-					"repo_url": conn.RepoURL,
-					"provider": conn.Provider,
-					"token":    conn.GitToken,
+					"repos": repos,
 				})
-			b.send(chatID, fmt.Sprintf("Describe the issue for *%s*:\n\nFirst line = title, rest = description.", conn.RepoURL))
+
+			repoList := make([]string, len(repos))
+			for i, r := range repos {
+				repoList[i] = r["repo_url"].(string)
+			}
+			b.send(chatID, fmt.Sprintf("Describe the issue for the selected repositories:\n%s\n\nFirst line = title, rest = description.",
+				strings.Join(repoList, "\n")))
 			return
 		}
 		if rest, ok := strings.CutPrefix(data, "config:model:page:"); ok {
@@ -449,11 +591,6 @@ func (b *Bot) handleText(chatID int64, text string) {
 
 	switch conv.State {
 	case "await_issue_desc":
-		repoURL, _ := conv.Data["repo_url"].(string)
-		providerName, _ := conv.Data["provider"].(string)
-		token, _ := conv.Data["token"].(string)
-		storage.ResetConversation(b.JobsDB, chatID, "telegram")
-
 		lines := strings.SplitN(strings.TrimSpace(text), "\n", 2)
 		title := strings.TrimSpace(lines[0])
 		body := ""
@@ -465,7 +602,32 @@ func (b *Bot) handleText(chatID int64, text string) {
 			return
 		}
 
-		// Save issue data and transition to image collection state
+		reposInterface, hasRepos := conv.Data["repos"].([]interface{})
+		if hasRepos && len(reposInterface) > 0 {
+			// Multi-repo flow
+			repos := make([]map[string]interface{}, 0, len(reposInterface))
+			for _, ri := range reposInterface {
+				if m, ok := ri.(map[string]interface{}); ok {
+					repos = append(repos, m)
+				}
+			}
+			pendingData := map[string]interface{}{
+				"repos":  repos,
+				"title":  title,
+				"body":   body,
+				"images": "",
+			}
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issue_images", pendingData)
+			b.send(chatID, "Now you can send images to attach to the issue. Send images or /done to create the issue.")
+			return
+		}
+
+		// Single-repo flow (backward compat)
+		repoURL, _ := conv.Data["repo_url"].(string)
+		providerName, _ := conv.Data["provider"].(string)
+		token, _ := conv.Data["token"].(string)
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
 		pendingData := map[string]interface{}{
 			"repo_url":      repoURL,
 			"provider":      providerName,
@@ -478,13 +640,57 @@ func (b *Bot) handleText(chatID int64, text string) {
 		b.send(chatID, "Now you can send images to attach to the issue. Send images or /done to create the issue.")
 		return
 	case "await_issue_images":
-		// Process the issue with images
-		repoURL, _ := conv.Data["repo_url"].(string)
-		providerName, _ := conv.Data["provider"].(string)
-		token, _ := conv.Data["token"].(string)
 		title, _ := conv.Data["title"].(string)
 		body, _ := conv.Data["body"].(string)
 		images, _ := conv.Data["images"].(string)
+
+		reposInterface, hasRepos := conv.Data["repos"].([]interface{})
+		if hasRepos && len(reposInterface) > 0 {
+			// Multi-repo flow
+			repos := make([]map[string]interface{}, 0, len(reposInterface))
+			for _, ri := range reposInterface {
+				if m, ok := ri.(map[string]interface{}); ok {
+					repos = append(repos, m)
+				}
+			}
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+			// Create the issue on the first repo only
+			firstRepo := repos[0]
+			firstRepoURL := firstRepo["repo_url"].(string)
+			firstProvider := firstRepo["provider"].(string)
+			firstToken := firstRepo["token"].(string)
+
+			fullBody := embedImages(body, images, firstProvider, firstToken, firstRepoURL)
+			var issueURL string
+			var err error
+			switch firstProvider {
+			case "github":
+				issueURL, err = provider.CreateGitHubIssue(firstRepoURL, firstToken, title, fullBody)
+			case "gitlab":
+				issueURL, err = provider.CreateGitLabIssue(firstRepoURL, firstToken, title, fullBody)
+			}
+			if err != nil {
+				if provider.IsAuthError(err) {
+					b.send(chatID, fmt.Sprintf(
+						"❌ Authentication failed for %s. Your token may have expired.\n"+
+							"Use /connect to refresh your token, then /newissue to try again.",
+						firstProvider,
+					))
+					return
+				}
+				b.send(chatID, fmt.Sprintf("Failed to create issue: %v", err))
+				return
+			}
+			b.send(chatID, fmt.Sprintf("Issue created: %s\n\nProcessing it across %d repositories...", issueURL, len(repos)))
+			b.processMultiIssue(chatID, issueURL, repos, images)
+			return
+		}
+
+		// Single-repo flow
+		repoURL, _ := conv.Data["repo_url"].(string)
+		providerName, _ := conv.Data["provider"].(string)
+		token, _ := conv.Data["token"].(string)
 
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 
@@ -629,6 +835,9 @@ func (b *Bot) handleText(chatID int64, text string) {
 			log.Printf("[await_branch_confirm] Failed to persist branch: %v", err)
 		}
 		b.continueIssueProcessing(chatID, issueURL, gitToken, chosenBranch, "")
+	case "await_repo_select":
+		b.send(chatID, "Please select repositories using the buttons above, then tap \"Done\".")
+		return
 	case "await_logs":
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		var jobID int64
@@ -938,6 +1147,105 @@ func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultB
 		TimeoutMins:   b.Config.AgentTimeoutMins,
 	}
 	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
+}
+
+func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[string]interface{}, images string) {
+	providerName := detectProvider(issueURL)
+	repoURL := extractRepoURL(issueURL)
+
+	// Fetch issue details from the first repo
+	var title, body, issueID string
+	var err error
+
+	switch providerName {
+	case "github":
+		issue, e := provider.FetchGitHubIssue(issueURL, repos[0]["token"].(string))
+		if e != nil {
+			err = e
+		} else {
+			title = issue.Title
+			body = issue.Body
+			issueID = fmt.Sprintf("%d", issue.Number)
+		}
+	case "gitlab":
+		issue, e := provider.FetchGitLabIssue(issueURL, repos[0]["token"].(string))
+		if e != nil {
+			err = e
+		} else {
+			title = issue.Title
+			body = issue.Description
+			issueID = fmt.Sprintf("%d", issue.IID)
+		}
+	}
+
+	if err != nil {
+		if provider.IsAuthError(err) {
+			b.send(chatID, fmt.Sprintf(
+				"❌ Authentication failed for %s. Your token may have expired.\n"+
+					"Use /connect to refresh your token for this repository.",
+				providerName,
+			))
+			return
+		}
+		b.send(chatID, fmt.Sprintf("Failed to fetch issue: %v", err))
+		return
+	}
+	if issueID == "" {
+		b.send(chatID, "Failed to parse issue ID from fetched issue.")
+		return
+	}
+
+	// Enrich issue body with embedded images from comments
+	if body != "" {
+		body = provider.EnrichIssueBody(providerName, issueURL, repos[0]["token"].(string), body)
+	}
+
+	// Create jobs for each repo with a shared group_id
+	groupID := fmt.Sprintf("group_%d_%s", chatID, issueID)
+	createdIDs := make([]int64, 0, len(repos))
+
+	for _, repo := range repos {
+		rURL := repo["repo_url"].(string)
+		rProvider := repo["provider"].(string)
+		rToken := repo["token"].(string)
+		rBranch := repo["default_branch"].(string)
+		if rBranch == "" {
+			rBranch = "main"
+		}
+
+		j := &storage.Job{
+			ChatID:        chatID,
+			IssueID:       issueID,
+			IssueTitle:    title,
+			IssueBody:     body,
+			IssueURL:      issueURL,
+			RepoURL:       rURL,
+			Provider:      rProvider,
+			GitToken:      rToken,
+			Agent:         b.Config.DefaultAgent,
+			AgentModel:    b.Config.DefaultModel,
+			DefaultBranch: rBranch,
+			Images:        images,
+			GroupID:       groupID,
+		}
+		jobID, err := storage.CreateJob(b.JobsDB, j)
+		if err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to create job for %s: %v", rURL, err))
+			continue
+		}
+		createdIDs = append(createdIDs, jobID)
+	}
+
+	if len(createdIDs) == 0 {
+		b.send(chatID, "Failed to create any jobs.")
+		return
+	}
+
+	agentCfg := &agent.Config{
+		APIKeys:      b.Config.APIKeys,
+		TimeoutMins:  b.Config.AgentTimeoutMins,
+	}
+	job.RunGrouped(b.ctx, groupID, createdIDs, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
 }
 
 func (b *Bot) send(chatID int64, text string) {
