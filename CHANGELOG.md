@@ -1,3 +1,10 @@
+## [3.1.2](https://github.com/jullury/akama/compare/v3.1.1...v3.1.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* pass CLI version to daemon cross-compile so daemon reports correct version ([2a0147b](https://github.com/jullury/akama/commit/2a0147be091a319d5cf94da784b06be1825d9bb1))
+
 ## [3.1.1](https://github.com/jullury/akama/compare/v3.1.0...v3.1.1) (2026-05-19)
 
 
