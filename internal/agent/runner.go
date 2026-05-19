@@ -598,20 +598,26 @@ func ParseOutput(agentName, output string) string {
 
 // BuildClarifyingQuestionsPrompt returns a prompt that asks the agent to generate
 // 3-5 clarifying questions about the issue.
-func BuildClarifyingQuestionsPrompt(title, body string) string {
+func BuildClarifyingQuestionsPrompt(title, body string, repoSources ...string) string {
 	truncated := body
 	if len(body) > 30000 {
 		truncated = body[:30000]
+	}
+	multiRepoBlock := ""
+	if len(repoSources) > 0 {
+		multiRepoBlock = "\n\nThis issue spans multiple repositories. The workspace contains:\n" +
+			strings.Join(repoSources, "\n") +
+			"\n\nConsider cross-repo dependencies when generating questions.\n"
 	}
 	return fmt.Sprintf(`You are reviewing an issue that needs to be fixed.
 
 Issue Title: %s
 Description:
 %s
-
+%s
 Generate 3-5 clarifying questions that would help you understand the issue better before creating an implementation plan.
 Ask about requirements, expected behavior, edge cases, or anything unclear.
-Output ONLY the questions, one per line, starting with "Q: ".`, title, truncated)
+Output ONLY the questions, one per line, starting with "Q: ".`, title, truncated, multiRepoBlock)
 }
 
 // ParseClarifyingQuestions extracts questions from agent output.
@@ -643,10 +649,16 @@ func ParseClarifyingQuestions(output string) []string {
 
 // BuildPlanFromAnswers creates a plan prompt using the issue details and user
 // answers to clarifying questions.
-func BuildPlanFromAnswers(title, body, answers string) string {
+func BuildPlanFromAnswers(title, body, answers string, repoSources ...string) string {
 	truncated := body
 	if len(body) > 30000 {
 		truncated = body[:30000]
+	}
+	multiRepoBlock := ""
+	if len(repoSources) > 0 {
+		multiRepoBlock = "\n\nThis issue spans multiple repositories. The workspace contains:\n" +
+			strings.Join(repoSources, "\n") +
+			"\n\nCreate a detailed plan that covers ALL repositories.\n"
 	}
 	return fmt.Sprintf(`You are a developer planning how to fix an issue in a codebase.
 
@@ -656,7 +668,7 @@ Issue Description:
 
 Additional context from the user:
 %s
-
+%s
 Create a detailed, step-by-step implementation plan for fixing this issue.
 Include:
 1. Files that need to be modified
@@ -666,7 +678,7 @@ Include:
 5. Testing strategy
 
 Be specific and actionable. Do NOT implement the changes — only describe what needs to be done.
-Do NOT mention AI, bots, or automation tools.`, title, truncated, answers)
+Do NOT mention AI, bots, or automation tools.`, title, truncated, answers, multiRepoBlock)
 }
 
 func IsQuestion(text string) bool {

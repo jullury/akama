@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -909,7 +910,8 @@ func (b *Bot) handleText(chatID int64, text string) {
 		b.send(chatID, "Generating implementation plan...")
 
 		planWorkspace, _ := conv.Data["plan_workspace"].(string)
-		prompt := agent.BuildPlanFromAnswers(title, body, answers)
+		repoSources, _ := conv.Data["repo_sources"].([]string)
+		prompt := agent.BuildPlanFromAnswers(title, body, answers, repoSources...)
 		planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
 		if agentErr != nil {
 			log.Printf("[await_clarifying_questions] Failed to generate plan: %v", agentErr)
@@ -918,13 +920,23 @@ func (b *Bot) handleText(chatID int64, text string) {
 		}
 
 		issueURL, _ := conv.Data["issue_url"].(string)
-		gitToken, _ := conv.Data["git_token"].(string)
 		providerName, _ := conv.Data["provider"].(string)
-		repoURL, _ := conv.Data["repo_url"].(string)
 
-		// Refresh token from connections so a stale conv.Data token doesn't cause 401.
-		if conn, err := storage.FindConnectionByRepo(b.JobsDB, chatID, repoURL); err == nil && conn != nil {
-			gitToken = conn.GitToken
+		multiRepo, _ := conv.Data["multi_repo"].(bool)
+		var gitToken string
+		if multiRepo {
+			reposInterface, _ := conv.Data["repos"].([]interface{})
+			if len(reposInterface) > 0 {
+				if firstRepo, ok := reposInterface[0].(map[string]interface{}); ok {
+					gitToken, _ = firstRepo["token"].(string)
+				}
+			}
+		} else {
+			gitToken, _ = conv.Data["git_token"].(string)
+			repoURL, _ := conv.Data["repo_url"].(string)
+			if conn, err := storage.FindConnectionByRepo(b.JobsDB, chatID, repoURL); err == nil && conn != nil {
+				gitToken = conn.GitToken
+			}
 		}
 
 		comment := fmt.Sprintf("## Implementation Plan\n\n%s", planOutput)
@@ -998,7 +1010,8 @@ func (b *Bot) handleText(chatID int64, text string) {
 			}()
 
 			planWorkspace, _ := savedData["plan_workspace"].(string)
-			prompt := agent.BuildPlanFromAnswers(title, body, updatedAnswers)
+			repoSources, _ := savedData["repo_sources"].([]string)
+			prompt := agent.BuildPlanFromAnswers(title, body, updatedAnswers, repoSources...)
 			planOutput, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
 			close(heartbeatStop)
 
@@ -1874,18 +1887,36 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		WorkspaceBaseDir: b.Config.WorkspaceDir,
 	}
 
-	b.send(chatID, "🔍 Cloning repository for analysis...")
+	b.send(chatID, "🔍 Cloning repositories for analysis...")
 
 	planWorkspace, cloneErr := os.MkdirTemp(b.Config.WorkspaceDir, "plan-")
+	var repoSources []string
 	if cloneErr != nil {
 		log.Printf("[processMultiIssue] Failed to create workspace: %v", cloneErr)
-	} else if cloneErr := git.Clone(repos[0]["repo_url"].(string), repos[0]["token"].(string), planWorkspace, repos[0]["default_branch"].(string)); cloneErr != nil {
-		log.Printf("[processMultiIssue] Failed to clone for plan context: %v", cloneErr)
+	} else {
+		repoSources = make([]string, 0, len(repos))
+		for _, repo := range repos {
+			rURL, _ := repo["repo_url"].(string)
+			rToken, _ := repo["token"].(string)
+			rBranch, _ := repo["default_branch"].(string)
+			owner, rName, err := git.OwnerRepo(rURL)
+			if err != nil {
+				log.Printf("[processMultiIssue] Failed to parse repo URL %s: %v", rURL, err)
+				continue
+			}
+			subDir := fmt.Sprintf("%s-%s", owner, rName)
+			clonePath := filepath.Join(planWorkspace, subDir)
+			if cloneErr := git.Clone(rURL, rToken, clonePath, rBranch); cloneErr != nil {
+				log.Printf("[processMultiIssue] Failed to clone %s: %v", rURL, cloneErr)
+			} else {
+				repoSources = append(repoSources, fmt.Sprintf("  - %s/%s (%s)", owner, rName, git.DetectProvider(rURL)))
+			}
+		}
 	}
 
 	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
 
-	prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
+	prompt := agent.BuildClarifyingQuestionsPrompt(title, body, repoSources...)
 	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
 	if agentErr != nil {
 		log.Printf("[processMultiIssue] Failed to generate questions: %v", agentErr)
@@ -1914,6 +1945,7 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		"group_id":       groupID,
 		"multi_repo":     true,
 		"repos":          repos,
+		"repo_sources":   repoSources,
 		"plan_workspace": planWorkspace,
 	})
 
