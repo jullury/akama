@@ -1,8 +1,6 @@
 package docker
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -12,11 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	volume "github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/go-connections/nat"
@@ -29,11 +28,12 @@ const (
 	DaemonContainer    = "akama-daemon"
 	PostgresImage      = "pgvector/pgvector:pg16"
 	OllamaImage        = "ollama/ollama"
-	DaemonImage        = "akama-daemon:latest"
+	DaemonImage        = "ghcr.io/jullury/akama-daemon:latest"
 	PostgresURL        = "postgres://akama:akama@akama-postgres:5432/akama"
 	PostgresHostURL    = "postgres://akama:akama@127.0.0.1"
 	PostgresHostPort   = "5432"
 	OllamaURL          = "http://akama-ollama:11434"
+	WorkspacesVolume   = "akama-workspaces"
 )
 
 func NewClient() (*client.Client, error) {
@@ -107,67 +107,6 @@ func PullImage(ctx context.Context, cli *client.Client, imageRef string, out io.
 	return nil
 }
 
-func BuildImage(ctx context.Context, cli *client.Client, dockerfilePath, tag string, buildArgs map[string]*string, out io.Writer) error {
-	tarBuf, err := tarBuildContext(dockerfilePath)
-	if err != nil {
-		return fmt.Errorf("create build context: %w", err)
-	}
-
-	opts := types.ImageBuildOptions{
-		Tags:        []string{tag},
-		Dockerfile:  filepath.Base(dockerfilePath),
-		BuildArgs:   buildArgs,
-		Remove:      true,
-		ForceRemove: true,
-	}
-	reader, err := cli.ImageBuild(ctx, tarBuf, opts)
-	if err != nil {
-		return fmt.Errorf("build image: %w", err)
-	}
-	defer reader.Body.Close()
-	if out != nil {
-		return jsonmessage.DisplayJSONMessagesStream(reader.Body, out, 0, false, nil)
-	}
-	io.Copy(io.Discard, reader.Body)
-	return nil
-}
-
-func tarBuildContext(dockerfilePath string) (io.Reader, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-
-	df, err := os.Open(dockerfilePath)
-	if err != nil {
-		return nil, err
-	}
-	defer df.Close()
-
-	dfInfo, err := df.Stat()
-	if err != nil {
-		return nil, err
-	}
-
-	header := &tar.Header{
-		Name:     filepath.Base(dockerfilePath),
-		Size:     dfInfo.Size(),
-		Mode:     0644,
-		ModTime:  dfInfo.ModTime(),
-		AccessTime: dfInfo.ModTime(),
-		ChangeTime: dfInfo.ModTime(),
-	}
-	if err := tw.WriteHeader(header); err != nil {
-		return nil, err
-	}
-	if _, err := io.Copy(tw, df); err != nil {
-		return nil, err
-	}
-
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	return &buf, nil
-}
-
 func EnsurePostgresContainer(ctx context.Context, cli *client.Client, hostPort string) error {
 	exists, err := ContainerExists(ctx, cli, PostgresContainer)
 	if err != nil {
@@ -236,7 +175,7 @@ func EnsureOllamaContainer(ctx context.Context, cli *client.Client) error {
 	return nil
 }
 
-func EnsureDaemonContainer(ctx context.Context, cli *client.Client, hostWorkspaceDir, configPath, logDir string) error {
+func EnsureDaemonContainer(ctx context.Context, cli *client.Client, configPath, logDir string) error {
 	exists, err := ContainerExists(ctx, cli, DaemonContainer)
 	if err != nil {
 		return err
@@ -245,16 +184,13 @@ func EnsureDaemonContainer(ctx context.Context, cli *client.Client, hostWorkspac
 		return nil
 	}
 
+	if err := EnsureVolume(ctx, cli, WorkspacesVolume); err != nil {
+		return fmt.Errorf("ensure workspaces volume: %w", err)
+	}
+
 	homeDir, _ := os.UserHomeDir()
-	absWorkspace := expandPath(hostWorkspaceDir, homeDir)
 	absConfig := expandPath(configPath, homeDir)
 	absLog := expandPath(logDir, homeDir)
-
-	binds := []string{
-		absWorkspace + ":/workspaces",
-		absConfig + ":/root/.akama/config.yaml",
-		absLog + ":/root/.akama/logs",
-	}
 
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image: DaemonImage,
@@ -264,7 +200,17 @@ func EnsureDaemonContainer(ctx context.Context, cli *client.Client, hostWorkspac
 		},
 		Labels: map[string]string{"app": "akama"},
 	}, &container.HostConfig{
-		Binds:         binds,
+		Binds: []string{
+			absConfig + ":/root/.akama/config.yaml",
+			absLog + ":/root/.akama/logs",
+		},
+		Mounts: []mount.Mount{
+			{
+				Type:   mount.TypeVolume,
+				Source: WorkspacesVolume,
+				Target: "/workspaces",
+			},
+		},
 		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
 	}, nil, nil, DaemonContainer)
 	if err != nil {
@@ -340,6 +286,18 @@ func RemoveContainer(ctx context.Context, cli *client.Client, name string) error
 	return nil
 }
 
+func EnsureVolume(ctx context.Context, cli *client.Client, name string) error {
+	_, err := cli.VolumeInspect(ctx, name)
+	if err == nil {
+		return nil
+	}
+	_, err = cli.VolumeCreate(ctx, volume.CreateOptions{
+		Name:   name,
+		Labels: map[string]string{"app": "akama"},
+	})
+	return err
+}
+
 func RemoveVolume(ctx context.Context, cli *client.Client, volumeName string) error {
 	return cli.VolumeRemove(ctx, volumeName, true)
 }
@@ -398,7 +356,7 @@ func ContainerStatus(ctx context.Context, cli *client.Client, name string) (stri
 	return "not_found", nil
 }
 
-func EnsureContainers(ctx context.Context, cli *client.Client, hostWorkspaceDir, configPath, logDir, hostPort string) error {
+func EnsureContainers(ctx context.Context, cli *client.Client, configPath, logDir, hostPort string) error {
 	if err := EnsureNetwork(ctx, cli); err != nil {
 		return err
 	}
@@ -408,7 +366,7 @@ func EnsureContainers(ctx context.Context, cli *client.Client, hostWorkspaceDir,
 	if err := EnsureOllamaContainer(ctx, cli); err != nil {
 		return err
 	}
-	if err := EnsureDaemonContainer(ctx, cli, hostWorkspaceDir, configPath, logDir); err != nil {
+	if err := EnsureDaemonContainer(ctx, cli, configPath, logDir); err != nil {
 		return err
 	}
 	return nil

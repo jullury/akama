@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/jullury/akama/internal/config"
 	docker "github.com/jullury/akama/internal/docker"
@@ -43,8 +45,20 @@ func runRestart(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	if err := docker.RemoveContainer(ctx, dcli, docker.DaemonContainer); err != nil {
+		fmt.Fprintf(os.Stderr, "Remove daemon container: %v\n", err)
+		os.Exit(1)
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	configPath := cfgPath
+	if strings.HasPrefix(configPath, "~/") {
+		configPath = filepath.Join(homeDir, configPath[2:])
+	}
+	logDir := filepath.Join(filepath.Dir(cfg.LogPath), "logs")
+
 	fmt.Println("Starting daemon...")
-	if err := docker.EnsureDaemonContainer(ctx, dcli, cfg.WorkspaceDir, cfgPath, cfg.LogPath); err != nil {
+	if err := docker.EnsureDaemonContainer(ctx, dcli, configPath, logDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
 		os.Exit(1)
 	}

@@ -68,6 +68,28 @@ release:
 	@echo "Release is now handled by semantic-release on push to main."
 	@echo "Ensure your commits follow conventional commits: https://www.conventionalcommits.org/"
 
+docker-build:
+	@echo "Building akama-daemon Docker image..."
+	@if [ ! -f .env ]; then echo ".env not found — OAuth creds required"; exit 1; fi
+	@docker build \
+		--build-arg GITHUB_CLIENT_ID=$(GITHUB_CLIENT_ID) \
+		--build-arg GITHUB_CLIENT_SECRET=$(GITHUB_CLIENT_SECRET) \
+		--build-arg GITLAB_CLIENT_ID=$(GITLAB_CLIENT_ID) \
+		--build-arg GITLAB_CLIENT_SECRET=$(GITLAB_CLIENT_SECRET) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg BUILD_TIME=$(BUILD_TIME) \
+		--build-arg BUILD_PLATFORM=$(BUILD_PLATFORM) \
+		-t ghcr.io/jullury/akama-daemon:latest \
+		-t ghcr.io/jullury/akama-daemon:$(VERSION) \
+		.
+	@echo "Image built: ghcr.io/jullury/akama-daemon:$(VERSION)"
+
+docker-push:
+	@echo "Pushing akama-daemon to ghcr.io..."
+	@docker push ghcr.io/jullury/akama-daemon:latest
+	@docker push ghcr.io/jullury/akama-daemon:$(VERSION)
+	@echo "Pushed: ghcr.io/jullury/akama-daemon:$(VERSION)"
+
 clean:
 	rm -f akama
 	rm -rf dist

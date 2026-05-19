@@ -89,11 +89,11 @@ func runInit(cmd *cobra.Command, args []string) {
 	}
 	installSkills()
 
-	fmt.Print("Workspace directory (default ~/.akama/workspaces): ")
+	fmt.Print("Workspace directory (default /workspaces): ")
 	var ws string
 	fmt.Scanln(&ws)
 	if ws == "" {
-		ws = "~/.akama/workspaces"
+		ws = "/workspaces"
 	}
 	cfg.WorkspaceDir = ws
 
@@ -121,13 +121,13 @@ func runInit(cmd *cobra.Command, args []string) {
 
 	dockerClient := dcli
 
-	// Build daemon image
-	fmt.Println("Building akama-daemon image...")
-	if err := docker.BuildImage(ctx, dockerClient, "Dockerfile", docker.DaemonImage, nil, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "Build daemon image: %v\n", err)
+	// Pull daemon image
+	fmt.Println("Pulling akama-daemon image...")
+	if err := docker.PullImage(ctx, dockerClient, docker.DaemonImage, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "Pull daemon image: %v\n", err)
 		return
 	}
-	fmt.Println("Daemon image built.")
+	fmt.Println("Daemon image ready.")
 
 	// Pull infrastructure images
 	fmt.Println("Pulling PostgreSQL (pgvector)...")

@@ -45,46 +45,39 @@ func runStart(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	dockerClient := dcli
-
 	// Ensure network and infrastructure containers are running
-	if err := docker.EnsureNetwork(ctx, dockerClient); err != nil {
+	if err := docker.EnsureNetwork(ctx, dcli); err != nil {
 		fmt.Fprintf(os.Stderr, "Ensure network: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := docker.EnsurePostgresContainer(ctx, dockerClient, "5432"); err != nil {
+	if err := docker.EnsurePostgresContainer(ctx, dcli, "5432"); err != nil {
 		fmt.Fprintf(os.Stderr, "Ensure postgres: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := docker.EnsureOllamaContainer(ctx, dockerClient); err != nil {
+	if err := docker.EnsureOllamaContainer(ctx, dcli); err != nil {
 		fmt.Fprintf(os.Stderr, "Ensure ollama: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Build and start daemon container
-	homeDir, _ := os.UserHomeDir()
-	workspaceDir := cfg.WorkspaceDir
-	if strings.HasPrefix(workspaceDir, "~/") {
-		workspaceDir = filepath.Join(homeDir, workspaceDir[2:])
+	// Pull daemon image
+	fmt.Print("Pulling daemon image...")
+	if err := docker.PullImage(ctx, dcli, docker.DaemonImage, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "\nPull daemon image: %v\n", err)
+		os.Exit(1)
 	}
-	os.MkdirAll(workspaceDir, 0700)
+	fmt.Println(" done.")
 
+	// Resolve config and log paths
+	homeDir, _ := os.UserHomeDir()
 	configPath := cfgPath
 	if strings.HasPrefix(configPath, "~/") {
 		configPath = filepath.Join(homeDir, configPath[2:])
 	}
-
 	logDir := filepath.Join(filepath.Dir(cfg.LogPath), "logs")
 
-	// Build image if not present
-	if err := docker.BuildImage(ctx, dockerClient, "Dockerfile", docker.DaemonImage, nil, nil); err != nil {
-		fmt.Fprintf(os.Stderr, "Build daemon image: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := docker.EnsureDaemonContainer(ctx, dockerClient, workspaceDir, configPath, logDir); err != nil {
+	if err := docker.EnsureDaemonContainer(ctx, dcli, configPath, logDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Ensure daemon: %v\n", err)
 		os.Exit(1)
 	}

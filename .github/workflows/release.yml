@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -38,7 +39,7 @@ jobs:
           version=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
           echo "version=$version" >> $GITHUB_OUTPUT
 
-  build:
+  build-binaries:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     needs: release
     if: needs.release.outputs.version != ''
@@ -87,3 +88,38 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.release.outputs.version }}
         run: gh release upload "v$VERSION" "akama-${{ matrix.goos }}-${{ matrix.goarch }}" --clobber
+
+  build-docker:
+    name: Build and push Docker image
+    needs: release
+    if: needs.release.outputs.version != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/jullury/akama-daemon:latest
+            ghcr.io/jullury/akama-daemon:${{ needs.release.outputs.version }}
+          build-args: |
+            GITHUB_CLIENT_ID=${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
+            GITHUB_CLIENT_SECRET=${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
+            GITLAB_CLIENT_ID=${{ secrets.OAUTH_GITLAB_CLIENT_ID }}
+            GITLAB_CLIENT_SECRET=${{ secrets.OAUTH_GITLAB_CLIENT_SECRET }}
+            VERSION=${{ needs.release.outputs.version }}
+            BUILD_TIME=${{ github.event.repository.updated_at }}
+            BUILD_PLATFORM=linux/amd64

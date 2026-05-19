@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/jullury/akama/internal/config"
 	docker "github.com/jullury/akama/internal/docker"
@@ -49,16 +51,23 @@ func runUpdate(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Rebuild image
-	fmt.Println("Rebuilding daemon image...")
-	if err := docker.BuildImage(ctx, dcli, "Dockerfile", docker.DaemonImage, nil, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "Build image: %v\n", err)
+	// Pull latest image
+	fmt.Print("Pulling latest daemon image...")
+	if err := docker.PullImage(ctx, dcli, docker.DaemonImage, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "\nPull image: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("Image rebuilt.")
+	fmt.Println(" done.")
+
+	homeDir, _ := os.UserHomeDir()
+	configPath := cfgPath
+	if strings.HasPrefix(configPath, "~/") {
+		configPath = filepath.Join(homeDir, configPath[2:])
+	}
+	logDir := filepath.Join(filepath.Dir(cfg.LogPath), "logs")
 
 	// Start new daemon
-	if err := docker.EnsureDaemonContainer(ctx, dcli, cfg.WorkspaceDir, cfgPath, cfg.LogPath); err != nil {
+	if err := docker.EnsureDaemonContainer(ctx, dcli, configPath, logDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
 		os.Exit(1)
 	}
