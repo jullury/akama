@@ -1,3 +1,10 @@
+# [2.19.0](https://github.com/jullury/akama/compare/v2.18.0...v2.19.0) (2026-05-19)
+
+
+### Features
+
+* add 7 missing UX features ([4b65846](https://github.com/jullury/akama/commit/4b65846151b9490f0fa496c0895ea2b275444ba1))
+
 # [2.18.0](https://github.com/jullury/akama/compare/v2.17.0...v2.18.0) (2026-05-19)
 
 
