@@ -38,12 +38,33 @@ func runDaemon() {
 	home, _ := os.UserHomeDir()
 	cfgPath := filepath.Join(home, ".akama", "config.yaml")
 
+	// Redirect log output to a file immediately so that crashes before the
+	// rotating logger is ready are not silently swallowed into /dev/null.
+	earlyLogDir := filepath.Join(home, ".akama", "logs")
+	os.MkdirAll(earlyLogDir, 0755)
+	if f, err := os.OpenFile(
+		filepath.Join(earlyLogDir, "akama-startup.log"),
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644,
+	); err == nil {
+		log.SetOutput(f)
+		defer f.Close()
+	}
+
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Fatalf("Load config: %v", err)
 	}
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("Invalid config: %v", err)
+	}
+
+	// When running inside a container, environment variables override the config
+	// so the daemon uses internal container-network URLs instead of host-bound ones.
+	if v := os.Getenv("POSTGRES_URL"); v != "" {
+		cfg.PostgresURL = v
+	}
+	if v := os.Getenv("OLLAMA_URL"); v != "" {
+		cfg.OllamaURL = v
 	}
 
 	lw, err := logger.NewRotatingWriter(logger.Config{
@@ -63,13 +84,21 @@ func runDaemon() {
 	if strings.HasPrefix(pidPath, "~/") {
 		pidPath = filepath.Join(home, pidPath[2:])
 	}
-	if daemon.IsRunning(pidPath) {
-		log.Fatalf("Another akama daemon is already running; run 'akama stop' first")
+	// When running as PID 1 (inside a container) Docker manages the lifecycle,
+	// so skip the host-side PID file guard entirely. Also remove any stale PID
+	// file left by a previous crashed container (os.Exit skips defers, so it
+	// can linger on the bind-mounted host filesystem).
+	if os.Getpid() == 1 {
+		os.Remove(pidPath)
+	} else {
+		if daemon.IsRunning(pidPath) {
+			log.Fatalf("Another akama daemon is already running; run 'akama stop' first")
+		}
+		if err := daemon.WritePID(pidPath, os.Getpid()); err != nil {
+			log.Fatalf("Write PID: %v", err)
+		}
+		defer daemon.RemovePID(pidPath)
 	}
-	if err := daemon.WritePID(pidPath, os.Getpid()); err != nil {
-		log.Fatalf("Write PID: %v", err)
-	}
-	defer daemon.RemovePID(pidPath)
 
 	db, err := storage.Open(cfg.PostgresURL)
 	if err != nil {
@@ -116,8 +145,9 @@ func runDaemon() {
 	}()
 
 	agentCfg := &agent.Config{
-		APIKeys:     cfg.APIKeys,
-		TimeoutMins: cfg.AgentTimeoutMins,
+		APIKeys:          cfg.APIKeys,
+		TimeoutMins:      cfg.AgentTimeoutMins,
+		WorkspaceBaseDir: cfg.WorkspaceDir,
 	}
 	job.InitScheduler(db, b.API, agentCfg, cfg.WorkspaceDir, cfg.MaxConcurrentJobs, cfg.QuietHoursStart, cfg.QuietHoursEnd, cfg.OllamaURL)
 	job.StartLabelPoller(ctx, db, b.API, agentCfg, cfg)

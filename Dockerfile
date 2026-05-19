@@ -1,35 +1,36 @@
-FROM golang:1.26-bookworm AS builder
+# syntax=docker/dockerfile:1
+FROM golang:1.23-bookworm AS builder
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
 COPY . .
 ARG VERSION=dev
-ARG BUILD_TIME=unknown
-ARG BUILD_PLATFORM=linux/amd64
+ARG BUILD_TIME
+ARG BUILD_PLATFORM
 RUN --mount=type=secret,id=github_client_id \
     --mount=type=secret,id=github_client_secret \
     --mount=type=secret,id=gitlab_client_id \
     --mount=type=secret,id=gitlab_client_secret \
-    GITHUB_CLIENT_ID=$(cat /run/secrets/github_client_id 2>/dev/null || echo "") \
-    GITHUB_CLIENT_SECRET=$(cat /run/secrets/github_client_secret 2>/dev/null || echo "") \
-    GITLAB_CLIENT_ID=$(cat /run/secrets/gitlab_client_id 2>/dev/null || echo "") \
-    GITLAB_CLIENT_SECRET=$(cat /run/secrets/gitlab_client_secret 2>/dev/null || echo "") \
-    go build \
-    -ldflags "-X github.com/jullury/akama/internal/config.GitHubClientID=${GITHUB_CLIENT_ID} -X github.com/jullury/akama/internal/config.GitHubClientSecret=${GITHUB_CLIENT_SECRET} -X github.com/jullury/akama/internal/config.GitLabClientID=${GITLAB_CLIENT_ID} -X github.com/jullury/akama/internal/config.GitLabClientSecret=${GITLAB_CLIENT_SECRET} -X github.com/jullury/akama/internal/config.Version=${VERSION} -X github.com/jullury/akama/internal/config.BuildTime=${BUILD_TIME} -X github.com/jullury/akama/internal/config.BuildPlatform=${BUILD_PLATFORM}" \
-    -o akama .
+    CGO_ENABLED=0 go build \
+        -trimpath \
+        -ldflags "-s -w \
+          -X github.com/jullury/akama/internal/config.GitHubClientID=$(cat /run/secrets/github_client_id) \
+          -X github.com/jullury/akama/internal/config.GitHubClientSecret=$(cat /run/secrets/github_client_secret) \
+          -X github.com/jullury/akama/internal/config.GitLabClientID=$(cat /run/secrets/gitlab_client_id) \
+          -X github.com/jullury/akama/internal/config.GitLabClientSecret=$(cat /run/secrets/gitlab_client_secret) \
+          -X github.com/jullury/akama/internal/config.Version=${VERSION} \
+          -X github.com/jullury/akama/internal/config.BuildTime=${BUILD_TIME} \
+          -X github.com/jullury/akama/internal/config.BuildPlatform=${BUILD_PLATFORM}" \
+        -o /akama .
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-	git curl ca-certificates bash nodejs npm \
-	&& rm -rf /var/lib/apt/lists/*
-
-RUN curl https://mise.run/ | sh
-
-ENV NPM_CONFIG_PREFIX=/home/akama/.akama/.npm-global
-ENV PATH="/home/akama/.akama/.npm-global/bin:${PATH}"
-
-RUN npm install -g @anthropic-ai/claude-code opencode-ai 2>/dev/null || true
-
-COPY --from=builder /src/akama /usr/local/bin/akama
-
+    ca-certificates git docker.io nodejs npm curl bash \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1000 -s /bin/bash worker
+USER worker
+ENV NPM_CONFIG_PREFIX=/home/worker/.npm-global
+ENV PATH="/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+RUN npm install -g @anthropic-ai/claude-code opencode-ai
+USER root
+COPY --from=builder /akama /usr/local/bin/akama
+WORKDIR /workspaces
 ENTRYPOINT ["akama", "--daemon"]

@@ -34,16 +34,18 @@ func runStatus(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	daemonStatus, _ := docker.ContainerStatus(context.Background(), dcli, docker.DaemonContainer)
-	postgresStatus, _ := docker.ContainerStatus(context.Background(), dcli, docker.PostgresContainer)
-	ollamaStatus, _ := docker.ContainerStatus(context.Background(), dcli, docker.OllamaContainer)
+	ctx := context.Background()
+
+	daemonStatus, _ := docker.ContainerStatus(ctx, dcli, docker.DaemonContainer)
+	postgresStatus, _ := docker.ContainerStatus(ctx, dcli, docker.PostgresContainer)
+	ollamaStatus, _ := docker.ContainerStatus(ctx, dcli, docker.OllamaContainer)
 
 	fmt.Printf("daemon:    %s\n", daemonStatus)
 	fmt.Printf("postgres:  %s\n", postgresStatus)
 	fmt.Printf("ollama:    %s\n", ollamaStatus)
 
 	if daemonStatus == "running" {
-		db, err := storage.Open(cfg.PostgresURL)
+		db, err := storage.OpenNoMigrate(cfg.PostgresURL)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Open DB: %v\n", err)
 			return

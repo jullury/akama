@@ -5,25 +5,30 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 type Config struct {
-	APIKeys    map[string]string
+	APIKeys     map[string]string
 	TimeoutMins int
+	// WorkspaceBaseDir is the directory under which temporary plan workspaces
+	// are created inside the daemon container.
+	WorkspaceBaseDir string
 }
 
 // AgentRunner defines the interface for executing a provider command.
 type AgentRunner interface {
 	Name() string
 	Run(ctx context.Context, model, workspacePath, promptPath string, cfg *Config) (string, error)
-	FetchModels() []string
+	FetchModels(apiKeys map[string]string) []string
 	ParseOutput(output string) string
 }
 
@@ -70,6 +75,35 @@ func Run(ctx context.Context, agentName, model, workspacePath, promptPath string
 	return r.Run(ctx, model, workspacePath, promptPath, cfg)
 }
 
+// agentCmd builds an exec.Cmd for running an agent binary directly. When the
+// current process is root (inside the daemon container), privileges are dropped
+// to uid/gid 1000 so that claude --dangerously-skip-permissions is satisfied.
+func agentCmd(ctx context.Context, bin string, args []string, workspacePath string, cfg *Config) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = workspacePath
+	if os.Getuid() == 0 {
+		// Running as root inside the daemon container — drop to worker user.
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Credential: &syscall.Credential{Uid: 1000, Gid: 1000},
+		}
+		cmd.Env = []string{
+			"HOME=/home/worker",
+			"PATH=/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		}
+	} else {
+		cmd.Env = os.Environ()
+	}
+	for _, pair := range []struct{ k, env string }{
+		{"anthropic", "ANTHROPIC_API_KEY"},
+		{"openai", "OPENAI_API_KEY"},
+	} {
+		if v, ok := cfg.APIKeys[pair.k]; ok && v != "" {
+			cmd.Env = append(cmd.Env, pair.env+"="+v)
+		}
+	}
+	return cmd
+}
+
 // claudeRunner implements AgentRunner for the claude CLI.
 type claudeRunner struct{}
 
@@ -77,13 +111,10 @@ func (r *claudeRunner) Name() string { return "claude" }
 
 func (r *claudeRunner) Run(ctx context.Context, model, workspacePath, promptPath string, cfg *Config) (string, error) {
 	args := []string{"-p", promptPath, "--dangerously-skip-permissions", "--output-format", "json"}
-	cmd := exec.CommandContext(ctx, "claude", args...)
-
-	cmd.Dir = workspacePath
-	cmd.Env = os.Environ()
-	if key, ok := cfg.APIKeys["anthropic"]; ok && key != "" {
-		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+key)
+	if model != "" {
+		args = append(args, "--model", model)
 	}
+	cmd := agentCmd(ctx, "claude", args, workspacePath, cfg)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -98,15 +129,40 @@ func (r *claudeRunner) Run(ctx context.Context, model, workspacePath, promptPath
 	return stdout.String() + stderr.String(), nil
 }
 
-func (r *claudeRunner) FetchModels() []string {
-	cmd := exec.Command("claude", "-p", "/model", "--output-format", "text")
-	out, err := cmd.Output()
-	if err == nil {
-		if models := parseModelLines(string(out)); len(models) > 0 {
-			return models
-		}
+func (r *claudeRunner) FetchModels(apiKeys map[string]string) []string {
+	key := apiKeys["anthropic"]
+	if key == "" {
+		return []string{"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"}
 	}
-	return []string{"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.anthropic.com/v1/models", nil)
+	if err != nil {
+		return []string{"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"}
+	}
+	req.Header.Set("x-api-key", key)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return []string{"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"}
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return []string{"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"}
+	}
+	models := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		models = append(models, m.ID)
+	}
+	if len(models) == 0 {
+		return []string{"claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-7"}
+	}
+	return models
 }
 
 func (r *claudeRunner) ParseOutput(output string) string {
@@ -135,16 +191,7 @@ func (r *opencodeRunner) Run(ctx context.Context, model, workspacePath, promptPa
 	if model != "" {
 		args = append(args, "-m", model)
 	}
-	cmd := exec.CommandContext(ctx, "opencode", args...)
-
-	cmd.Dir = workspacePath
-	cmd.Env = os.Environ()
-	if key, ok := cfg.APIKeys["anthropic"]; ok && key != "" {
-		cmd.Env = append(cmd.Env, "ANTHROPIC_API_KEY="+key)
-	}
-	if key, ok := cfg.APIKeys["openai"]; ok && key != "" {
-		cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+key)
-	}
+	cmd := agentCmd(ctx, "opencode", args, workspacePath, cfg)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -164,8 +211,17 @@ func (r *opencodeRunner) Run(ctx context.Context, model, workspacePath, promptPa
 	return out, nil
 }
 
-func (r *opencodeRunner) FetchModels() []string {
+func (r *opencodeRunner) FetchModels(_ map[string]string) []string {
 	cmd := exec.Command("opencode", "models")
+	cmd.Env = []string{
+		"HOME=/home/worker",
+		"PATH=/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	}
+	if os.Getuid() == 0 {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Credential: &syscall.Credential{Uid: 1000, Gid: 1000},
+		}
+	}
 	out, err := cmd.Output()
 	if err == nil {
 		if models := parseModelLines(string(out)); len(models) > 0 {
@@ -443,13 +499,14 @@ func slugify(s string) string {
 	return strings.TrimRight(b.String(), "-")
 }
 
-// FetchModels returns the available models for the given agent.
-func FetchModels(agentName string) []string {
+// FetchModels returns the available models for the given agent by querying the
+// provider's API directly using the supplied API keys.
+func FetchModels(agentName string, apiKeys map[string]string) []string {
 	r := Get(agentName)
 	if r == nil {
 		return nil
 	}
-	return r.FetchModels()
+	return r.FetchModels(apiKeys)
 }
 
 func parseModelLines(output string) []string {
@@ -636,7 +693,11 @@ func RunPlanAgent(ctx context.Context, agentName, model, workspacePath, promptCo
 	ownDir := workspacePath == ""
 	if ownDir {
 		var err error
-		workspacePath, err = os.MkdirTemp("", "akama-plan-*")
+		baseDir := ""
+		if cfg != nil && cfg.WorkspaceBaseDir != "" {
+			baseDir = cfg.WorkspaceBaseDir
+		}
+		workspacePath, err = os.MkdirTemp(baseDir, "akama-plan-")
 		if err != nil {
 			return "", fmt.Errorf("create temp dir: %w", err)
 		}

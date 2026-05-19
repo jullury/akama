@@ -10,39 +10,37 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	logsFollow bool
-	logsTail   string
-)
+var logsFollow bool
+var logsTail string
 
 var logsCmd = &cobra.Command{
 	Use:   "logs",
-	Short: "Show daemon container logs",
+	Short: "Show or tail daemon container logs",
 	Run:   runLogs,
 }
 
 func init() {
-	rootCmd.AddCommand(logsCmd)
 	logsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output")
-	logsCmd.Flags().StringVar(&logsTail, "tail", "all", "Number of lines to show from the end")
+	logsCmd.Flags().StringVar(&logsTail, "tail", "100", "Number of lines to show from the end (default 100, use 'all' for everything)")
+	rootCmd.AddCommand(logsCmd)
 }
 
 func runLogs(cmd *cobra.Command, args []string) {
-	ctx := context.Background()
 	dcli, err := docker.NewClient()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Connect to Docker: %v\n", err)
 		os.Exit(1)
 	}
 
-	r, err := docker.ContainerLogs(ctx, dcli, docker.DaemonContainer, logsFollow, logsTail)
+	ctx := context.Background()
+	reader, err := docker.ContainerLogs(ctx, dcli, docker.DaemonContainer, logsFollow, logsTail)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Get logs: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Get container logs: %v\n", err)
 		os.Exit(1)
 	}
-	defer r.Close()
+	defer reader.Close()
 
-	if _, err := io.Copy(os.Stdout, r); err != nil {
+	if _, err := io.Copy(os.Stdout, reader); err != nil && err != io.EOF {
 		fmt.Fprintf(os.Stderr, "Read logs: %v\n", err)
 		os.Exit(1)
 	}

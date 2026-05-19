@@ -22,6 +22,7 @@ type Config struct {
 	WorkspaceDir     string            `yaml:"workspace_dir"`
 	DBPath           string            `yaml:"db_path,omitempty"`
 	PostgresURL      string            `yaml:"postgres_url"`
+	PostgresPort     string            `yaml:"postgres_port"`
 	OllamaURL        string            `yaml:"ollama_url"`
 	LogPath          string            `yaml:"log_path"`
 	PIDPath          string            `yaml:"pid_path"`
@@ -66,9 +67,10 @@ func DefaultConfig() *Config {
 		APIKeys:             make(map[string]string),
 		DefaultAgent:        "claude",
 		AgentTimeoutMins:    30,
-		WorkspaceDir:        "~/.akama/workspaces",
+		WorkspaceDir:        "/workspaces",
 		PostgresURL:         "postgres://akama:akama@localhost:5432/akama",
 		OllamaURL:           "http://localhost:11434",
+		PostgresPort:        "5432",
 		LogPath:             "~/.akama/akama.log",
 		PIDPath:             "~/.akama/akama.pid",
 		MaxWorkspaceAgeDays: 7,

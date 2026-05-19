@@ -201,6 +201,10 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 			continue
 		}
 
+		if err := chmodWorkspace(clonePath); err != nil {
+			log.Printf("chmod workspace: %v", err)
+		}
+
 		if err := setupMise(clonePath); err != nil {
 			log.Printf("mise install: %v", err)
 		}
@@ -502,6 +506,11 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		return
 	}
 
+	// Worker containers run as non-root (uid 1000); make the workspace writable.
+	if err := chmodWorkspace(workspacePath); err != nil {
+		log.Printf("chmod workspace: %v", err)
+	}
+
 	if err := setupMise(workspacePath); err != nil {
 		log.Printf("mise install: %v", err)
 	}
@@ -798,4 +807,18 @@ func WaitForJobs(timeoutSec int) {
 	case <-done:
 	case <-time.After(time.Duration(timeoutSec) * time.Second):
 	}
+}
+
+// chmodWorkspace recursively opens workspace permissions so that non-root worker
+// containers (uid 1000) can read and write files created by the root daemon.
+func chmodWorkspace(path string) error {
+	return filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip unreadable entries
+		}
+		if d.IsDir() {
+			return os.Chmod(p, 0777)
+		}
+		return os.Chmod(p, 0666)
+	})
 }

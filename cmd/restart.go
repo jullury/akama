@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"time"
 
 	"github.com/jullury/akama/internal/config"
 	docker "github.com/jullury/akama/internal/docker"
@@ -14,7 +14,7 @@ import (
 
 var restartCmd = &cobra.Command{
 	Use:   "restart",
-	Short: "Restart the daemon container",
+	Short: "Restart the daemon (stop if running, recreate, then start)",
 	Run:   runRestart,
 }
 
@@ -29,39 +29,65 @@ func runRestart(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
 	dcli, err := docker.NewClient()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Connect to Docker: %v\n", err)
 		os.Exit(1)
 	}
 
-	status, _ := docker.ContainerStatus(ctx, dcli, docker.DaemonContainer)
-	if status == "running" {
-		fmt.Println("Stopping daemon...")
+	ctx := context.Background()
+
+	// Stop daemon container if running.
+	running, _ := docker.ContainerRunning(ctx, dcli, docker.DaemonContainer)
+	if running {
+		fmt.Println("Stopping akama daemon...")
 		if err := docker.StopContainer(ctx, dcli, docker.DaemonContainer); err != nil {
 			fmt.Fprintf(os.Stderr, "Stop daemon: %v\n", err)
 			os.Exit(1)
 		}
 	}
 
+	// Always remove the daemon container to pick up config changes.
 	if err := docker.RemoveContainer(ctx, dcli, docker.DaemonContainer); err != nil {
 		fmt.Fprintf(os.Stderr, "Remove daemon container: %v\n", err)
 		os.Exit(1)
 	}
 
-	homeDir, _ := os.UserHomeDir()
-	configPath := cfgPath
-	if strings.HasPrefix(configPath, "~/") {
-		configPath = filepath.Join(homeDir, configPath[2:])
-	}
-	logDir := filepath.Join(filepath.Dir(cfg.LogPath), "logs")
+	// Ensure infra containers are running.
+	infraCtx, infraCancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer infraCancel()
 
-	fmt.Println("Starting daemon...")
-	if err := docker.EnsureDaemonContainer(ctx, dcli, configPath, logDir); err != nil {
-		fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
+	pgPort := cfg.PostgresPort
+	if pgPort == "" {
+		pgPort = docker.PostgresPort
+	}
+	if err := docker.EnsureInfraContainers(infraCtx, dcli, pgPort); err != nil {
+		fmt.Fprintf(os.Stderr, "Start infrastructure: %v\n", err)
+		os.Exit(1)
+	}
+	if err := docker.EnsureVolume(infraCtx, dcli, docker.WorkspacesVolume); err != nil {
+		fmt.Fprintf(os.Stderr, "Create workspace volume: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("akama daemon restarted.")
+	// Resolve config and logs directories.
+	configDir := resolveConfigDir(cfgPath)
+	logsDir := filepath.Join(configDir, "logs")
+
+	if err := docker.EnsureDaemonContainer(ctx, dcli, configDir, logsDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Start daemon container: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Wait up to 10s for the daemon container to be running.
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if r, _ := docker.ContainerRunning(ctx, dcli, docker.DaemonContainer); r {
+			fmt.Println("akama daemon restarted")
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	fmt.Fprintln(os.Stderr, "akama daemon container did not start in time")
+	os.Exit(1)
 }

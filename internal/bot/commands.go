@@ -25,8 +25,8 @@ import (
 
 const modelsPerPage = 8
 
-func buildModelKeyboard(agentName string, page int) (tgbotapi.InlineKeyboardMarkup, string) {
-	models := agent.FetchModels(agentName)
+func buildModelKeyboard(agentName string, page int, apiKeys map[string]string) (tgbotapi.InlineKeyboardMarkup, string) {
+	models := agent.FetchModels(agentName, apiKeys)
 	total := len(models)
 	start := page * modelsPerPage
 	if start >= total {

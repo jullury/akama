@@ -332,8 +332,8 @@ func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
 
 	if j.Status == "pr_created" || j.Status == "updating" {
 		agentCfg := &agent.Config{
-			APIKeys:      b.Config.APIKeys,
-			TimeoutMins:   b.Config.AgentTimeoutMins,
+			APIKeys:     b.Config.APIKeys,
+			TimeoutMins: b.Config.AgentTimeoutMins,
 		}
 		go job.RunFollowUp(b.ctx, j.ID, msg.Text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, fmt.Sprintf("[%s] Updating...", j.Provider))
@@ -386,7 +386,7 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		}
 		cfg.Agent = "claude"
 		storage.SetUserConfig(b.JobsDB, cfg)
-		keyboard, title := buildModelKeyboard("claude", 0)
+		keyboard, title := buildModelKeyboard("claude", 0, b.Config.APIKeys)
 		msg := tgbotapi.NewMessage(chatID, title)
 		msg.ReplyMarkup = keyboard
 		b.API.Send(msg)
@@ -397,7 +397,7 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		}
 		cfg.Agent = "opencode"
 		storage.SetUserConfig(b.JobsDB, cfg)
-		keyboard, title := buildModelKeyboard("opencode", 0)
+		keyboard, title := buildModelKeyboard("opencode", 0, b.Config.APIKeys)
 		msg := tgbotapi.NewMessage(chatID, title)
 		msg.ReplyMarkup = keyboard
 		b.API.Send(msg)
@@ -530,7 +530,7 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 				agentName := parts[0]
 				var page int
 				fmt.Sscanf(parts[1], "%d", &page)
-				keyboard, title := buildModelKeyboard(agentName, page)
+				keyboard, title := buildModelKeyboard(agentName, page, b.Config.APIKeys)
 				msg := tgbotapi.NewMessage(chatID, title)
 				msg.ReplyMarkup = keyboard
 				b.API.Send(msg)
@@ -878,8 +878,8 @@ func (b *Bot) handleText(chatID int64, text string) {
 		}
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", conv.Data)
 		agentCfg := &agent.Config{
-			APIKeys:      b.Config.APIKeys,
-			TimeoutMins:   b.Config.AgentTimeoutMins,
+			APIKeys:     b.Config.APIKeys,
+			TimeoutMins: b.Config.AgentTimeoutMins,
 		}
 		go job.RunFollowUp(b.ctx, jobID, text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, "Got it, continuing work on the issue...")
@@ -901,8 +901,9 @@ func (b *Bot) handleText(chatID int64, text string) {
 		}
 
 		agentCfg := &agent.Config{
-			APIKeys:     b.Config.APIKeys,
-			TimeoutMins: b.Config.AgentTimeoutMins,
+			APIKeys:          b.Config.APIKeys,
+			TimeoutMins:      b.Config.AgentTimeoutMins,
+			WorkspaceBaseDir: b.Config.WorkspaceDir,
 		}
 
 		b.send(chatID, "Generating implementation plan...")
@@ -963,8 +964,9 @@ func (b *Bot) handleText(chatID int64, text string) {
 		}
 
 		agentCfg := &agent.Config{
-			APIKeys:     b.Config.APIKeys,
-			TimeoutMins: b.Config.AgentTimeoutMins,
+			APIKeys:          b.Config.APIKeys,
+			TimeoutMins:      b.Config.AgentTimeoutMins,
+			WorkspaceBaseDir: b.Config.WorkspaceDir,
 		}
 
 		updatedAnswers := answers
@@ -1544,22 +1546,21 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 	}
 
 	agentCfg := &agent.Config{
-		APIKeys:     b.Config.APIKeys,
-		TimeoutMins: b.Config.AgentTimeoutMins,
+		APIKeys:          b.Config.APIKeys,
+		TimeoutMins:      b.Config.AgentTimeoutMins,
+		WorkspaceBaseDir: b.Config.WorkspaceDir,
 	}
 
 	b.send(chatID, "🔍 Cloning repository for analysis...")
 
-	planWorkspace, cloneErr := os.MkdirTemp("", "akama-plan-*")
+	planWorkspace, cloneErr := os.MkdirTemp(b.Config.WorkspaceDir, "plan-")
 	if cloneErr != nil {
 		b.send(chatID, fmt.Sprintf("❌ Failed to create workspace: %v", cloneErr))
 		return
 	}
 
 	if cloneErr := git.Clone(repoURL, gitToken, planWorkspace, defaultBranch); cloneErr != nil {
-		os.RemoveAll(planWorkspace)
 		log.Printf("[startPlanMode] Failed to clone repo for plan context: %v", cloneErr)
-		planWorkspace = ""
 	}
 
 	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
@@ -1868,20 +1869,18 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 	}
 
 	agentCfg := &agent.Config{
-		APIKeys:     b.Config.APIKeys,
-		TimeoutMins: b.Config.AgentTimeoutMins,
+		APIKeys:          b.Config.APIKeys,
+		TimeoutMins:      b.Config.AgentTimeoutMins,
+		WorkspaceBaseDir: b.Config.WorkspaceDir,
 	}
 
 	b.send(chatID, "🔍 Cloning repository for analysis...")
 
-	planWorkspace, cloneErr := os.MkdirTemp("", "akama-plan-*")
+	planWorkspace, cloneErr := os.MkdirTemp(b.Config.WorkspaceDir, "plan-")
 	if cloneErr != nil {
 		log.Printf("[processMultiIssue] Failed to create workspace: %v", cloneErr)
-		planWorkspace = ""
 	} else if cloneErr := git.Clone(repos[0]["repo_url"].(string), repos[0]["token"].(string), planWorkspace, repos[0]["default_branch"].(string)); cloneErr != nil {
-		os.RemoveAll(planWorkspace)
 		log.Printf("[processMultiIssue] Failed to clone for plan context: %v", cloneErr)
-		planWorkspace = ""
 	}
 
 	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
