@@ -19,6 +19,7 @@ import (
 	"github.com/jullury/akama/internal/config"
 	"github.com/jullury/akama/internal/git"
 	"github.com/jullury/akama/internal/job"
+	"github.com/jullury/akama/internal/metrics"
 	"github.com/jullury/akama/internal/storage"
 )
 
@@ -460,12 +461,8 @@ func (b *Bot) retryJob(chatID int64, jobID int64) {
 		return
 	}
 
-	agentCfg := &agent.Config{
-		APIKeys:     b.Config.APIKeys,
-		TimeoutMins: b.Config.AgentTimeoutMins,
-	}
 	b.send(chatID, fmt.Sprintf("Retrying job #%d: %s", jobID, j.IssueTitle))
-	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
+	job.Run(b.ctx, jobID)
 }
 
 func (b *Bot) doneJob(chatID int64, jobID int64) {
@@ -765,6 +762,10 @@ func (b *Bot) handleVersionCommand(chatID int64) {
 	msg := fmt.Sprintf("Akama %s\nBuild time: %s\nPlatform: %s",
 		config.Version, config.BuildTime, config.BuildPlatform)
 	b.send(chatID, msg)
+}
+
+func (b *Bot) handleMetrics(chatID int64) {
+	b.send(chatID, metrics.Summary())
 }
 
 func (b *Bot) handleRestartCommand(chatID int64) {

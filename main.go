@@ -9,13 +9,17 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jullury/akama/cmd"
+	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/bot"
 	"github.com/jullury/akama/internal/config"
+	"github.com/jullury/akama/internal/crypto"
 	"github.com/jullury/akama/internal/daemon"
 	"github.com/jullury/akama/internal/job"
 	"github.com/jullury/akama/internal/logger"
+	"github.com/jullury/akama/internal/metrics"
 	"github.com/jullury/akama/internal/storage"
 )
 
@@ -40,6 +44,9 @@ func runDaemon() {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Fatalf("Load config: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Invalid config: %v", err)
 	}
 
 	// Set up rotating log writer
@@ -86,6 +93,16 @@ func runDaemon() {
 		log.Printf("recover interrupted jobs: %v", err)
 	}
 
+	keyPath := filepath.Join(filepath.Dir(dbPath), "keyfile")
+	encKey, err := crypto.LoadOrCreateKey(keyPath)
+	if err != nil {
+		log.Fatalf("Load encryption key: %v", err)
+	}
+	storage.SetEncryptionKey(encKey)
+	if err := storage.MigrateTokenEncryption(db); err != nil {
+		log.Printf("migrate token encryption: %v", err)
+	}
+
 	if cfg.AdminUserID != 0 {
 		if err := storage.AddAuthorizedUser(db, cfg.AdminUserID, "admin", cfg.AdminUserID); err != nil {
 			log.Printf("add admin user: %v", err)
@@ -110,7 +127,38 @@ func runDaemon() {
 		cancel()
 	}()
 
+	agentCfg := &agent.Config{
+		APIKeys:     cfg.APIKeys,
+		TimeoutMins: cfg.AgentTimeoutMins,
+	}
+	job.InitScheduler(db, b.API, agentCfg, cfg.WorkspaceDir, cfg.MaxConcurrentJobs)
+
 	log.Println("Starting bot...")
+	go func() {
+		job.CleanOldWorkspaces(cfg.WorkspaceDir, cfg.MaxWorkspaceAgeDays)
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				job.CleanOldWorkspaces(cfg.WorkspaceDir, cfg.MaxWorkspaceAgeDays)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Printf("[metrics] %s", metrics.Summary())
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 	b.RunCtx(ctx)
 
 	log.Println("Waiting for in-flight jobs (30s timeout)...")

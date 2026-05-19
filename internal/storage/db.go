@@ -85,6 +85,11 @@ func migrate(db *sql.DB) error {
 		added_by   INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS meta (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL DEFAULT ''
+	);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return err
@@ -97,6 +102,7 @@ func migrate(db *sql.DB) error {
 	db.Exec(`ALTER TABLE jobs ADD COLUMN group_id TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_group ON jobs(group_id)`)
 	db.Exec(`ALTER TABLE jobs ADD COLUMN plan TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`)
 	return nil
 }
 
@@ -112,6 +118,7 @@ func FindConnectionsByChat(db *sql.DB, chatID int64) ([]*Connection, error) {
 		if err := rows.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken, &c.DefaultBranch); err != nil {
 			return nil, err
 		}
+		c.GitToken = decryptToken(c.GitToken)
 		out = append(out, c)
 	}
 	return out, rows.Err()

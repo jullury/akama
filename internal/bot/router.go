@@ -67,6 +67,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		msg := tgbotapi.NewMessage(chatID, "Show jobs:")
 		msg.ReplyMarkup = keyboard
 		b.API.Send(msg)
+	case strings.HasPrefix(text, "/metrics"):
+		b.handleMetrics(chatID)
 	case strings.HasPrefix(text, "/queue"):
 		b.handleQueue(chatID)
 	case strings.HasPrefix(text, "/status"):
@@ -1498,13 +1500,8 @@ func (b *Bot) proceedWithPlan(chatID int64, conv *storage.Conversation) {
 		return
 	}
 
-	agentCfg := &agent.Config{
-		APIKeys:     b.Config.APIKeys,
-		TimeoutMins: b.Config.AgentTimeoutMins,
-	}
-
 	b.send(chatID, "✅ Plan confirmed! Starting implementation...")
-	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
+	job.Run(b.ctx, jobID)
 }
 
 func (b *Bot) proceedWithMultiPlan(chatID int64, conv *storage.Conversation) {
@@ -1572,13 +1569,8 @@ func (b *Bot) proceedWithMultiPlan(chatID int64, conv *storage.Conversation) {
 		return
 	}
 
-	agentCfg := &agent.Config{
-		APIKeys:     b.Config.APIKeys,
-		TimeoutMins: b.Config.AgentTimeoutMins,
-	}
-
 	b.send(chatID, "✅ Plan confirmed! Starting implementation across all repositories...")
-	job.RunGrouped(b.ctx, groupID, createdIDs, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
+	job.RunGrouped(b.ctx, groupID, createdIDs)
 }
 
 func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultBranch, images string) {
@@ -1661,11 +1653,7 @@ func (b *Bot) continueIssueProcessing(chatID int64, issueURL, gitToken, defaultB
 		return
 	}
 
-	agentCfg := &agent.Config{
-		APIKeys:      b.Config.APIKeys,
-		TimeoutMins:   b.Config.AgentTimeoutMins,
-	}
-	job.Run(b.ctx, jobID, b.JobsDB, b.API, agentCfg, b.Config.WorkspaceDir)
+	job.Run(b.ctx, jobID)
 }
 
 func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[string]interface{}, images string) {

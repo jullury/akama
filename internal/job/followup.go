@@ -252,7 +252,7 @@ func failFollowUp(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg s
 	storage.SetJobStatus(jobsDB, j.ID, "pr_created")
 	storage.ResetConversation(jobsDB, j.ChatID, "telegram")
 	// Check if the failure is auth-related and give specific guidance
-	if provider.IsAuthError(fmt.Errorf(errMsg)) {
+	if provider.IsAuthError(fmt.Errorf("%s", errMsg)) {
 		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
 			"❌ Follow-up failed: authentication error.\n\n"+
 				"Your token for %s may have expired or been revoked.\n"+

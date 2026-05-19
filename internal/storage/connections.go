@@ -15,7 +15,7 @@ type Connection struct {
 
 func SaveConnection(db *sql.DB, chatID int64, provider, repoURL, gitToken, defaultBranch string) error {
 	_, err := db.Exec(`INSERT INTO connections (chat_id, provider, repo_url, git_token, default_branch) VALUES (?, ?, ?, ?, ?)`,
-		chatID, provider, repoURL, gitToken, defaultBranch)
+		chatID, provider, repoURL, encryptToken(gitToken), defaultBranch)
 	return err
 }
 
@@ -32,6 +32,7 @@ func ListConnections(db *sql.DB, chatID int64) ([]*Connection, error) {
 		if err != nil {
 			return nil, err
 		}
+		c.GitToken = decryptToken(c.GitToken)
 		conns = append(conns, c)
 	}
 	return conns, nil
@@ -49,7 +50,11 @@ func GetConnectionByID(db *sql.DB, id int64) (*Connection, error) {
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return c, err
+	if err != nil {
+		return nil, err
+	}
+	c.GitToken = decryptToken(c.GitToken)
+	return c, nil
 }
 
 func UpdateConnectionDefaultBranch(db *sql.DB, chatID int64, repoURL, defaultBranch string) error {
@@ -66,11 +71,15 @@ func FindConnectionByRepo(db *sql.DB, chatID int64, repoURL string) (*Connection
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	return c, err
+	if err != nil {
+		return nil, err
+	}
+	c.GitToken = decryptToken(c.GitToken)
+	return c, nil
 }
 
 func UpdateConnectionToken(db *sql.DB, chatID int64, repoURL, newToken string) error {
 	_, err := db.Exec(`UPDATE connections SET git_token = ? WHERE chat_id = ? AND repo_url = ?`,
-		newToken, chatID, repoURL)
+		encryptToken(newToken), chatID, repoURL)
 	return err
 }

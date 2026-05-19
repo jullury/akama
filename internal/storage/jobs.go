@@ -37,7 +37,7 @@ func CreateJob(db *sql.DB, j *Job) (int64, error) {
 	res, err := db.Exec(`
 		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, default_branch, images, group_id, plan)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, j.GitToken, j.Agent, j.AgentModel, j.DefaultBranch, j.Images, j.GroupID, j.Plan)
+		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, encryptToken(j.GitToken), j.Agent, j.AgentModel, j.DefaultBranch, j.Images, j.GroupID, j.Plan)
 	if err != nil {
 		return 0, fmt.Errorf("create job: %w", err)
 	}
@@ -66,6 +66,7 @@ func scanJob(row *sql.Row) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	j.GitToken = decryptToken(j.GitToken)
 	j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 	j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 	return j, nil
@@ -144,7 +145,7 @@ func SetJobNotifMsgID(db *sql.DB, id int64, msgID int64) error {
 
 func UpdateJobToken(db *sql.DB, id int64, token string) error {
 	_, err := db.Exec(`UPDATE jobs SET git_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		token, id)
+		encryptToken(token), id)
 	return err
 }
 
@@ -171,6 +172,7 @@ func FindJobsByGroupID(db *sql.DB, groupID string) ([]*Job, error) {
 		if err != nil {
 			return nil, err
 		}
+		j.GitToken = decryptToken(j.GitToken)
 		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 		jobs = append(jobs, j)
@@ -240,6 +242,7 @@ func ListJobsByChatIDWithOffset(db *sql.DB, chatID int64, filterStatus string, l
 		if err != nil {
 			return nil, err
 		}
+		j.GitToken = decryptToken(j.GitToken)
 		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 		jobs = append(jobs, j)
@@ -264,6 +267,7 @@ func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
 		if err != nil {
 			return nil, err
 		}
+		j.GitToken = decryptToken(j.GitToken)
 		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 		jobs = append(jobs, j)
@@ -294,6 +298,7 @@ func ListJobs(db *sql.DB, limit, offset int) ([]*Job, error) {
 		if err != nil {
 			return nil, err
 		}
+		j.GitToken = decryptToken(j.GitToken)
 		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 		jobs = append(jobs, j)
@@ -301,11 +306,16 @@ func ListJobs(db *sql.DB, limit, offset int) ([]*Job, error) {
 	return jobs, nil
 }
 
+func GetOldestPendingJob(db *sql.DB) (*Job, error) {
+	row := db.QueryRow(`SELECT ` + jobColumns + ` FROM jobs WHERE status = 'pending' ORDER BY created_at LIMIT 1`)
+	return scanJob(row)
+}
+
 func CreateJobWithPlan(db *sql.DB, j *Job) (int64, error) {
 	res, err := db.Exec(`
 		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, default_branch, images, group_id, plan)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, j.GitToken, j.Agent, j.AgentModel, j.DefaultBranch, j.Images, j.GroupID, j.Plan)
+		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, encryptToken(j.GitToken), j.Agent, j.AgentModel, j.DefaultBranch, j.Images, j.GroupID, j.Plan)
 	if err != nil {
 		return 0, fmt.Errorf("create job with plan: %w", err)
 	}

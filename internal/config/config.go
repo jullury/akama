@@ -23,7 +23,9 @@ type Config struct {
 	DBPath           string `yaml:"db_path"`
 	LogPath          string `yaml:"log_path"`
 	PIDPath          string `yaml:"pid_path"`
-	AdminUserID      int64  `yaml:"admin_user_id"`
+	AdminUserID          int64  `yaml:"admin_user_id"`
+	MaxWorkspaceAgeDays  int    `yaml:"max_workspace_age_days"`
+	MaxConcurrentJobs    int    `yaml:"max_concurrent_jobs"`
 }
 
 // GetAPIKey returns the API key for the given provider, or empty string.
@@ -42,15 +44,30 @@ func (c *Config) SetAPIKey(provider, key string) {
 	c.APIKeys[provider] = key
 }
 
+func (c *Config) Validate() error {
+	if c.TelegramToken == "" {
+		return fmt.Errorf("telegram_token is required")
+	}
+	if c.AgentTimeoutMins <= 0 {
+		return fmt.Errorf("agent_timeout_mins must be greater than 0")
+	}
+	if c.DefaultAgent == "" {
+		return fmt.Errorf("default_agent is required")
+	}
+	return nil
+}
+
 func DefaultConfig() *Config {
 	return &Config{
 		APIKeys:          make(map[string]string),
 		DefaultAgent:     "claude",
 		AgentTimeoutMins: 30,
-		WorkspaceDir:     "~/.akama/workspaces",
-		DBPath:           "~/.akama/akama.db",
-		LogPath:          "~/.akama/akama.log",
-		PIDPath:          "~/.akama/akama.pid",
+		WorkspaceDir:        "~/.akama/workspaces",
+		DBPath:              "~/.akama/akama.db",
+		LogPath:             "~/.akama/akama.log",
+		PIDPath:             "~/.akama/akama.pid",
+		MaxWorkspaceAgeDays: 7,
+		MaxConcurrentJobs:   5,
 	}
 }
 

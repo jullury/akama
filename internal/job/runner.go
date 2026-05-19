@@ -17,6 +17,7 @@ import (
 
 	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/git"
+	"github.com/jullury/akama/internal/metrics"
 	"github.com/jullury/akama/internal/provider"
 	"github.com/jullury/akama/internal/storage"
 )
@@ -27,6 +28,26 @@ var (
 	cancelsMu sync.Mutex
 	cancels   = make(map[int64]context.CancelFunc)
 )
+
+var (
+	pkgDB       *sql.DB
+	pkgBot      *tgbotapi.BotAPI
+	pkgAgentCfg *agent.Config
+	pkgWorkDir  string
+	sem         chan struct{}
+)
+
+// InitScheduler sets package-level state used by Run and RunGrouped.
+// Must be called once before any jobs are started.
+func InitScheduler(db *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string, maxConcurrent int) {
+	pkgDB = db
+	pkgBot = bot
+	pkgAgentCfg = agentCfg
+	pkgWorkDir = workspaceDir
+	if maxConcurrent > 0 {
+		sem = make(chan struct{}, maxConcurrent)
+	}
+}
 
 func registerCancel(jobID int64, cancel context.CancelFunc) {
 	cancelsMu.Lock()
@@ -54,19 +75,39 @@ func CancelJob(jobID int64) bool {
 	return ok
 }
 
-func Run(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
-	jobCtx, cancel := context.WithCancel(ctx)
-	registerCancel(jobID, cancel)
+func Run(ctx context.Context, jobID int64) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		if sem != nil {
+			sem <- struct{}{}
+		}
+		defer func() {
+			if sem != nil {
+				<-sem
+			}
+			maybeStartNextPending(ctx)
+		}()
+		jobCtx, cancel := context.WithCancel(ctx)
+		registerCancel(jobID, cancel)
 		defer deregisterCancel(jobID)
 		defer cancel()
-		runJob(jobCtx, jobID, jobsDB, bot, agentCfg, workspaceDir)
+		runJob(jobCtx, jobID, pkgDB, pkgBot, pkgAgentCfg, pkgWorkDir)
 	}()
 }
 
-func RunGrouped(ctx context.Context, groupID string, jobIDs []int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
+func maybeStartNextPending(ctx context.Context) {
+	if pkgDB == nil {
+		return
+	}
+	j, err := storage.GetOldestPendingJob(pkgDB)
+	if err != nil || j == nil {
+		return
+	}
+	Run(ctx, j.ID)
+}
+
+func RunGrouped(ctx context.Context, groupID string, jobIDs []int64) {
 	groupCtx, cancel := context.WithCancel(ctx)
 	for _, jobID := range jobIDs {
 		registerCancel(jobID, cancel)
@@ -78,11 +119,11 @@ func RunGrouped(ctx context.Context, groupID string, jobIDs []int64, jobsDB *sql
 			deregisterCancel(jobID)
 		}
 		defer cancel()
-		runGrouped(groupCtx, groupID, jobIDs, jobsDB, bot, agentCfg, workspaceDir)
+		runGrouped(groupCtx, groupID, pkgDB, pkgBot, pkgAgentCfg, pkgWorkDir)
 	}()
 }
 
-func runGrouped(ctx context.Context, groupID string, jobIDs []int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
+func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
 	jobs, err := storage.FindJobsByGroupID(jobsDB, groupID)
 	if err != nil || len(jobs) == 0 {
 		log.Printf("runGrouped: no jobs found for group %s: %v", groupID, err)
@@ -136,7 +177,7 @@ func runGrouped(ctx context.Context, groupID string, jobIDs []int64, jobsDB *sql
 		if err := withRetry(ctx, "git clone", 3, func() error {
 			return git.Clone(j.RepoURL, j.GitToken, clonePath, j.DefaultBranch)
 		}); err != nil {
-			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), groupWorkspace)
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err))
 			cloneFailedJobs[j.ID] = true
 			continue
 		}
@@ -186,7 +227,7 @@ Write as a human developer would.
 	promptPath, err := agent.WritePrompt(groupWorkspace, prompt)
 	if err != nil {
 		for _, j := range jobs {
-			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err), groupWorkspace)
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
 		}
 		return
 	}
@@ -219,7 +260,7 @@ Write as a human developer would.
 
 	if agentErr != nil {
 		for _, j := range jobs {
-			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr), groupWorkspace)
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr))
 		}
 		return
 	}
@@ -239,7 +280,7 @@ Write as a human developer would.
 			map[string]interface{}{"job_id": float64(jobs[0].ID)})
 		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(
 			"🤔 Agent needs your input across %d repositories:\n\n%s\n\nJust reply with your answer.",
-			len(jobs), agentText,
+			len(jobs), agent.ExtractQuestion(agentText),
 		))
 		sent, _ := bot.Send(msg)
 		if sent.MessageID != 0 && len(jobs) > 0 {
@@ -268,13 +309,13 @@ Write as a human developer would.
 		branchName := agent.BranchFromCommit(commitMsg, fmt.Sprintf("fix/issue-%s", j.IssueID))
 
 		if err := git.Commit(clonePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
-			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git commit: %v", err), groupWorkspace)
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git commit: %v", err))
 			continue
 		}
 		if err := withRetry(ctx, "git push", 3, func() error {
 			return git.Push(clonePath, branchName, j.GitToken)
 		}); err != nil {
-			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git push: %v", err), groupWorkspace)
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git push: %v", err))
 			continue
 		}
 
@@ -295,7 +336,7 @@ Write as a human developer would.
 			}
 			return e
 		}); err != nil {
-			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err), groupWorkspace)
+			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err))
 			continue
 		}
 
@@ -307,7 +348,7 @@ Write as a human developer would.
 		}
 
 		// Poll CI for this repo
-		go pollCI(ctx, j, branchName, jobsDB, bot)
+		go pollCI(ctx, j, branchName, bot)
 	}
 
 	// Send consolidated notification
@@ -339,6 +380,14 @@ func setupMise(dir string) error {
 }
 
 func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string) {
+	metrics.Global.Started.Add(1)
+	metrics.Global.Active.Add(1)
+	start := time.Now()
+	defer func() {
+		metrics.Global.Active.Add(-1)
+		metrics.Global.TotalDurationMs.Add(time.Since(start).Milliseconds())
+	}()
+
 	j, err := storage.GetJob(jobsDB, jobID)
 	if err != nil {
 		log.Printf("get job %d: %v", jobID, err)
@@ -394,6 +443,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	if err := withRetry(ctx, "git clone", 3, func() error {
 		return git.Clone(j.RepoURL, j.GitToken, workspacePath, j.DefaultBranch)
 	}); err != nil {
+		metrics.Global.Failed.Add(1)
 		failJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), workspacePath)
 		return
 	}
@@ -407,6 +457,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	prompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody)
 	promptPath, err := agent.WritePrompt(workspacePath, prompt)
 	if err != nil {
+		metrics.Global.Failed.Add(1)
 		failJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err), workspacePath)
 		return
 	}
@@ -436,6 +487,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	close(heartbeatStop)
 
 	if agentErr != nil {
+		metrics.Global.Failed.Add(1)
 		failJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr), workspacePath)
 		return
 	}
@@ -451,7 +503,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 			map[string]interface{}{"job_id": jobID})
 		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
 			"🤔 [%s] %s — agent needs your input:\n\n%s\n\nJust reply with your answer.",
-			j.Provider, repoName, agentText,
+			j.Provider, repoName, agent.ExtractQuestion(agentText),
 		))
 		sent, _ := bot.Send(msg)
 		if sent.MessageID != 0 {
@@ -469,12 +521,14 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	commitMsg, prBody := agent.GenerateSummary(ctx, j.Agent, j.AgentModel, workspacePath, j.IssueURL, agentCfg)
 	branchName := agent.BranchFromCommit(commitMsg, fmt.Sprintf("fix/issue-%s", j.IssueID))
 	if err := git.Commit(workspacePath, branchName, j.GitToken, gitName, gitEmail, commitMsg); err != nil {
+		metrics.Global.Failed.Add(1)
 		failJob(jobsDB, bot, j, fmt.Sprintf("git commit: %v", err), workspacePath)
 		return
 	}
 	if err := withRetry(ctx, "git push", 3, func() error {
 		return git.Push(workspacePath, branchName, j.GitToken)
 	}); err != nil {
+		metrics.Global.Failed.Add(1)
 		failJob(jobsDB, bot, j, fmt.Sprintf("git push: %v", err), workspacePath)
 		return
 	}
@@ -496,9 +550,12 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		}
 		return e
 	}); err != nil {
+		metrics.Global.Failed.Add(1)
 		failJob(jobsDB, bot, j, fmt.Sprintf("create PR: %v", err), workspacePath)
 		return
 	}
+
+	metrics.Global.Succeeded.Add(1)
 
 	if err := storage.SetJobPRCreated(jobsDB, jobID, branchName, prURL); err != nil {
 		log.Printf("set pr_created: %v", err)
@@ -519,12 +576,12 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
 		map[string]interface{}{"job_id": jobID})
 
-	go pollCI(ctx, j, branchName, jobsDB, bot)
+	go pollCI(ctx, j, branchName, bot)
 
 	os.Remove(promptPath)
 }
 
-func pollCI(ctx context.Context, j *storage.Job, branch string, jobsDB *sql.DB, bot *tgbotapi.BotAPI) {
+func pollCI(ctx context.Context, j *storage.Job, branch string, bot *tgbotapi.BotAPI) {
 	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 	deadline := time.NewTimer(20 * time.Minute)
@@ -603,7 +660,7 @@ func notifyChunked(bot *tgbotapi.BotAPI, chatID int64, header, body string) {
 
 func failJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, workspacePath string) {
 	storage.SetJobFailed(jobsDB, j.ID, errMsg)
-	err := fmt.Errorf(errMsg)
+	err := fmt.Errorf("%s", errMsg)
 	if provider.IsWorkflowScopeError(err) {
 		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
 			"❌ Job %d failed: the changes include a GitHub Actions workflow file but your token lacks the `workflow` scope.\n\n"+
@@ -626,9 +683,9 @@ func failJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, works
 	os.RemoveAll(workspacePath)
 }
 
-func failGroupedJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, workspacePath string) {
+func failGroupedJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg string) {
 	storage.SetJobFailed(jobsDB, j.ID, errMsg)
-	if provider.IsAuthError(fmt.Errorf(errMsg)) {
+	if provider.IsAuthError(fmt.Errorf("%s", errMsg)) {
 		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
 			"❌ Job %d failed: authentication error for %s.\n\n"+
 				"Your token for %s may have expired or been revoked.\n"+

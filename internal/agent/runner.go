@@ -604,17 +604,20 @@ Be specific and actionable. Do NOT implement the changes — only describe what 
 Do NOT mention AI, bots, or automation tools.`, title, truncated, answers)
 }
 
-// IsQuestion returns true when the agent's last non-empty line ends with "?",
-// indicating it needs user input before proceeding.
 func IsQuestion(text string) bool {
-	lines := strings.Split(text, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" {
-			return strings.HasSuffix(line, "?")
-		}
+	return strings.Contains(text, "INPUT_REQUIRED:")
+}
+
+func ExtractQuestion(text string) string {
+	idx := strings.Index(text, "INPUT_REQUIRED:")
+	if idx == -1 {
+		return text
 	}
-	return false
+	q := strings.TrimSpace(text[idx+len("INPUT_REQUIRED:"):])
+	if nl := strings.Index(q, "\n"); nl != -1 {
+		q = q[:nl]
+	}
+	return strings.TrimSpace(q)
 }
 
 // RunPlanAgent runs the agent to generate plan-related content.
@@ -648,7 +651,8 @@ func RunPlanAgent(ctx context.Context, agentName, model, workspacePath, promptCo
 func WritePrompt(workspacePath, content string) (string, error) {
 	promptPath := filepath.Join(workspacePath, ".akama-prompt.txt")
 	full := InjectedSkillsContent() + content
-	if err := os.WriteFile(promptPath, []byte(full), 0644); err != nil {
+	instruction := "\n\n---\nIf you need to ask the user a question before proceeding, your response must end with exactly:\nINPUT_REQUIRED: <your question here>\nDo not use INPUT_REQUIRED for any other purpose."
+	if err := os.WriteFile(promptPath, []byte(full+instruction), 0644); err != nil {
 		return "", fmt.Errorf("write prompt: %w", err)
 	}
 	return promptPath, nil
