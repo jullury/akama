@@ -1,3 +1,42 @@
+# [3.0.0](https://github.com/jullury/akama/compare/v2.19.0...v3.0.0) (2026-05-19)
+
+
+* feat!: convert to Docker-based architecture with PostgreSQL and semantic knowledge ([73b784c](https://github.com/jullury/akama/commit/73b784c56c06d5e6db239410d79e3e1e7c0598f9))
+
+
+### Features
+
+* add Dockerfile and Docker manager for containerized infrastructure ([bbcbfbf](https://github.com/jullury/akama/commit/bbcbfbfe8bba3e00001ff5b16655eef7eda2246d))
+* add semantic knowledge base for issue similarity retrieval ([627b9e5](https://github.com/jullury/akama/commit/627b9e53a33a550bce9daa316b9fa7cc9d0b9e75))
+* integrate knowledge base into job runner and agent prompt ([0e7b795](https://github.com/jullury/akama/commit/0e7b795490ae891a37f8582a6d3628ae86a5ee49))
+* replace SQLite with PostgreSQL, add pgvector support ([68c64dc](https://github.com/jullury/akama/commit/68c64dca68f06c5ef3629af8207bbbdcd5b852c3))
+
+
+### BREAKING CHANGES
+
+* Akama now runs entirely in Docker containers. Native
+process management (ForkDaemon, PID files, SIGTERM) is replaced with
+Docker lifecycle commands. The daemon/ package is removed.
+
+- Replace SQLite with PostgreSQL (pgvector) running in Docker
+- Add akama-postgres (pgvector/pgvector:pg16), akama-ollama (ollama/ollama),
+  akama-daemon (locally built) containers on akama-net bridge network
+- Add semantic knowledge base: Ollama nomic-embed-text embeddings stored
+  in job_embeddings table with pgvector cosine similarity search
+- Add knowledge retrieval before each agent run (top-3 similar past jobs)
+- Rewrite all CLI commands for Docker lifecycle:
+  akama init  — Docker build + pull + provision phase
+  akama start — ensures infra containers + starts daemon
+  akama stop  — graceful container stop with wait loop
+  akama logs  — docker logs wrapper (--follow/--tail)
+  akama restart — Docker lifecycle restart
+  akama update — rebuild image + restart daemon
+  akama db {start,stop,reset,status} — PostgreSQL management
+  akama migrate — one-shot SQLite to PostgreSQL migration
+- Config: db_path removed, postgres_url and ollama_url added
+- Docker SDK 28.5.2+incompatible for container orchestration
+- modernc.org/sqlite retained for migration tool only
+
 # [2.19.0](https://github.com/jullury/akama/compare/v2.18.0...v2.19.0) (2026-05-19)
 
 
