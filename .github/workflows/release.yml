@@ -116,10 +116,11 @@ jobs:
             ghcr.io/jullury/akama-daemon:latest
             ghcr.io/jullury/akama-daemon:${{ needs.release.outputs.version }}
           build-args: |
-            GITHUB_CLIENT_ID=${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
-            GITHUB_CLIENT_SECRET=${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
-            GITLAB_CLIENT_ID=${{ secrets.OAUTH_GITLAB_CLIENT_ID }}
-            GITLAB_CLIENT_SECRET=${{ secrets.OAUTH_GITLAB_CLIENT_SECRET }}
             VERSION=${{ needs.release.outputs.version }}
             BUILD_TIME=${{ github.event.repository.updated_at }}
             BUILD_PLATFORM=linux/amd64
+          secrets: |
+            github_client_id=${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
+            github_client_secret=${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
+            gitlab_client_id=${{ secrets.OAUTH_GITLAB_CLIENT_ID }}
+            gitlab_client_secret=${{ secrets.OAUTH_GITLAB_CLIENT_SECRET }}
