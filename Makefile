@@ -90,6 +90,9 @@ docker-push:
 	@docker push ghcr.io/jullury/akama-daemon:$(VERSION)
 	@echo "Pushed: ghcr.io/jullury/akama-daemon:$(VERSION)"
 
+# Bare fix to trigger patch release
+# TODO: remove this commit after v3.0.1 is released
+
 clean:
 	rm -f akama
 	rm -rf dist
