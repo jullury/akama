@@ -37,7 +37,11 @@ const (
 )
 
 func NewClient() (*client.Client, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+		client.WithHTTPClient(&http.Client{Timeout: 5 * time.Minute}),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
