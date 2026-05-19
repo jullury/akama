@@ -294,12 +294,13 @@ func parseOpencodeOutput(output string) string {
 	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
-func BuildPrompt(title, url, body string) string {
+func BuildPrompt(title, url, body, knowledgePath string) string {
 	truncated := body
 	if len(body) > 50000 {
 		truncated = body[:50000]
 	}
-	return fmt.Sprintf(`You are a developer fixing an issue in this repository.
+
+	prompt := fmt.Sprintf(`You are a developer fixing an issue in this repository.
 
 Issue Title: %s
 Issue URL:   %s
@@ -311,6 +312,14 @@ Do NOT create pull requests or push branches — that is handled separately.
 Do NOT mention AI, bots, automation, or any tool in code comments.
 Write as a human developer would.
 `, title, url, truncated)
+
+	if knowledgePath != "" {
+		prompt += fmt.Sprintf(`
+Prior art from similar resolved issues is available in %s — read it before implementing.
+`, knowledgePath)
+	}
+
+	return prompt
 }
 
 func BuildFollowUpPrompt(userText string) string {

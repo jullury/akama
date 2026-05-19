@@ -119,7 +119,7 @@ func runDaemon() {
 		APIKeys:     cfg.APIKeys,
 		TimeoutMins: cfg.AgentTimeoutMins,
 	}
-	job.InitScheduler(db, b.API, agentCfg, cfg.WorkspaceDir, cfg.MaxConcurrentJobs, cfg.QuietHoursStart, cfg.QuietHoursEnd)
+	job.InitScheduler(db, b.API, agentCfg, cfg.WorkspaceDir, cfg.MaxConcurrentJobs, cfg.QuietHoursStart, cfg.QuietHoursEnd, cfg.OllamaURL)
 	job.StartLabelPoller(ctx, db, b.API, agentCfg, cfg)
 	job.StartReviewPoller(ctx, db, b.API, agentCfg, cfg)
 

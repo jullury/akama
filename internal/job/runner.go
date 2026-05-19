@@ -17,6 +17,7 @@ import (
 
 	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/git"
+	"github.com/jullury/akama/internal/knowledge"
 	"github.com/jullury/akama/internal/metrics"
 	"github.com/jullury/akama/internal/provider"
 	"github.com/jullury/akama/internal/storage"
@@ -39,10 +40,11 @@ var (
 
 var pkgQuietStart int
 var pkgQuietEnd   int
+var pkgOllamaURL  string
 
 // InitScheduler sets package-level state used by Run and RunGrouped.
 // Must be called once before any jobs are started.
-func InitScheduler(db *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string, maxConcurrent, quietStart, quietEnd int) {
+func InitScheduler(db *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string, maxConcurrent, quietStart, quietEnd int, ollamaURL string) {
 	pkgDB = db
 	pkgBot = bot
 	pkgAgentCfg = agentCfg
@@ -52,6 +54,7 @@ func InitScheduler(db *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, wor
 	}
 	pkgQuietStart = quietStart
 	pkgQuietEnd = quietEnd
+	pkgOllamaURL = ollamaURL
 }
 
 func isQuietHours() bool {
@@ -222,6 +225,18 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 		truncated = issueBody[:50000]
 	}
 
+	var knowledgePath string
+	if pkgOllamaURL != "" {
+		similarJobs, err := knowledge.FindSimilar(ctx, pkgDB, pkgOllamaURL,
+			issueTitle+"\n"+issueBody, 3)
+		if err != nil {
+			log.Printf("knowledge lookup for group %s: %v", groupID, err)
+		}
+		if len(similarJobs) > 0 {
+			knowledgePath, _ = knowledge.WriteKnowledgeFile(groupWorkspace, similarJobs)
+		}
+	}
+
 	prompt := fmt.Sprintf(`You are a developer fixing an issue across %d repositories.
 
 The workspace contains the following repositories as subdirectories:
@@ -239,6 +254,10 @@ Do NOT create pull requests or push branches — that is handled separately.
 Do NOT mention AI, bots, automation, or any tool in code comments.
 Write as a human developer would.
 `, len(jobs), strings.Join(repoList, "\n"), issueTitle, issueURL, truncated)
+
+	if knowledgePath != "" {
+		prompt += fmt.Sprintf("\nPrior art from similar resolved issues is available in %s — read it before implementing.\n", filepath.Base(knowledgePath))
+	}
 
 	promptPath, err := agent.WritePrompt(groupWorkspace, prompt)
 	if err != nil {
@@ -359,6 +378,13 @@ Write as a human developer would.
 		storage.SetJobPRCreated(jobsDB, j.ID, branchName, prURL)
 		prURLs = append(prURLs, fmt.Sprintf("[%s] %s — %s", j.Provider, repoName, prURL))
 
+		// Embed completed job asynchronously
+		go func(jobRef storage.Job) {
+			if pkgOllamaURL != "" {
+				knowledge.EmbedJob(context.Background(), pkgDB, pkgOllamaURL, jobRef)
+			}
+		}(*j)
+
 		if diffStat != "" {
 			notify(bot, chatID, fmt.Sprintf("[%s] %s diff:\n%s", j.Provider, repoName, diffStat))
 		}
@@ -382,6 +408,9 @@ Write as a human developer would.
 		map[string]interface{}{"job_id": float64(jobs[0].ID)})
 
 	os.Remove(promptPath)
+	if knowledgePath != "" {
+		os.Remove(knowledgePath)
+	}
 }
 
 func setupMise(dir string) error {
@@ -479,7 +508,19 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 
 	notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] %s — running AI agent on: %s", j.Provider, repoName, j.IssueTitle))
 
-	prompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody)
+	var knowledgePath string
+	if pkgOllamaURL != "" {
+		similarJobs, err := knowledge.FindSimilar(ctx, pkgDB, pkgOllamaURL,
+			j.IssueTitle+"\n"+j.IssueBody, 3)
+		if err != nil {
+			log.Printf("knowledge lookup for job %d: %v", jobID, err)
+		}
+		if len(similarJobs) > 0 {
+			knowledgePath, _ = knowledge.WriteKnowledgeFile(workspacePath, similarJobs)
+		}
+	}
+
+	prompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody, filepath.Base(knowledgePath))
 	promptPath, err := agent.WritePrompt(workspacePath, prompt)
 	if err != nil {
 		metrics.Global.Failed.Add(1)
@@ -606,6 +647,18 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	go pollCI(ctx, j, branchName, bot)
 
 	os.Remove(promptPath)
+	if knowledgePath != "" {
+		os.Remove(knowledgePath)
+	}
+
+	go func() {
+		if pkgOllamaURL != "" {
+			updated, err := storage.GetJob(pkgDB, jobID)
+			if err == nil {
+				knowledge.EmbedJob(context.Background(), pkgDB, pkgOllamaURL, *updated)
+			}
+		}
+	}()
 }
 
 func pollCI(ctx context.Context, j *storage.Job, branch string, bot *tgbotapi.BotAPI) {
