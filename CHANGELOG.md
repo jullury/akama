@@ -1,3 +1,10 @@
+## [3.0.1](https://github.com/jullury/akama/compare/v3.0.0...v3.0.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* trigger patch release ([6bf5901](https://github.com/jullury/akama/commit/6bf590113fea61d3e97d0bba832444dfe2287e08))
+
 # [3.0.0](https://github.com/jullury/akama/compare/v2.19.0...v3.0.0) (2026-05-19)
 
 
