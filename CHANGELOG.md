@@ -1,3 +1,10 @@
+## [3.0.4](https://github.com/jullury/akama/compare/v3.0.3...v3.0.4) (2026-05-19)
+
+
+### Bug Fixes
+
+* increase Docker client timeout to 5m for image pulls ([845b785](https://github.com/jullury/akama/commit/845b78519018dc12f96e8fcecd69889e763ecbbe))
+
 ## [3.0.3](https://github.com/jullury/akama/compare/v3.0.2...v3.0.3) (2026-05-19)
 
 
