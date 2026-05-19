@@ -1,3 +1,10 @@
+# [2.18.0](https://github.com/jullury/akama/compare/v2.17.0...v2.18.0) (2026-05-19)
+
+
+### Features
+
+* security, reliability, observability, and test coverage improvements ([0155cd3](https://github.com/jullury/akama/commit/0155cd3913d348e2c5e6715e63a3fed88bc11e4b))
+
 # [2.17.0](https://github.com/jullury/akama/compare/v2.16.3...v2.17.0) (2026-05-18)
 
 
