@@ -1,3 +1,10 @@
+## [3.0.2](https://github.com/jullury/akama/compare/v3.0.1...v3.0.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* use Docker build secrets instead of ARG for OAuth credentials ([08e1dc0](https://github.com/jullury/akama/commit/08e1dc0398ee7035f2152449ba7fb6da53a1898a))
+
 ## [3.0.1](https://github.com/jullury/akama/compare/v3.0.0...v3.0.1) (2026-05-19)
 
 
