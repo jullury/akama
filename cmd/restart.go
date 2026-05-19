@@ -1,18 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/jullury/akama/internal/config"
-	"github.com/jullury/akama/internal/daemon"
+	docker "github.com/jullury/akama/internal/docker"
 	"github.com/spf13/cobra"
 )
 
 var restartCmd = &cobra.Command{
 	Use:   "restart",
-	Short: "Stop and restart daemon",
+	Short: "Restart the daemon container",
 	Run:   runRestart,
 }
 
@@ -27,50 +27,27 @@ func runRestart(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if !daemon.IsRunning(cfg.PIDPath) {
-		fmt.Println("akama is not running, starting fresh...")
-		pid, err := daemon.ForkDaemon()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("akama daemon started (pid %d)\n", pid)
-		return
-	}
-
-	pid, err := daemon.ReadPID(cfg.PIDPath)
+	ctx := context.Background()
+	dcli, err := docker.NewClient()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "akama is not running")
+		fmt.Fprintf(os.Stderr, "Connect to Docker: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("Stopping daemon...")
-	if err := daemon.StopDaemon(cfg.PIDPath); err != nil {
-		fmt.Fprintf(os.Stderr, "Stop daemon: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Waiting for daemon (pid %d) to stop...\n", pid)
-	deadline := time.After(35 * time.Second)
-	for {
-		select {
-		case <-deadline:
-			fmt.Fprintln(os.Stderr, "timed out waiting for daemon to exit")
+	status, _ := docker.ContainerStatus(ctx, dcli, docker.DaemonContainer)
+	if status == "running" {
+		fmt.Println("Stopping daemon...")
+		if err := docker.StopContainer(ctx, dcli, docker.DaemonContainer); err != nil {
+			fmt.Fprintf(os.Stderr, "Stop daemon: %v\n", err)
 			os.Exit(1)
-		case <-time.After(300 * time.Millisecond):
-			if !daemon.IsProcessAlive(pid) {
-				fmt.Println("Daemon stopped")
-				goto start
-			}
 		}
 	}
 
-start:
 	fmt.Println("Starting daemon...")
-	newPid, err := daemon.ForkDaemon()
-	if err != nil {
+	if err := docker.EnsureDaemonContainer(ctx, dcli, cfg.WorkspaceDir, cfgPath, cfg.LogPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("akama daemon started (pid %d)\n", newPid)
+
+	fmt.Println("akama daemon restarted.")
 }

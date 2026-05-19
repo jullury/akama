@@ -1,18 +1,18 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/jullury/akama/internal/config"
-	"github.com/jullury/akama/internal/daemon"
+	docker "github.com/jullury/akama/internal/docker"
 	"github.com/spf13/cobra"
 )
 
 var stopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Send SIGTERM to daemon via PID file",
+	Short: "Stop the daemon container gracefully",
 	Run:   runStop,
 }
 
@@ -21,32 +21,42 @@ func init() {
 }
 
 func runStop(cmd *cobra.Command, args []string) {
-	cfg, err := config.Load(cfgPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+
+	dcli, err := docker.NewClient()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Load config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Connect to Docker: %v\n", err)
 		os.Exit(1)
 	}
 
-	pid, err := daemon.ReadPID(cfg.PIDPath)
+	status, err := docker.ContainerStatus(ctx, dcli, docker.DaemonContainer)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "akama is not running")
+		fmt.Fprintf(os.Stderr, "Check daemon: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := daemon.StopDaemon(cfg.PIDPath); err != nil {
+	if status != "running" {
+		fmt.Println("akama daemon is not running")
+		return
+	}
+
+	fmt.Println("Stopping akama daemon...")
+	if err := docker.StopContainer(ctx, dcli, docker.DaemonContainer); err != nil {
 		fmt.Fprintf(os.Stderr, "Stop daemon: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("akama daemon stopping (pid %d), waiting...\n", pid)
-	deadline := time.After(35 * time.Second)
+	// Wait for container to stop
+	deadline := time.After(30 * time.Second)
 	for {
 		select {
 		case <-deadline:
-			fmt.Fprintln(os.Stderr, "timed out waiting for daemon to exit")
+			fmt.Fprintln(os.Stderr, "timed out waiting for daemon to stop")
 			os.Exit(1)
-		case <-time.After(300 * time.Millisecond):
-			if !daemon.IsProcessAlive(pid) {
+		case <-time.After(500 * time.Millisecond):
+			s, _ := docker.ContainerStatus(ctx, dcli, docker.DaemonContainer)
+			if s != "running" {
 				fmt.Println("akama daemon stopped")
 				return
 			}

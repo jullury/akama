@@ -18,13 +18,24 @@ func Open(postgresURL string) (*sql.DB, error) {
 	if _, err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector"); err != nil {
 		return nil, fmt.Errorf("enable vector extension: %w", err)
 	}
-	if err := migrate(db); err != nil {
+	if err := Migrate(db); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return db, nil
 }
 
-func migrate(db *sql.DB) error {
+func OpenNoMigrate(postgresURL string) (*sql.DB, error) {
+	db, err := sql.Open("pgx", postgresURL)
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("ping db: %w", err)
+	}
+	return db, nil
+}
+
+func Migrate(db *sql.DB) error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS jobs (
 		id                  BIGSERIAL PRIMARY KEY,

@@ -1,18 +1,19 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/jullury/akama/internal/config"
-	"github.com/jullury/akama/internal/daemon"
+	docker "github.com/jullury/akama/internal/docker"
 	"github.com/jullury/akama/internal/storage"
 	"github.com/spf13/cobra"
 )
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show running/stopped + active job count",
+	Short: "Show daemon, database, and job status",
 	Run:   runStatus,
 }
 
@@ -27,24 +28,35 @@ func runStatus(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	if !daemon.IsRunning(cfg.PIDPath) {
-		fmt.Println("stopped")
-		return
-	}
-
-	pid, _ := daemon.ReadPID(cfg.PIDPath)
-	db, err := storage.Open(cfg.PostgresURL)
+	dcli, err := docker.NewClient()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Open DB: %v\n", err)
-		os.Exit(1)
-	}
-	defer db.Close()
-
-	count, err := storage.CountActiveJobs(db)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Count jobs: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Connect to Docker: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("running (pid %d), %d active jobs\n", pid, count)
+	daemonStatus, _ := docker.ContainerStatus(context.Background(), dcli, docker.DaemonContainer)
+	postgresStatus, _ := docker.ContainerStatus(context.Background(), dcli, docker.PostgresContainer)
+	ollamaStatus, _ := docker.ContainerStatus(context.Background(), dcli, docker.OllamaContainer)
+
+	fmt.Printf("daemon:    %s\n", daemonStatus)
+	fmt.Printf("postgres:  %s\n", postgresStatus)
+	fmt.Printf("ollama:    %s\n", ollamaStatus)
+
+	if daemonStatus == "running" {
+		db, err := storage.Open(cfg.PostgresURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Open DB: %v\n", err)
+			return
+		}
+		defer db.Close()
+
+		count, err := storage.CountActiveJobs(db)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Count jobs: %v\n", err)
+			return
+		}
+		fmt.Printf("active jobs: %d\n", count)
+	} else {
+		fmt.Println("active jobs: 0 (daemon not running)")
+	}
 }

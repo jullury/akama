@@ -1,18 +1,21 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/config"
-	"github.com/jullury/akama/internal/daemon"
+	docker "github.com/jullury/akama/internal/docker"
 	"github.com/spf13/cobra"
 )
 
 var startCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Fork daemon to background",
+	Short: "Start the daemon container and ensure infrastructure is running",
 	Run:   runStart,
 }
 
@@ -35,24 +38,56 @@ func runStart(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	if err := daemon.ClaimPIDFile(cfg.PIDPath, os.Getpid()); err != nil {
-		// O_EXCL + O_CREATE fails when the file already exists, meaning
-		// a daemon PID is already claimed. This avoids the TOCTOU race
-		// between IsRunning() and ForkDaemon().
-		if os.IsExist(err) {
-			fmt.Fprintln(os.Stderr, "akama is already running")
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "Write PID: %v\n", err)
-		os.Exit(1)
-	}
-
-	pid, err := daemon.ForkDaemon()
+	ctx := context.Background()
+	dcli, err := docker.NewClient()
 	if err != nil {
-		os.Remove(cfg.PIDPath)
-		fmt.Fprintf(os.Stderr, "Start daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Connect to Docker: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("akama daemon started (pid %d)\n", pid)
+	dockerClient := dcli
+
+	// Ensure network and infrastructure containers are running
+	if err := docker.EnsureNetwork(ctx, dockerClient); err != nil {
+		fmt.Fprintf(os.Stderr, "Ensure network: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := docker.EnsurePostgresContainer(ctx, dockerClient, "5432"); err != nil {
+		fmt.Fprintf(os.Stderr, "Ensure postgres: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := docker.EnsureOllamaContainer(ctx, dockerClient); err != nil {
+		fmt.Fprintf(os.Stderr, "Ensure ollama: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Build and start daemon container
+	homeDir, _ := os.UserHomeDir()
+	workspaceDir := cfg.WorkspaceDir
+	if strings.HasPrefix(workspaceDir, "~/") {
+		workspaceDir = filepath.Join(homeDir, workspaceDir[2:])
+	}
+	os.MkdirAll(workspaceDir, 0700)
+
+	configPath := cfgPath
+	if strings.HasPrefix(configPath, "~/") {
+		configPath = filepath.Join(homeDir, configPath[2:])
+	}
+
+	logDir := filepath.Join(filepath.Dir(cfg.LogPath), "logs")
+
+	// Build image if not present
+	if err := docker.BuildImage(ctx, dockerClient, "Dockerfile", docker.DaemonImage, nil, nil); err != nil {
+		fmt.Fprintf(os.Stderr, "Build daemon image: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := docker.EnsureDaemonContainer(ctx, dockerClient, workspaceDir, configPath, logDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Ensure daemon: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("akama daemon started.")
 }

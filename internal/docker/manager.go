@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,6 +31,8 @@ const (
 	OllamaImage        = "ollama/ollama"
 	DaemonImage        = "akama-daemon:latest"
 	PostgresURL        = "postgres://akama:akama@akama-postgres:5432/akama"
+	PostgresHostURL    = "postgres://akama:akama@127.0.0.1"
+	PostgresHostPort   = "5432"
 	OllamaURL          = "http://akama-ollama:11434"
 )
 
@@ -341,8 +344,7 @@ func RemoveVolume(ctx context.Context, cli *client.Client, volumeName string) er
 	return cli.VolumeRemove(ctx, volumeName, true)
 }
 
-func WaitHealthy(ctx context.Context, cli *client.Client, containerName string, checkFn func(context.Context) error, timeout time.Duration) error {
-	deadline := time.After(timeout)
+func WaitHealthy(ctx context.Context, cli *client.Client, containerName string, checkFn func(context.Context) error) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -350,8 +352,6 @@ func WaitHealthy(ctx context.Context, cli *client.Client, containerName string, 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deadline:
-			return fmt.Errorf("timeout waiting for %s to become healthy", containerName)
 		case <-ticker.C:
 			if err := checkFn(ctx); err == nil {
 				return nil
@@ -411,6 +411,31 @@ func EnsureContainers(ctx context.Context, cli *client.Client, hostWorkspaceDir,
 	if err := EnsureDaemonContainer(ctx, cli, hostWorkspaceDir, configPath, logDir); err != nil {
 		return err
 	}
+	return nil
+}
+
+func ContainerLogs(ctx context.Context, cli *client.Client, name string, follow bool, tail string) (io.ReadCloser, error) {
+	options := container.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     follow,
+	}
+	if tail != "" && tail != "all" {
+		options.Tail = tail
+	}
+	return cli.ContainerLogs(ctx, name, options)
+}
+
+func CheckHTTP(ctx context.Context, url string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
 	return nil
 }
 
