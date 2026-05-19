@@ -1,3 +1,10 @@
+## [3.1.3](https://github.com/jullury/akama/compare/v3.1.2...v3.1.3) (2026-05-19)
+
+
+### Bug Fixes
+
+* case-insensitive clarifying question parsing, add Docker build cache ([fb38dae](https://github.com/jullury/akama/commit/fb38dae2b03b9512c872abde98e6033682077ebd))
+
 ## [3.1.2](https://github.com/jullury/akama/compare/v3.1.1...v3.1.2) (2026-05-19)
 
 
