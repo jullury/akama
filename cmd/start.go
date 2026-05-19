@@ -156,7 +156,7 @@ func ensureImages(dcli *dockerclient.Client) {
 		fmt.Fprintf(os.Stderr, "Get executable path: %v\n", err)
 		os.Exit(1)
 	}
-	if err := docker.BuildDaemonImage(ctx, dcli, exePath, os.Stdout); err != nil {
+	if err := docker.BuildDaemonImage(ctx, dcli, exePath, config.Version, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "Build daemon image: %v\n", err)
 		os.Exit(1)
 	}

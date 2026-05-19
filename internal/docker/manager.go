@@ -482,12 +482,13 @@ ENTRYPOINT ["akama", "--daemon"]
 
 // BuildDaemonImage cross-compiles the daemon for Linux, then packages it into
 // the akama-daemon Docker image. binaryPath is used only to locate the project root.
-func BuildDaemonImage(ctx context.Context, cli *client.Client, binaryPath string, out io.Writer) error {
+// version is baked into the binary via ldflags; pass "" to use "dev".
+func BuildDaemonImage(ctx context.Context, cli *client.Client, binaryPath, version string, out io.Writer) error {
 	if out == nil {
 		out = io.Discard
 	}
 	fmt.Fprintln(out, "Cross-compiling daemon for Linux...")
-	linuxBin, cleanup, err := crossCompileForLinux(binaryPath)
+	linuxBin, cleanup, err := crossCompileForLinux(binaryPath, version)
 	if err != nil {
 		return fmt.Errorf("cross-compile: %w", err)
 	}
@@ -543,7 +544,7 @@ func BuildDaemonImage(ctx context.Context, cli *client.Client, binaryPath string
 // Linux. It reads OAuth credentials from the .env file in the project root (if
 // present) so the resulting binary has the same baked-in credentials as a
 // make build. Returns the path of the compiled binary and a cleanup function.
-func crossCompileForLinux(binaryPath string) (string, func(), error) {
+func crossCompileForLinux(binaryPath, version string) (string, func(), error) {
 	projectRoot, err := findProjectRoot(binaryPath)
 	if err != nil {
 		return "", nil, err
@@ -556,7 +557,7 @@ func crossCompileForLinux(binaryPath string) (string, func(), error) {
 	tmp.Close()
 	cleanup := func() { os.Remove(tmp.Name()) }
 
-	ldflags := daemonLDFlags(projectRoot)
+	ldflags := daemonLDFlags(projectRoot, version)
 	args := []string{"build", "-o", tmp.Name(), "-trimpath", "-ldflags", ldflags, "."}
 
 	cmd := exec.Command("go", args...)
@@ -589,23 +590,22 @@ func findProjectRoot(binaryPath string) (string, error) {
 
 // daemonLDFlags builds the -ldflags string for the daemon binary, reading
 // OAuth credentials from .env in the project root when present.
-func daemonLDFlags(projectRoot string) string {
+func daemonLDFlags(projectRoot, version string) string {
 	env := parseDotEnv(filepath.Join(projectRoot, ".env"))
 	const pkg = "github.com/jullury/akama/internal/config"
-	pairs := [][2]string{
+	var flags []string
+	for _, p := range [][2]string{
 		{"GITHUB_CLIENT_ID", pkg + ".GitHubClientID"},
 		{"GITHUB_CLIENT_SECRET", pkg + ".GitHubClientSecret"},
 		{"GITLAB_CLIENT_ID", pkg + ".GitLabClientID"},
 		{"GITLAB_CLIENT_SECRET", pkg + ".GitLabClientSecret"},
-	}
-	var flags []string
-	for _, p := range pairs {
+	} {
 		if v := env[p[0]]; v != "" {
 			flags = append(flags, fmt.Sprintf("-X %s=%s", p[1], v))
 		}
 	}
-	if len(flags) == 0 {
-		return ""
+	if version != "" && version != "dev" {
+		flags = append(flags, fmt.Sprintf("-X %s.Version=%s", pkg, version))
 	}
 	return strings.Join(flags, " ")
 }
