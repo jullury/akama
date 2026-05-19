@@ -185,6 +185,38 @@ func GetDefaultBranch(repoURL, token, providerName string) string {
 	return branch
 }
 
+// IssueRef holds minimal information about an issue returned by label queries.
+type IssueRef struct {
+	URL   string
+	Title string
+	ID    string
+}
+
+// ListIssuesByLabel returns issues that have the given label updated since the
+// given time, for the repository identified by repoURL.
+func ListIssuesByLabel(repoURL, token, label string, since time.Time, providerName string) ([]IssueRef, error) {
+	switch providerName {
+	case "github":
+		return ListGitHubIssuesByLabel(repoURL, token, label, since)
+	case "gitlab":
+		return ListGitLabIssuesByLabel(repoURL, token, label, since)
+	default:
+		return nil, nil
+	}
+}
+
+// GetPRReviewsSince returns new review comments on a PR/MR since the given time.
+func GetPRReviewsSince(prURL, token, providerName string, since time.Time) (string, error) {
+	switch providerName {
+	case "github":
+		return GetGitHubPRReviewsSince(prURL, token, since)
+	case "gitlab":
+		return GetGitLabMRNotesSince(prURL, token, since)
+	default:
+		return "", nil
+	}
+}
+
 // IsWorkflowScopeError returns true when GitHub rejects a push because the
 // token lacks the `workflow` scope (needed to modify .github/workflows/ files).
 func IsWorkflowScopeError(err error) bool {

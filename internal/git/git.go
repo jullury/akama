@@ -168,3 +168,12 @@ func DiffStat(repoPath string) string {
 	}
 	return strings.TrimSpace(string(out))
 }
+
+func Diff(repoPath string) string {
+	cmd := exec.Command("git", "-C", repoPath, "diff", "HEAD~1", "--no-color")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}

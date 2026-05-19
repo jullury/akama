@@ -37,9 +37,12 @@ var (
 	sem         chan struct{}
 )
 
+var pkgQuietStart int
+var pkgQuietEnd   int
+
 // InitScheduler sets package-level state used by Run and RunGrouped.
 // Must be called once before any jobs are started.
-func InitScheduler(db *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string, maxConcurrent int) {
+func InitScheduler(db *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, workspaceDir string, maxConcurrent, quietStart, quietEnd int) {
 	pkgDB = db
 	pkgBot = bot
 	pkgAgentCfg = agentCfg
@@ -47,6 +50,19 @@ func InitScheduler(db *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, wor
 	if maxConcurrent > 0 {
 		sem = make(chan struct{}, maxConcurrent)
 	}
+	pkgQuietStart = quietStart
+	pkgQuietEnd = quietEnd
+}
+
+func isQuietHours() bool {
+	if pkgQuietStart == pkgQuietEnd {
+		return false
+	}
+	h := time.Now().Hour()
+	if pkgQuietStart < pkgQuietEnd {
+		return h >= pkgQuietStart && h < pkgQuietEnd
+	}
+	return h >= pkgQuietStart || h < pkgQuietEnd
 }
 
 func registerCancel(jobID int64, cancel context.CancelFunc) {
@@ -395,6 +411,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}
 
 	// Refresh git token from connection so retried jobs pick up a refreshed token.
+	var connAgent, connAgentModel string
 	if conn, err := storage.FindConnectionByRepo(jobsDB, j.ChatID, j.RepoURL); err == nil && conn != nil {
 		if conn.GitToken != j.GitToken {
 			log.Printf("[runJob] Refreshing token from connection for job %d", jobID)
@@ -403,6 +420,8 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 				log.Printf("[runJob] Failed to update job token: %v", err)
 			}
 		}
+		connAgent = conn.Agent
+		connAgentModel = conn.AgentModel
 	}
 
 	userCfg, err := storage.GetUserConfig(jobsDB, j.ChatID)
@@ -419,6 +438,12 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		if userCfg.AgentModel != "" {
 			j.AgentModel = userCfg.AgentModel
 		}
+	}
+	if connAgent != "" {
+		j.Agent = connAgent
+	}
+	if connAgentModel != "" {
+		j.AgentModel = connAgentModel
 	}
 
 	repoPath, _ := url.Parse(j.RepoURL)
@@ -567,10 +592,12 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}
 	msgText += fmt.Sprintf("\n\nReply for follow-up or /done %d", jobID)
 
-	msg := tgbotapi.NewMessage(j.ChatID, msgText)
-	sent, _ := bot.Send(msg)
-	if sent.MessageID != 0 {
-		storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
+	if !isQuietHours() {
+		msg := tgbotapi.NewMessage(j.ChatID, msgText)
+		sent, _ := bot.Send(msg)
+		if sent.MessageID != 0 {
+			storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
+		}
 	}
 
 	storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
@@ -660,25 +687,27 @@ func notifyChunked(bot *tgbotapi.BotAPI, chatID int64, header, body string) {
 
 func failJob(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg, workspacePath string) {
 	storage.SetJobFailed(jobsDB, j.ID, errMsg)
-	err := fmt.Errorf("%s", errMsg)
-	if provider.IsWorkflowScopeError(err) {
-		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
-			"❌ Job %d failed: the changes include a GitHub Actions workflow file but your token lacks the `workflow` scope.\n\n"+
-				"Use /connect to re-authenticate (the new token will include workflow permissions), then /retry %d.",
-			j.ID, j.ID,
-		))
-		bot.Send(msg)
-	} else if provider.IsAuthError(err) {
-		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
-			"❌ Job %d failed: authentication error.\n\n"+
-				"Your token for %s may have expired or been revoked.\n"+
-				"Use /connect to refresh your token, then /retry %d to try again.",
-			j.ID, j.Provider, j.ID,
-		))
-		bot.Send(msg)
-	} else {
-		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Job %d failed: %s\n\nUse /logs %d to view details.", j.ID, errMsg, j.ID))
-		bot.Send(msg)
+	if !isQuietHours() {
+		err := fmt.Errorf("%s", errMsg)
+		if provider.IsWorkflowScopeError(err) {
+			msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
+				"❌ Job %d failed: the changes include a GitHub Actions workflow file but your token lacks the `workflow` scope.\n\n"+
+					"Use /connect to re-authenticate (the new token will include workflow permissions), then /retry %d.",
+				j.ID, j.ID,
+			))
+			bot.Send(msg)
+		} else if provider.IsAuthError(err) {
+			msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
+				"❌ Job %d failed: authentication error.\n\n"+
+					"Your token for %s may have expired or been revoked.\n"+
+					"Use /connect to refresh your token, then /retry %d to try again.",
+				j.ID, j.Provider, j.ID,
+			))
+			bot.Send(msg)
+		} else {
+			msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("❌ Job %d failed: %s\n\nUse /logs %d to view details.", j.ID, errMsg, j.ID))
+			bot.Send(msg)
+		}
 	}
 	os.RemoveAll(workspacePath)
 }

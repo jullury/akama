@@ -103,11 +103,15 @@ func migrate(db *sql.DB) error {
 	db.Exec(`CREATE INDEX IF NOT EXISTS idx_jobs_group ON jobs(group_id)`)
 	db.Exec(`ALTER TABLE jobs ADD COLUMN plan TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`)
+	db.Exec(`ALTER TABLE connections ADD COLUMN agent TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE connections ADD COLUMN agent_model TEXT NOT NULL DEFAULT ''`)
+	db.Exec(`ALTER TABLE connections ADD COLUMN last_polled_at DATETIME`)
+	db.Exec(`ALTER TABLE jobs ADD COLUMN last_review_check_at DATETIME`)
 	return nil
 }
 
 func FindConnectionsByChat(db *sql.DB, chatID int64) ([]*Connection, error) {
-	rows, err := db.Query(`SELECT id, chat_id, provider, repo_url, git_token, default_branch FROM connections WHERE chat_id = ? ORDER BY id`, chatID)
+	rows, err := db.Query(`SELECT id, chat_id, provider, repo_url, git_token, default_branch, agent, agent_model, last_polled_at FROM connections WHERE chat_id = ? ORDER BY id`, chatID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,10 +119,14 @@ func FindConnectionsByChat(db *sql.DB, chatID int64) ([]*Connection, error) {
 	var out []*Connection
 	for rows.Next() {
 		c := &Connection{}
-		if err := rows.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken, &c.DefaultBranch); err != nil {
+		var lastPolled sql.NullTime
+		if err := rows.Scan(&c.ID, &c.ChatID, &c.Provider, &c.RepoURL, &c.GitToken, &c.DefaultBranch, &c.Agent, &c.AgentModel, &lastPolled); err != nil {
 			return nil, err
 		}
 		c.GitToken = decryptToken(c.GitToken)
+		if lastPolled.Valid {
+			c.LastPolledAt = &lastPolled.Time
+		}
 		out = append(out, c)
 	}
 	return out, rows.Err()

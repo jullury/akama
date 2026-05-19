@@ -27,10 +27,11 @@ type Job struct {
 	AgentOutput       string
 	DefaultBranch     string
 	Images            string
-	GroupID           string
-	Plan              string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	GroupID            string
+	Plan               string
+	LastReviewCheckAt  *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 func CreateJob(db *sql.DB, j *Job) (int64, error) {
@@ -44,7 +45,7 @@ func CreateJob(db *sql.DB, j *Job) (int64, error) {
 	return res.LastInsertId()
 }
 
-const jobColumns = `id, chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, status, workspace_path, branch_name, pr_url, notification_msg_id, error_msg, agent_output, default_branch, images, group_id, plan, created_at, updated_at`
+const jobColumns = `id, chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, status, workspace_path, branch_name, pr_url, notification_msg_id, error_msg, agent_output, default_branch, images, group_id, plan, created_at, updated_at, last_review_check_at`
 
 func GetJob(db *sql.DB, id int64) (*Job, error) {
 	row := db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE id = ?`, id)
@@ -59,16 +60,20 @@ func GetJobByNotifMsgID(db *sql.DB, notifMsgID int64) (*Job, error) {
 func scanJob(row *sql.Row) (*Job, error) {
 	j := &Job{}
 	var createdAt, updatedAt string
+	var lastReview sql.NullTime
 	err := row.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 		&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 		&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-		&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt)
+		&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
 	if err != nil {
 		return nil, err
 	}
 	j.GitToken = decryptToken(j.GitToken)
 	j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 	j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	if lastReview.Valid {
+		j.LastReviewCheckAt = &lastReview.Time
+	}
 	return j, nil
 }
 
@@ -165,16 +170,20 @@ func FindJobsByGroupID(db *sql.DB, groupID string) ([]*Job, error) {
 	for rows.Next() {
 		j := &Job{}
 		var createdAt, updatedAt string
+		var lastReview sql.NullTime
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}
 		j.GitToken = decryptToken(j.GitToken)
 		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if lastReview.Valid {
+			j.LastReviewCheckAt = &lastReview.Time
+		}
 		jobs = append(jobs, j)
 	}
 	return jobs, nil
@@ -235,16 +244,20 @@ func ListJobsByChatIDWithOffset(db *sql.DB, chatID int64, filterStatus string, l
 	for rows.Next() {
 		j := &Job{}
 		var createdAt, updatedAt string
+		var lastReview sql.NullTime
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}
 		j.GitToken = decryptToken(j.GitToken)
 		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if lastReview.Valid {
+			j.LastReviewCheckAt = &lastReview.Time
+		}
 		jobs = append(jobs, j)
 	}
 	return jobs, nil
@@ -260,16 +273,49 @@ func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
 	for rows.Next() {
 		j := &Job{}
 		var createdAt, updatedAt string
+		var lastReview sql.NullTime
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}
 		j.GitToken = decryptToken(j.GitToken)
 		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if lastReview.Valid {
+			j.LastReviewCheckAt = &lastReview.Time
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, nil
+}
+
+func ListFailedJobsByChatID(db *sql.DB, chatID int64) ([]*Job, error) {
+	rows, err := db.Query(`SELECT `+jobColumns+` FROM jobs WHERE chat_id = ? AND status = 'failed' ORDER BY created_at DESC`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var jobs []*Job
+	for rows.Next() {
+		j := &Job{}
+		var createdAt, updatedAt string
+		var lastReview sql.NullTime
+		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
+			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
+			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
+		if err != nil {
+			return nil, err
+		}
+		j.GitToken = decryptToken(j.GitToken)
+		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if lastReview.Valid {
+			j.LastReviewCheckAt = &lastReview.Time
+		}
 		jobs = append(jobs, j)
 	}
 	return jobs, nil
@@ -291,16 +337,20 @@ func ListJobs(db *sql.DB, limit, offset int) ([]*Job, error) {
 	for rows.Next() {
 		j := &Job{}
 		var createdAt, updatedAt string
+		var lastReview sql.NullTime
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}
 		j.GitToken = decryptToken(j.GitToken)
 		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if lastReview.Valid {
+			j.LastReviewCheckAt = &lastReview.Time
+		}
 		jobs = append(jobs, j)
 	}
 	return jobs, nil
@@ -320,4 +370,38 @@ func CreateJobWithPlan(db *sql.DB, j *Job) (int64, error) {
 		return 0, fmt.Errorf("create job with plan: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+func FindJobsByPRCreatedStatus(db *sql.DB) ([]*Job, error) {
+	rows, err := db.Query(`SELECT ` + jobColumns + ` FROM jobs WHERE status = 'pr_created' AND pr_url != '' ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Job
+	for rows.Next() {
+		j := &Job{}
+		var createdAt, updatedAt string
+		var lastReview sql.NullTime
+		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
+			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
+			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
+		if err != nil {
+			return nil, err
+		}
+		j.GitToken = decryptToken(j.GitToken)
+		j.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		j.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		if lastReview.Valid {
+			j.LastReviewCheckAt = &lastReview.Time
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
+func SetJobLastReviewCheck(db *sql.DB, id int64, t time.Time) error {
+	_, err := db.Exec(`UPDATE jobs SET last_review_check_at = ? WHERE id = ?`, t, id)
+	return err
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -512,6 +513,104 @@ func PostGitHubComment(issueURL, token, comment string) error {
 		return fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, b)
 	}
 	return nil
+}
+
+// ListGitHubIssuesByLabel returns open issues with the given label that were
+// updated at or after since.
+func ListGitHubIssuesByLabel(repoURL, token, label string, since time.Time) ([]IssueRef, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	sinceStr := since.UTC().Format(time.RFC3339)
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues?labels=%s&state=open&since=%s",
+		owner, repo, url.QueryEscape(label), sinceStr)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("github list issues: status %d", resp.StatusCode)
+	}
+	var issues []struct {
+		Number  int    `json:"number"`
+		Title   string `json:"title"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&issues); err != nil {
+		return nil, err
+	}
+	var refs []IssueRef
+	for _, iss := range issues {
+		refs = append(refs, IssueRef{
+			URL:   iss.HTMLURL,
+			Title: iss.Title,
+			ID:    fmt.Sprintf("%d", iss.Number),
+		})
+	}
+	return refs, nil
+}
+
+func GetGitHubPRReviewsSince(prURL, token string, since time.Time) (string, error) {
+	urlParts := strings.Split(strings.TrimPrefix(prURL, "https://github.com/"), "/")
+	if len(urlParts) < 4 {
+		return "", fmt.Errorf("invalid PR URL: %s", prURL)
+	}
+	owner, repo, prNum := urlParts[0], urlParts[1], urlParts[3]
+
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	reviewsURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%s/reviews", owner, repo, prNum)
+	req, _ := http.NewRequest("GET", reviewsURL, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var reviews []struct {
+		Body        string    `json:"body"`
+		State       string    `json:"state"`
+		SubmittedAt time.Time `json:"submitted_at"`
+	}
+	json.NewDecoder(resp.Body).Decode(&reviews)
+
+	var parts2 []string
+	for _, r := range reviews {
+		if r.SubmittedAt.After(since) && r.Body != "" {
+			parts2 = append(parts2, fmt.Sprintf("[%s] %s", r.State, r.Body))
+		}
+	}
+
+	commentsURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%s/comments", owner, repo, prNum)
+	req2, _ := http.NewRequest("GET", commentsURL, nil)
+	req2.Header.Set("Authorization", "Bearer "+token)
+	req2.Header.Set("Accept", "application/vnd.github+json")
+	resp2, err := client.Do(req2)
+	if err == nil {
+		defer resp2.Body.Close()
+		var comments []struct {
+			Body      string    `json:"body"`
+			CreatedAt time.Time `json:"created_at"`
+		}
+		json.NewDecoder(resp2.Body).Decode(&comments)
+		for _, c := range comments {
+			if c.CreatedAt.After(since) && c.Body != "" {
+				parts2 = append(parts2, c.Body)
+			}
+		}
+	}
+
+	return strings.Join(parts2, "\n\n"), nil
 }
 
 func parseGitHubIssueURL(issueURL string) (owner, repo string, issueNum int, err error) {

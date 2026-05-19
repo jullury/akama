@@ -26,6 +26,10 @@ type Config struct {
 	AdminUserID          int64  `yaml:"admin_user_id"`
 	MaxWorkspaceAgeDays  int    `yaml:"max_workspace_age_days"`
 	MaxConcurrentJobs    int    `yaml:"max_concurrent_jobs"`
+	QuietHoursStart  int    `yaml:"quiet_hours_start"`
+	QuietHoursEnd    int    `yaml:"quiet_hours_end"`
+	PollIntervalMins int    `yaml:"poll_interval_mins"`
+	TriggerLabel     string `yaml:"trigger_label"`
 }
 
 // GetAPIKey returns the API key for the given provider, or empty string.
@@ -68,6 +72,8 @@ func DefaultConfig() *Config {
 		PIDPath:             "~/.akama/akama.pid",
 		MaxWorkspaceAgeDays: 7,
 		MaxConcurrentJobs:   5,
+		PollIntervalMins:    0,
+		TriggerLabel:        "akama",
 	}
 }
 

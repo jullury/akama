@@ -454,6 +454,83 @@ func PostGitLabComment(issueURL, token, comment string) error {
 	return nil
 }
 
+// ListGitLabIssuesByLabel returns open issues with the given label that were
+// updated at or after since.
+func ListGitLabIssuesByLabel(repoURL, token, label string, since time.Time) ([]IssueRef, error) {
+	projectPath, err := gitLabProjectPath(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	sinceStr := since.UTC().Format(time.RFC3339)
+	apiURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/issues?labels=%s&state=opened&updated_after=%s",
+		encodedPath, url.QueryEscape(label), sinceStr)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("gitlab list issues: status %d", resp.StatusCode)
+	}
+	var issues []struct {
+		IID    int    `json:"iid"`
+		Title  string `json:"title"`
+		WebURL string `json:"web_url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&issues); err != nil {
+		return nil, err
+	}
+	var refs []IssueRef
+	for _, iss := range issues {
+		refs = append(refs, IssueRef{
+			URL:   iss.WebURL,
+			Title: iss.Title,
+			ID:    fmt.Sprintf("%d", iss.IID),
+		})
+	}
+	return refs, nil
+}
+
+func GetGitLabMRNotesSince(mrURL, token string, since time.Time) (string, error) {
+	u := strings.TrimPrefix(mrURL, "https://gitlab.com/")
+	idx := strings.Index(u, "/-/merge_requests/")
+	if idx < 0 {
+		return "", fmt.Errorf("invalid MR URL: %s", mrURL)
+	}
+	projectPath := url.PathEscape(u[:idx])
+	mrIID := u[idx+len("/-/merge_requests/"):]
+
+	apiURL := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/merge_requests/%s/notes", projectPath, mrIID)
+	req, _ := http.NewRequest("GET", apiURL, nil)
+	req.Header.Set("PRIVATE-TOKEN", token)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var notes []struct {
+		Body      string    `json:"body"`
+		CreatedAt time.Time `json:"created_at"`
+		System    bool      `json:"system"`
+	}
+	json.NewDecoder(resp.Body).Decode(&notes)
+	var parts []string
+	for _, n := range notes {
+		if !n.System && n.CreatedAt.After(since) && n.Body != "" {
+			parts = append(parts, n.Body)
+		}
+	}
+	return strings.Join(parts, "\n\n"), nil
+}
+
 func parseGitLabIssueURL(repoURL string) (projectPath string, issueIID int, err error) {
 	repoURL = strings.TrimSuffix(repoURL, ".git")
 	for _, sep := range []string{"/-/issues/", "/-/work_items/", "/issues/"} {

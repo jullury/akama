@@ -44,6 +44,8 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 		b.handleConfig(chatID)
 	case strings.HasPrefix(text, "/newissue"):
 		b.handleNewIssue(chatID)
+	case strings.HasPrefix(text, "/quickfix"):
+		b.handleQuickFix(chatID)
 	case strings.HasPrefix(text, "/connections"):
 		b.handleConnections(chatID)
 	case strings.HasPrefix(text, "/delete_connection"):
@@ -76,6 +78,20 @@ func (b *Bot) handleMessage(msg *tgbotapi.Message) {
 	case strings.HasPrefix(text, "/logs"):
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_logs", nil)
 		b.send(chatID, "Enter the job ID to view logs:")
+	case strings.HasPrefix(text, "/preview"):
+		parts := strings.Fields(text)
+		if len(parts) > 1 {
+			var jobID int64
+			fmt.Sscanf(parts[1], "%d", &jobID)
+			if jobID > 0 {
+				b.handlePreview(chatID, jobID)
+				return
+			}
+		}
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_preview", nil)
+		b.send(chatID, "Enter the job ID to preview:")
+	case strings.HasPrefix(text, "/retry_all"):
+		b.handleRetryAll(chatID)
 	case strings.HasPrefix(text, "/retry"):
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_retry", nil)
 		b.send(chatID, "Enter the job ID to retry:")
@@ -566,6 +582,40 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			b.send(chatID, "Connection deleted.")
 			return
 		}
+		if connIDStr, ok := strings.CutPrefix(data, "connection_agent:"); ok {
+			var connID int64
+			fmt.Sscanf(connIDStr, "%d", &connID)
+			row1 := tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Claude", fmt.Sprintf("set_conn_agent:%d:claude", connID)),
+				tgbotapi.NewInlineKeyboardButtonData("OpenCode", fmt.Sprintf("set_conn_agent:%d:opencode", connID)),
+				tgbotapi.NewInlineKeyboardButtonData("Use default", fmt.Sprintf("set_conn_agent:%d:", connID)),
+			)
+			kb := tgbotapi.NewInlineKeyboardMarkup(row1)
+			msg := tgbotapi.NewMessage(chatID, "Select agent for this repository:")
+			msg.ReplyMarkup = kb
+			b.API.Send(msg)
+			return
+		}
+		if rest, ok := strings.CutPrefix(data, "set_conn_agent:"); ok {
+			parts := strings.SplitN(rest, ":", 2)
+			if len(parts) != 2 {
+				return
+			}
+			var connID int64
+			fmt.Sscanf(parts[0], "%d", &connID)
+			agentName := parts[1]
+			if err := storage.SetConnectionAgent(b.JobsDB, connID, agentName, ""); err != nil {
+				log.Printf("set connection agent: %v", err)
+				b.send(chatID, "Failed to save agent setting.")
+				return
+			}
+			if agentName == "" {
+				b.send(chatID, "Connection will use your default agent.")
+			} else {
+				b.send(chatID, fmt.Sprintf("Connection agent set to: %s", agentName))
+			}
+			return
+		}
 		if rest, ok := strings.CutPrefix(data, "skills:install:"); ok {
 			var idx int
 			fmt.Sscanf(rest, "%d", &idx)
@@ -985,6 +1035,96 @@ func (b *Bot) handleText(chatID int64, text string) {
 		} else {
 			storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		}
+	case "await_quickfix_url":
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		if !isIssueURL(text) {
+			b.send(chatID, "That doesn't look like a valid GitHub or GitLab issue URL. Use /quickfix to try again.")
+			return
+		}
+		issueURL := strings.TrimSpace(text)
+		providerName := detectProvider(issueURL)
+		lookupURL := extractRepoURL(issueURL)
+		conn, _ := storage.FindConnectionByRepo(b.JobsDB, chatID, lookupURL)
+		if conn == nil {
+			b.send(chatID, "No connection found for this repository. Use /connect to add it first.")
+			return
+		}
+		if existing := storage.FindActiveJobByIssue(b.JobsDB, chatID, issueURL); existing != nil {
+			b.send(chatID, fmt.Sprintf("⚠️ Job #%d is already working on this issue (status: %s).", existing.ID, existing.Status))
+			return
+		}
+		var title, body, issueID string
+		var fetchErr error
+		switch providerName {
+		case "github":
+			issue, e := provider.FetchGitHubIssue(issueURL, conn.GitToken)
+			if e != nil {
+				fetchErr = e
+			} else {
+				title = issue.Title
+				body = issue.Body
+				issueID = fmt.Sprintf("%d", issue.Number)
+			}
+		case "gitlab":
+			issue, e := provider.FetchGitLabIssue(issueURL, conn.GitToken)
+			if e != nil {
+				fetchErr = e
+			} else {
+				title = issue.Title
+				body = issue.Description
+				issueID = fmt.Sprintf("%d", issue.IID)
+			}
+		}
+		if fetchErr != nil {
+			if provider.IsAuthError(fetchErr) {
+				b.send(chatID, fmt.Sprintf("Authentication failed for %s. Use /connect to refresh your token.", providerName))
+				return
+			}
+			b.send(chatID, fmt.Sprintf("Failed to fetch issue: %v", fetchErr))
+			return
+		}
+		if issueID == "" {
+			b.send(chatID, "Failed to parse issue ID from fetched issue.")
+			return
+		}
+		if body != "" {
+			body = provider.EnrichIssueBody(providerName, issueURL, conn.GitToken, body)
+		}
+		defaultBranch := conn.DefaultBranch
+		if defaultBranch == "" {
+			defaultBranch = "main"
+		}
+		userCfg, _ := storage.GetUserConfig(b.JobsDB, chatID)
+		agentName := b.Config.DefaultAgent
+		agentModel := b.Config.DefaultModel
+		if userCfg != nil {
+			if userCfg.Agent != "" {
+				agentName = userCfg.Agent
+			}
+			if userCfg.AgentModel != "" {
+				agentModel = userCfg.AgentModel
+			}
+		}
+		j := &storage.Job{
+			ChatID:        chatID,
+			IssueID:       issueID,
+			IssueTitle:    title,
+			IssueBody:     body,
+			IssueURL:      issueURL,
+			RepoURL:       lookupURL,
+			Provider:      providerName,
+			GitToken:      conn.GitToken,
+			Agent:         agentName,
+			AgentModel:    agentModel,
+			DefaultBranch: defaultBranch,
+		}
+		jobID, err := storage.CreateJob(b.JobsDB, j)
+		if err != nil {
+			b.send(chatID, fmt.Sprintf("Failed to create job: %v", err))
+			return
+		}
+		b.send(chatID, fmt.Sprintf("⚡ QuickFix started for job #%d — PR incoming shortly.", jobID))
+		job.Run(b.ctx, jobID)
 	case "idle":
 		if isIssueURL(text) {
 			b.processIssueWithImages(chatID, text, "", "")
@@ -1110,6 +1250,15 @@ func (b *Bot) handleText(chatID int64, text string) {
 			return
 		}
 		b.showLogs(chatID, jobID)
+	case "await_preview":
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		var jobID int64
+		fmt.Sscanf(text, "%d", &jobID)
+		if jobID == 0 {
+			b.send(chatID, "Invalid job ID. Use /preview to try again.")
+			return
+		}
+		b.handlePreview(chatID, jobID)
 	case "await_retry":
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
 		var jobID int64

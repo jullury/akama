@@ -65,6 +65,11 @@ func buildModelKeyboard(agentName string, page int) (tgbotapi.InlineKeyboardMark
 	return tgbotapi.NewInlineKeyboardMarkup(rows...), title
 }
 
+func (b *Bot) handleQuickFix(chatID int64) {
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_quickfix_url", nil)
+	b.send(chatID, "Paste the issue URL and I'll fix it immediately (no plan review):")
+}
+
 func (b *Bot) handleStart(chatID int64) {
 	b.handleHelp(chatID)
 }
@@ -231,12 +236,21 @@ func (b *Bot) handleConnections(chatID int64) {
 		b.send(chatID, "No saved connections. Use /connect to add one.")
 		return
 	}
-	var sb strings.Builder
-	sb.WriteString("Saved connections:\n")
+	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, c := range conns {
-		sb.WriteString(fmt.Sprintf("- [%s] %s\n", c.Provider, c.RepoURL))
+		label := fmt.Sprintf("[%s] %s", c.Provider, c.RepoURL)
+		agentLabel := "⚙️ Agent"
+		if c.Agent != "" {
+			agentLabel = fmt.Sprintf("⚙️ %s", c.Agent)
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("connection_agent:%d", c.ID)),
+			tgbotapi.NewInlineKeyboardButtonData(agentLabel, fmt.Sprintf("connection_agent:%d", c.ID)),
+		))
 	}
-	b.send(chatID, sb.String())
+	msg := tgbotapi.NewMessage(chatID, "Saved connections:")
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.API.Send(msg)
 }
 
 func (b *Bot) handleDisconnect(chatID int64) {
@@ -445,6 +459,38 @@ func (b *Bot) showLogs(chatID int64, jobID int64) {
 	b.send(chatID, fmt.Sprintf("Job #%d output:\n\n%s", jobID, output))
 }
 
+func (b *Bot) handlePreview(chatID int64, jobID int64) {
+	j, err := storage.GetJob(b.JobsDB, jobID)
+	if err != nil || j == nil || j.ChatID != chatID {
+		b.send(chatID, "Job not found.")
+		return
+	}
+	if j.WorkspacePath == "" {
+		b.send(chatID, fmt.Sprintf("Job #%d has no workspace (already cleaned up).", jobID))
+		return
+	}
+	if _, err := os.Stat(j.WorkspacePath); os.IsNotExist(err) {
+		b.send(chatID, fmt.Sprintf("Workspace for job #%d no longer exists.", jobID))
+		return
+	}
+	diff := git.Diff(j.WorkspacePath)
+	if diff == "" {
+		b.send(chatID, fmt.Sprintf("No diff available for job #%d.", jobID))
+		return
+	}
+	header := fmt.Sprintf("📋 Diff for job #%d: %s", jobID, j.IssueTitle)
+	b.send(chatID, header)
+	const chunkSize = 4000
+	for len(diff) > 0 {
+		end := chunkSize
+		if end > len(diff) {
+			end = len(diff)
+		}
+		b.send(chatID, "```\n"+diff[:end]+"\n```")
+		diff = diff[end:]
+	}
+}
+
 func (b *Bot) retryJob(chatID int64, jobID int64) {
 	j, err := storage.GetJob(b.JobsDB, jobID)
 	if err != nil || j == nil || j.ChatID != chatID {
@@ -463,6 +509,21 @@ func (b *Bot) retryJob(chatID int64, jobID int64) {
 
 	b.send(chatID, fmt.Sprintf("Retrying job #%d: %s", jobID, j.IssueTitle))
 	job.Run(b.ctx, jobID)
+}
+
+func (b *Bot) handleRetryAll(chatID int64) {
+	jobs, err := storage.ListFailedJobsByChatID(b.JobsDB, chatID)
+	if err != nil || len(jobs) == 0 {
+		b.send(chatID, "No failed jobs to retry.")
+		return
+	}
+	var parts []string
+	for _, j := range jobs {
+		storage.SetJobStatus(b.JobsDB, j.ID, "pending")
+		job.Run(b.ctx, j.ID)
+		parts = append(parts, fmt.Sprintf("#%d (%s)", j.ID, j.IssueTitle))
+	}
+	b.send(chatID, fmt.Sprintf("Retrying %d jobs:\n%s", len(jobs), strings.Join(parts, "\n")))
 }
 
 func (b *Bot) doneJob(chatID int64, jobID int64) {

@@ -131,7 +131,9 @@ func runDaemon() {
 		APIKeys:     cfg.APIKeys,
 		TimeoutMins: cfg.AgentTimeoutMins,
 	}
-	job.InitScheduler(db, b.API, agentCfg, cfg.WorkspaceDir, cfg.MaxConcurrentJobs)
+	job.InitScheduler(db, b.API, agentCfg, cfg.WorkspaceDir, cfg.MaxConcurrentJobs, cfg.QuietHoursStart, cfg.QuietHoursEnd)
+	job.StartLabelPoller(ctx, db, b.API, agentCfg, cfg)
+	job.StartReviewPoller(ctx, db, b.API, agentCfg, cfg)
 
 	log.Println("Starting bot...")
 	go func() {
