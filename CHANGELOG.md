@@ -1,3 +1,10 @@
+## [3.0.3](https://github.com/jullury/akama/compare/v3.0.2...v3.0.3) (2026-05-19)
+
+
+### Bug Fixes
+
+* bump builder image to golang:1.26-bookworm to match go.mod ([4e17c95](https://github.com/jullury/akama/commit/4e17c958a5710ded704c23c49de9f60bbe659624))
+
 ## [3.0.2](https://github.com/jullury/akama/compare/v3.0.1...v3.0.2) (2026-05-19)
 
 
