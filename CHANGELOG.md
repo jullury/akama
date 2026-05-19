@@ -1,3 +1,10 @@
+## [3.1.1](https://github.com/jullury/akama/compare/v3.1.0...v3.1.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* restore golang:1.26-bookworm builder to match go.mod 1.26.1 ([5072a0f](https://github.com/jullury/akama/commit/5072a0f126c19780a334b95c533ef7c2cd0f79d6))
+
 # [3.1.0](https://github.com/jullury/akama/compare/v3.0.4...v3.1.0) (2026-05-19)
 
 
