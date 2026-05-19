@@ -1,3 +1,10 @@
+# [3.1.0](https://github.com/jullury/akama/compare/v3.0.4...v3.1.0) (2026-05-19)
+
+
+### Features
+
+* merge worker into daemon, privilege-drop agents, fix container lifecycle ([819f919](https://github.com/jullury/akama/commit/819f91916d778b612a4b579a18f693f14355929f))
+
 ## [3.0.4](https://github.com/jullury/akama/compare/v3.0.3...v3.0.4) (2026-05-19)
 
 
