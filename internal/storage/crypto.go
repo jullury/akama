@@ -100,7 +100,7 @@ func MigrateTokenEncryption(db *sql.DB) error {
 		}
 	}
 
-	if _, err := tx.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES ('encryption_version', '1')`); err != nil {
+	if _, err := tx.Exec(`INSERT INTO meta (key, value) VALUES ('encryption_version', '1') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`); err != nil {
 		return err
 	}
 

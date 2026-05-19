@@ -16,23 +16,24 @@ var BuildPlatform = "unknown"
 type Config struct {
 	TelegramToken    string            `yaml:"telegram_token"`
 	APIKeys          map[string]string `yaml:"api_keys"`
-	DefaultAgent     string `yaml:"default_agent"`
-	DefaultModel     string `yaml:"default_model"`
-	AgentTimeoutMins int    `yaml:"agent_timeout_mins"`
-	WorkspaceDir     string `yaml:"workspace_dir"`
-	DBPath           string `yaml:"db_path"`
-	LogPath          string `yaml:"log_path"`
-	PIDPath          string `yaml:"pid_path"`
-	AdminUserID          int64  `yaml:"admin_user_id"`
-	MaxWorkspaceAgeDays  int    `yaml:"max_workspace_age_days"`
-	MaxConcurrentJobs    int    `yaml:"max_concurrent_jobs"`
-	QuietHoursStart  int    `yaml:"quiet_hours_start"`
-	QuietHoursEnd    int    `yaml:"quiet_hours_end"`
-	PollIntervalMins int    `yaml:"poll_interval_mins"`
-	TriggerLabel     string `yaml:"trigger_label"`
+	DefaultAgent     string            `yaml:"default_agent"`
+	DefaultModel     string            `yaml:"default_model"`
+	AgentTimeoutMins int               `yaml:"agent_timeout_mins"`
+	WorkspaceDir     string            `yaml:"workspace_dir"`
+	DBPath           string            `yaml:"db_path,omitempty"`
+	PostgresURL      string            `yaml:"postgres_url"`
+	OllamaURL        string            `yaml:"ollama_url"`
+	LogPath          string            `yaml:"log_path"`
+	PIDPath          string            `yaml:"pid_path"`
+	AdminUserID      int64             `yaml:"admin_user_id"`
+	MaxWorkspaceAgeDays  int            `yaml:"max_workspace_age_days"`
+	MaxConcurrentJobs    int            `yaml:"max_concurrent_jobs"`
+	QuietHoursStart  int                `yaml:"quiet_hours_start"`
+	QuietHoursEnd    int                `yaml:"quiet_hours_end"`
+	PollIntervalMins int                `yaml:"poll_interval_mins"`
+	TriggerLabel     string             `yaml:"trigger_label"`
 }
 
-// GetAPIKey returns the API key for the given provider, or empty string.
 func (c *Config) GetAPIKey(provider string) string {
 	if c.APIKeys == nil {
 		return ""
@@ -40,7 +41,6 @@ func (c *Config) GetAPIKey(provider string) string {
 	return c.APIKeys[provider]
 }
 
-// SetAPIKey sets the API key for the given provider.
 func (c *Config) SetAPIKey(provider, key string) {
 	if c.APIKeys == nil {
 		c.APIKeys = make(map[string]string)
@@ -63,11 +63,12 @@ func (c *Config) Validate() error {
 
 func DefaultConfig() *Config {
 	return &Config{
-		APIKeys:          make(map[string]string),
-		DefaultAgent:     "claude",
-		AgentTimeoutMins: 30,
+		APIKeys:             make(map[string]string),
+		DefaultAgent:        "claude",
+		AgentTimeoutMins:    30,
 		WorkspaceDir:        "~/.akama/workspaces",
-		DBPath:              "~/.akama/akama.db",
+		PostgresURL:         "postgres://akama:akama@localhost:5432/akama",
+		OllamaURL:           "http://localhost:11434",
 		LogPath:             "~/.akama/akama.log",
 		PIDPath:             "~/.akama/akama.pid",
 		MaxWorkspaceAgeDays: 7,
@@ -80,7 +81,6 @@ func DefaultConfig() *Config {
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Expand ~ in path
 	if strings.HasPrefix(path, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
@@ -94,7 +94,6 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// First pass: check for old-format keys to migrate
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(data, &raw); err == nil {
 		if cfg.APIKeys == nil {
@@ -109,11 +108,9 @@ func Load(path string) (*Config, error) {
 			cfg.APIKeys["openai"] = v
 			migrated = true
 		}
-		// Second pass: unmarshal into struct (api_keys map will be populated)
 		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, err
 		}
-		// If we migrated, save the new format
 		if migrated {
 			cfg.Save(path)
 		}
@@ -121,6 +118,10 @@ func Load(path string) (*Config, error) {
 		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, err
 		}
+	}
+
+	if cfg.DBPath != "" && cfg.PostgresURL == "" {
+		fmt.Fprintf(os.Stderr, "WARNING: config has db_path but no postgres_url. Run 'akama migrate' to migrate from SQLite to PostgreSQL.\n")
 	}
 
 	cfg.expandHome()

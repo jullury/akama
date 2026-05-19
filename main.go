@@ -24,9 +24,6 @@ import (
 )
 
 func main() {
-	// --daemon can appear as any argument (direct: `akama --daemon`, or
-	// forked: `akama start --daemon`). Handle it before cobra so the daemon
-	// process never goes through the command router.
 	for _, arg := range os.Args[1:] {
 		if arg == "--daemon" {
 			runDaemon()
@@ -49,7 +46,6 @@ func runDaemon() {
 		log.Fatalf("Invalid config: %v", err)
 	}
 
-	// Set up rotating log writer
 	lw, err := logger.NewRotatingWriter(logger.Config{
 		LogPath: cfg.LogPath,
 	})
@@ -57,16 +53,12 @@ func runDaemon() {
 		log.Fatalf("Create logger: %v", err)
 	}
 	defer lw.Close()
-	// When running as PID 1 (Docker container), tee logs to stdout so
-	// `docker logs` captures them without needing a separate tail process.
 	if os.Getpid() == 1 {
 		log.SetOutput(io.MultiWriter(os.Stdout, lw))
 	} else {
 		log.SetOutput(lw)
 	}
 
-	// Write PID file from the daemon process itself so there is no
-	// race between the parent's IsRunning check and fork.
 	pidPath := cfg.PIDPath
 	if strings.HasPrefix(pidPath, "~/") {
 		pidPath = filepath.Join(home, pidPath[2:])
@@ -79,11 +71,7 @@ func runDaemon() {
 	}
 	defer daemon.RemovePID(pidPath)
 
-	dbPath := cfg.DBPath
-	if strings.HasPrefix(dbPath, "~/") {
-		dbPath = filepath.Join(home, dbPath[2:])
-	}
-	db, err := storage.Open(dbPath)
+	db, err := storage.Open(cfg.PostgresURL)
 	if err != nil {
 		log.Fatalf("Open DB: %v", err)
 	}
@@ -93,7 +81,7 @@ func runDaemon() {
 		log.Printf("recover interrupted jobs: %v", err)
 	}
 
-	keyPath := filepath.Join(filepath.Dir(dbPath), "keyfile")
+	keyPath := filepath.Join(home, ".akama", "keyfile")
 	encKey, err := crypto.LoadOrCreateKey(keyPath)
 	if err != nil {
 		log.Fatalf("Load encryption key: %v", err)

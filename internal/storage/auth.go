@@ -5,14 +5,14 @@ import (
 )
 
 type AuthorizedUser struct {
-	ChatID    int64
-	Role      string
-	AddedBy   int64
+	ChatID  int64
+	Role    string
+	AddedBy int64
 }
 
 func IsAuthorized(db *sql.DB, chatID int64) (bool, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM authorized_users WHERE chat_id = ?`, chatID).Scan(&count)
+	err := db.QueryRow(`SELECT COUNT(*) FROM authorized_users WHERE chat_id = $1`, chatID).Scan(&count)
 	if err != nil {
 		return false, err
 	}
@@ -21,7 +21,7 @@ func IsAuthorized(db *sql.DB, chatID int64) (bool, error) {
 
 func IsAdmin(db *sql.DB, chatID int64) bool {
 	var role string
-	err := db.QueryRow(`SELECT role FROM authorized_users WHERE chat_id = ?`, chatID).Scan(&role)
+	err := db.QueryRow(`SELECT role FROM authorized_users WHERE chat_id = $1`, chatID).Scan(&role)
 	if err != nil {
 		return false
 	}
@@ -46,12 +46,12 @@ func ListAuthorizedUsers(db *sql.DB) ([]*AuthorizedUser, error) {
 }
 
 func AddAuthorizedUser(db *sql.DB, chatID int64, role string, addedBy int64) error {
-	_, err := db.Exec(`INSERT OR IGNORE INTO authorized_users (chat_id, role, added_by) VALUES (?, ?, ?)`, chatID, role, addedBy)
+	_, err := db.Exec(`INSERT INTO authorized_users (chat_id, role, added_by) VALUES ($1, $2, $3) ON CONFLICT (chat_id) DO NOTHING`, chatID, role, addedBy)
 	return err
 }
 
 func RemoveAuthorizedUser(db *sql.DB, chatID int64) error {
-	_, err := db.Exec(`DELETE FROM authorized_users WHERE chat_id = ?`, chatID)
+	_, err := db.Exec(`DELETE FROM authorized_users WHERE chat_id = $1`, chatID)
 	return err
 }
 

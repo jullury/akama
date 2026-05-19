@@ -103,13 +103,7 @@ func runInit(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Chmod config: %v\n", err)
 	}
 
-	dbPath := cfg.DBPath
-	if strings.HasPrefix(dbPath, "~/") {
-		home, _ := os.UserHomeDir()
-		dbPath = filepath.Join(home, dbPath[2:])
-	}
-	os.MkdirAll(filepath.Dir(dbPath), 0700)
-	db, err := storage.Open(dbPath)
+	db, err := storage.Open(cfg.PostgresURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Open DB: %v\n", err)
 		return

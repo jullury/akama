@@ -33,7 +33,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 	}
 
 	pid, _ := daemon.ReadPID(cfg.PIDPath)
-	db, err := storage.Open(cfg.DBPath)
+	db, err := storage.Open(cfg.PostgresURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Open DB: %v\n", err)
 		os.Exit(1)
