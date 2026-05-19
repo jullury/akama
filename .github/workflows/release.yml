@@ -117,6 +117,8 @@ jobs:
           tags: |
             ghcr.io/jullury/akama-daemon:latest
             ghcr.io/jullury/akama-daemon:${{ needs.release.outputs.version }}
+          cache-from: type=registry,ref=ghcr.io/jullury/akama-daemon:cache
+          cache-to: type=registry,ref=ghcr.io/jullury/akama-daemon:cache,mode=max
           build-args: |
             VERSION=${{ needs.release.outputs.version }}
             BUILD_TIME=${{ github.event.repository.updated_at }}

@@ -619,9 +619,8 @@ func ParseClarifyingQuestions(output string) []string {
 	var questions []string
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "Q:") || strings.HasPrefix(line, "Q:") {
-			q := strings.TrimSpace(strings.TrimPrefix(line, "Q:"))
-			q = strings.TrimSpace(strings.TrimPrefix(q, "Q:"))
+		if strings.HasPrefix(strings.ToLower(line), "q:") {
+			q := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(line), "q:"))
 			if q != "" {
 				questions = append(questions, q)
 			}
