@@ -1659,15 +1659,7 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 }
 
 func (b *Bot) proceedWithPlan(chatID int64, conv *storage.Conversation) {
-	issueURL, _ := conv.Data["issue_url"].(string)
-	gitToken, _ := conv.Data["git_token"].(string)
-	defaultBranch, _ := conv.Data["default_branch"].(string)
-	images, _ := conv.Data["images"].(string)
-	providerName, _ := conv.Data["provider"].(string)
-	repoURL, _ := conv.Data["repo_url"].(string)
-	title, _ := conv.Data["title"].(string)
 	body, _ := conv.Data["body"].(string)
-	issueID, _ := conv.Data["issue_id"].(string)
 	plan, _ := conv.Data["plan"].(string)
 
 	jobIDFloat, _ := conv.Data["job_id"].(float64)
@@ -1690,30 +1682,8 @@ func (b *Bot) proceedWithPlan(chatID int64, conv *storage.Conversation) {
 		return
 	}
 
-	j := &storage.Job{
-		ChatID:        chatID,
-		IssueID:       issueID,
-		IssueTitle:    title,
-		IssueBody:     fullBody,
-		IssueURL:      issueURL,
-		RepoURL:       repoURL,
-		Provider:      providerName,
-		GitToken:      gitToken,
-		Agent:         b.Config.DefaultAgent,
-		AgentModel:    b.Config.DefaultModel,
-		DefaultBranch: defaultBranch,
-		Images:        images,
-		Plan:          plan,
-	}
-
-	jobID2, err := storage.CreateJob(b.JobsDB, j)
-	if err != nil {
-		b.send(chatID, fmt.Sprintf("Failed to create job: %v", err))
-		return
-	}
-
-	b.send(chatID, "✅ Plan confirmed! Starting implementation...")
-	job.Run(b.ctx, jobID2)
+	b.send(chatID, "❌ No job found for this plan. Please start over with a new issue URL.")
+	log.Printf("[proceedWithPlan] missing job_id in conversation data for chat %d", chatID)
 }
 
 func (b *Bot) proceedWithMultiPlan(chatID int64, conv *storage.Conversation) {
