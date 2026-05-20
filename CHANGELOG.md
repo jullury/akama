@@ -1,3 +1,10 @@
+## [3.6.2](https://github.com/jullury/akama/compare/v3.6.1...v3.6.2) (2026-05-20)
+
+
+### Bug Fixes
+
+* surface model pull errors during startup ([c42afe0](https://github.com/jullury/akama/commit/c42afe0ddd073a8db4e42802a286a161e307261f))
+
 ## [3.6.1](https://github.com/jullury/akama/compare/v3.6.0...v3.6.1) (2026-05-20)
 
 
