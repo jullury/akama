@@ -1625,15 +1625,8 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 	}
 
 	questions := agent.ParseClarifyingQuestions(output)
-	if len(questions) < 2 {
-		questions = []string{
-			"What specific behavior or output do you expect after the fix?",
-			"Are there any edge cases or specific scenarios to consider?",
-			"What is the expected timeline or priority for this fix?",
-		}
-	}
 
-	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", map[string]interface{}{
+	convData := map[string]interface{}{
 		"issue_url":      issueURL,
 		"git_token":      gitToken,
 		"default_branch": defaultBranch,
@@ -1647,7 +1640,14 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 		"agent_model":    agentModel,
 		"plan_workspace": workspacePath,
 		"job_id":         jobID,
-	})
+	}
+
+	if agentErr != nil || len(questions) < 2 {
+		b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, workspacePath, issueURL, providerName, gitToken, agentCfg, convData)
+		return
+	}
+
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", convData)
 
 	var qb strings.Builder
 	qb.WriteString("I have a few questions to better understand the issue:\n\n")
@@ -1656,6 +1656,42 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 	}
 	qb.WriteString("\nPlease answer all questions in a single message.")
 	b.send(chatID, qb.String())
+}
+
+// generateAndReviewPlan runs plan generation with the given answers (may be empty)
+// and presents the result to the user for confirmation or modification.
+func (b *Bot) generateAndReviewPlan(chatID int64, title, body, answers, agentName, agentModel, planWorkspace, issueURL, providerName, gitToken string, agentCfg *agent.Config, convData map[string]interface{}, repoSources ...string) {
+	b.send(chatID, "Generating implementation plan...")
+
+	prompt := agent.BuildPlanFromAnswers(title, body, answers, repoSources...)
+	planOutput, err := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
+	if err != nil {
+		log.Printf("[generateAndReviewPlan] Failed to generate plan: %v", err)
+		b.send(chatID, fmt.Sprintf("❌ Failed to generate plan: %v. Please try again.", err))
+		return
+	}
+
+	comment := fmt.Sprintf("## Implementation Plan\n\n%s", planOutput)
+	if err := provider.PostIssueComment(providerName, issueURL, gitToken, comment); err != nil {
+		log.Printf("[generateAndReviewPlan] Failed to post plan comment: %v", err)
+		b.send(chatID, "⚠️ Couldn't post plan as a comment (check token permissions), but it's shown below.")
+	} else {
+		b.send(chatID, "Plan posted as comment on the issue.")
+	}
+
+	convData["plan"] = planOutput
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_plan_review", convData)
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Confirm", "plan:confirm"),
+			tgbotapi.NewInlineKeyboardButtonData("Cancel", "plan:cancel"),
+		),
+	)
+	b.sendChunked(chatID, "Implementation plan ready:", planOutput)
+	confirm := tgbotapi.NewMessage(chatID, "Do you want to proceed with this plan? Reply with changes or tap Confirm.")
+	confirm.ReplyMarkup = keyboard
+	b.API.Send(confirm)
 }
 
 func (b *Bot) proceedWithPlan(chatID int64, conv *storage.Conversation) {
@@ -2005,15 +2041,13 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 	}
 
 	questions := agent.ParseClarifyingQuestions(output)
-	if len(questions) < 2 {
-		questions = []string{
-			"What specific behavior or output do you expect after the fix?",
-			"Are there any edge cases or specific scenarios to consider?",
-			"What is the expected timeline or priority for this fix?",
-		}
+
+	var firstToken string
+	if len(repos) > 0 {
+		firstToken, _ = repos[0]["token"].(string)
 	}
 
-	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", map[string]interface{}{
+	multiConvData := map[string]interface{}{
 		"issue_url":      issueURL,
 		"provider":       providerName,
 		"title":          title,
@@ -2028,7 +2062,14 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		"repo_sources":   repoSources,
 		"plan_workspace": planWorkspace,
 		"job_ids":        jobIDs,
-	})
+	}
+
+	if agentErr != nil || len(questions) < 2 {
+		b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, planWorkspace, issueURL, providerName, firstToken, agentCfg, multiConvData, repoSources...)
+		return
+	}
+
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", multiConvData)
 
 	var qb strings.Builder
 	qb.WriteString("I have a few questions to better understand the issue (across all repositories):\n\n")
