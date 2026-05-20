@@ -263,7 +263,7 @@ Write as a human developer would.
 		prompt += fmt.Sprintf("\nPrior art from similar resolved issues is available in %s — read it before implementing.\n", filepath.Base(knowledgePath))
 	}
 
-	promptPath, err := agent.WritePrompt(groupWorkspace, prompt)
+	promptPath, err := agent.WritePrompt(groupWorkspace, agentName, prompt)
 	if err != nil {
 		for _, j := range jobs {
 			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
@@ -536,7 +536,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}
 
 	prompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody, filepath.Base(knowledgePath))
-	promptPath, err := agent.WritePrompt(workspacePath, prompt)
+	promptPath, err := agent.WritePrompt(workspacePath, j.Agent, prompt)
 	if err != nil {
 		metrics.Global.Failed.Add(1)
 		failJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err), workspacePath)

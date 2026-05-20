@@ -440,7 +440,7 @@ Based solely on these changes, output EXACTLY two lines and nothing else:
 COMMIT_MESSAGE: <conventional commit message, max 72 chars>
 PR_DESCRIPTION: <2-3 sentences describing what changed and why, no mention of AI or bots>`, diff)
 
-	promptPath, err := WritePrompt(workspacePath, prompt)
+	promptPath, err := WritePrompt(workspacePath, agentName, prompt)
 	if err != nil {
 		return "fix: apply changes", fmt.Sprintf("Fixes %s", issueURL)
 	}
@@ -747,7 +747,7 @@ func RunPlanAgent(ctx context.Context, agentName, model, workspacePath, promptCo
 		defer os.RemoveAll(workspacePath)
 	}
 
-	promptPath, err := WritePrompt(workspacePath, promptContent)
+	promptPath, err := WritePrompt(workspacePath, agentName, promptContent)
 	if err != nil {
 		return "", fmt.Errorf("write plan prompt: %w", err)
 	}
@@ -761,9 +761,15 @@ func RunPlanAgent(ctx context.Context, agentName, model, workspacePath, promptCo
 	return ParseOutput(agentName, output), nil
 }
 
-func WritePrompt(workspacePath, content string) (string, error) {
+func WritePrompt(workspacePath, agentName, content string) (string, error) {
 	promptPath := filepath.Join(workspacePath, ".akama-prompt.txt")
-	full := InjectedSkillsContent() + content
+	var injected string
+	if agentName == "opencode" {
+		injected = OpencodeInjectedContent()
+	} else {
+		injected = InjectedSkillsContent()
+	}
+	full := injected + content
 	instruction := "\n\n---\nIf you need to ask the user a question before proceeding, your response must end with exactly:\nINPUT_REQUIRED: <your question here>\nDo not use INPUT_REQUIRED for any other purpose."
 	if err := os.WriteFile(promptPath, []byte(full+instruction), 0644); err != nil {
 		return "", fmt.Errorf("write prompt: %w", err)

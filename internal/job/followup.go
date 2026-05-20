@@ -54,7 +54,7 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 	}
 
 	prompt := agent.BuildFollowUpPrompt(userText)
-	promptPath, err := agent.WritePrompt(j.WorkspacePath, prompt)
+	promptPath, err := agent.WritePrompt(j.WorkspacePath, j.Agent, prompt)
 	if err != nil {
 		failFollowUp(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
 		return
@@ -159,7 +159,7 @@ func runGroupedFollowUp(ctx context.Context, primary *storage.Job, userText stri
 	}
 
 	prompt := agent.BuildFollowUpPrompt(userText)
-	promptPath, err := agent.WritePrompt(groupWorkspace, prompt)
+	promptPath, err := agent.WritePrompt(groupWorkspace, primary.Agent, prompt)
 	if err != nil {
 		for _, j := range jobs {
 			failFollowUp(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
