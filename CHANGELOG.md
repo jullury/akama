@@ -1,3 +1,11 @@
+# [3.7.0](https://github.com/jullury/akama/compare/v3.6.2...v3.7.0) (2026-05-20)
+
+
+### Features
+
+* enable NVIDIA GPU for Ollama container ([758deca](https://github.com/jullury/akama/commit/758deca98d37f213f73c1f8035f52d199993155d))
+* stage host binary update from inside Docker ([244044a](https://github.com/jullury/akama/commit/244044a766852b2545e6c690f97a9c1f57ac7010))
+
 ## [3.6.2](https://github.com/jullury/akama/compare/v3.6.1...v3.6.2) (2026-05-20)
 
 
