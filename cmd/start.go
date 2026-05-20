@@ -97,6 +97,8 @@ func runStart(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Check daemon container: %v\n", err)
 		os.Exit(1)
 	}
+	ensureOllamaModels(ctx, dcli)
+
 	if healthy {
 		fmt.Println("akama daemon is already running")
 		return
@@ -114,11 +116,6 @@ func runStart(cmd *cobra.Command, args []string) {
 	for time.Now().Before(deadline) {
 		if running, _ := docker.ContainerRunning(ctx, dcli, docker.DaemonContainer); running {
 			fmt.Println("akama daemon started")
-			go func() {
-				pullCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-				defer cancel()
-				docker.PullAndEnsureModel(pullCtx, dcli, "nomic-embed-text") //nolint:errcheck
-			}()
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -198,6 +195,14 @@ func resolveAndStartPostgres(ctx context.Context, dcli *dockerclient.Client, cfg
 		cfg.Save(cfgPath)
 	}
 	return pgPort, nil
+}
+
+func ensureOllamaModels(ctx context.Context, dcli *dockerclient.Client) {
+	pullCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	if err := docker.PullAndEnsureModel(pullCtx, dcli, "nomic-embed-text"); err != nil {
+		fmt.Fprintf(os.Stderr, "Ensure ollama model: %v\n", err)
+	}
 }
 
 // resolveConfigDir returns the absolute directory containing the config file.
