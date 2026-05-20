@@ -500,12 +500,17 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 						if branch == "" {
 							branch = "main"
 						}
-						repos = append(repos, map[string]interface{}{
+						repo := map[string]interface{}{
 							"repo_url":       m["repo_url"],
 							"provider":       m["provider"],
 							"token":          m["token"],
 							"default_branch": branch,
-						})
+						}
+						branches, err := provider.ListBranches(m["repo_url"].(string), m["token"].(string), m["provider"].(string))
+						if err == nil && len(branches) > 0 {
+							repo["branches"] = buildBranchList(branches, branch)
+						}
+						repos = append(repos, repo)
 						break
 					}
 				}
@@ -518,11 +523,15 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 				})
 
 			firstRepo := repos[0]
-			b.send(chatID, fmt.Sprintf(
-				"Select branch for [%s] %s:\nDetected default branch: *%s*\n\n"+
-					"Send a branch name or press Enter to use the detected branch.",
-				firstRepo["provider"], firstRepo["repo_url"], firstRepo["default_branch"],
-			))
+			if firstBranches, ok := firstRepo["branches"].([]interface{}); ok && len(firstBranches) > 0 {
+				b.sendBranchSelectKeyboard(chatID, fmt.Sprintf("Select branch for [%s] %s:", firstRepo["provider"], firstRepo["repo_url"]), firstBranches, 0)
+			} else {
+				b.send(chatID, fmt.Sprintf(
+					"Select branch for [%s] %s:\nDetected default branch: *%s*\n\n"+
+						"Send a branch name or press Enter to use the detected branch.",
+					firstRepo["provider"], firstRepo["repo_url"], firstRepo["default_branch"],
+				))
+			}
 			return
 		}
 		if rest, ok := strings.CutPrefix(data, "config:model:page:"); ok {
@@ -703,6 +712,115 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			}
 			storage.ResetConversation(b.JobsDB, chatID, "telegram")
 			b.send(chatID, "Plan cancelled. You can send another issue URL to start over.")
+			return
+		}
+		if rest, ok := strings.CutPrefix(data, "bc:"); ok {
+			var branchIdx int
+			fmt.Sscanf(rest, "%d", &branchIdx)
+
+			conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
+			if err != nil || conv.State != "await_branch_confirm" {
+				return
+			}
+
+			branchesInterface, _ := conv.Data["branches"].([]interface{})
+			if branchIdx < 0 || branchIdx >= len(branchesInterface) {
+				return
+			}
+
+			branchName, _ := branchesInterface[branchIdx].(string)
+			if branchName == "" {
+				return
+			}
+
+			issueURL, _ := conv.Data["issue_url"].(string)
+			gitToken, _ := conv.Data["git_token"].(string)
+			repoURL, _ := conv.Data["repo_url"].(string)
+
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+			log.Printf("[bc] Using branch %q for %s", branchName, repoURL)
+			if err := storage.UpdateConnectionDefaultBranch(b.JobsDB, chatID, repoURL, branchName); err != nil {
+				log.Printf("[bc] Failed to persist branch: %v", err)
+			}
+			b.startPlanMode(chatID, issueURL, gitToken, branchName, "")
+			return
+		}
+		if rest, ok := strings.CutPrefix(data, "bs:"); ok {
+			parts := strings.SplitN(rest, ":", 2)
+			if len(parts) != 2 {
+				return
+			}
+			var repoIdx, branchIdx int
+			fmt.Sscanf(parts[0], "%d", &repoIdx)
+			fmt.Sscanf(parts[1], "%d", &branchIdx)
+
+			conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
+			if err != nil || conv.State != "await_branch_select" {
+				return
+			}
+
+			reposInterface, _ := conv.Data["repos"].([]interface{})
+			if repoIdx < 0 || repoIdx >= len(reposInterface) {
+				return
+			}
+
+			repoMap, ok := reposInterface[repoIdx].(map[string]interface{})
+			if !ok {
+				return
+			}
+
+			branchesInterface, _ := repoMap["branches"].([]interface{})
+			if branchIdx < 0 || branchIdx >= len(branchesInterface) {
+				return
+			}
+
+			branchName, _ := branchesInterface[branchIdx].(string)
+			if branchName == "" {
+				return
+			}
+
+			repoMap["default_branch"] = branchName
+			repoURL, _ := repoMap["repo_url"].(string)
+
+			if err := storage.UpdateConnectionDefaultBranch(b.JobsDB, chatID, repoURL, branchName); err != nil {
+				log.Printf("[bs] Failed to persist branch for %s: %v", repoURL, err)
+			}
+
+			currentIdx := repoIdx + 1
+			repos := make([]map[string]interface{}, len(reposInterface))
+			for i, ri := range reposInterface {
+				repos[i], _ = ri.(map[string]interface{})
+			}
+
+			if currentIdx < len(repos) {
+				storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_branch_select",
+					map[string]interface{}{
+						"repos":            repos,
+						"current_repo_idx": float64(currentIdx),
+					})
+				nextRepo := repos[currentIdx]
+				if nextBranches, ok := nextRepo["branches"].([]interface{}); ok && len(nextBranches) > 0 {
+					b.sendBranchSelectKeyboard(chatID, fmt.Sprintf("Select branch for [%s] %s:", nextRepo["provider"], nextRepo["repo_url"]), nextBranches, currentIdx)
+				} else {
+					b.send(chatID, fmt.Sprintf(
+						"Select branch for [%s] %s:\nDetected default branch: *%s*\n\n"+
+							"Send a branch name or press Enter to use the detected branch.",
+						nextRepo["provider"], nextRepo["repo_url"], nextRepo["default_branch"],
+					))
+				}
+			} else {
+				storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issue_desc",
+					map[string]interface{}{
+						"repos": repos,
+					})
+				repoBranchList := make([]string, len(repos))
+				for i, r := range repos {
+					repoBranchList[i] = fmt.Sprintf("%s (branch: %s)", r["repo_url"], r["default_branch"])
+				}
+				b.send(chatID, fmt.Sprintf("Describe the issue for the selected repositories:\n%s\n\nFirst line = title, rest = description.",
+					strings.Join(repoBranchList, "\n")))
+			}
 			return
 		}
 		log.Printf("callback: unhandled data: %q", data)
@@ -1249,11 +1367,15 @@ func (b *Bot) handleText(chatID int64, text string) {
 					"current_repo_idx": float64(currentIdx),
 				})
 			nextRepo := repos[currentIdx]
-			b.send(chatID, fmt.Sprintf(
-				"Select branch for [%s] %s:\nDetected default branch: *%s*\n\n"+
-					"Send a branch name or press Enter to use the detected branch.",
-				nextRepo["provider"], nextRepo["repo_url"], nextRepo["default_branch"],
-			))
+			if nextBranches, ok := nextRepo["branches"].([]interface{}); ok && len(nextBranches) > 0 {
+				b.sendBranchSelectKeyboard(chatID, fmt.Sprintf("Select branch for [%s] %s:", nextRepo["provider"], nextRepo["repo_url"]), nextBranches, currentIdx)
+			} else {
+				b.send(chatID, fmt.Sprintf(
+					"Select branch for [%s] %s:\nDetected default branch: *%s*\n\n"+
+						"Send a branch name or press Enter to use the detected branch.",
+					nextRepo["provider"], nextRepo["repo_url"], nextRepo["default_branch"],
+				))
+			}
 		} else {
 			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_issue_desc",
 				map[string]interface{}{
@@ -1490,13 +1612,22 @@ func (b *Bot) processIssueWithImages(chatID int64, issueURL, gitToken, images st
 			"detected_branch": defaultBranch,
 			"repo_url":        lookupURL,
 		}
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_branch_confirm", data)
-		b.send(chatID, fmt.Sprintf(
-			"This is the first issue for this repository.\n"+
-				"Detected default branch: *%s*\n\n"+
-				"Send a different branch name to override, or press Enter to use the detected branch.",
-			defaultBranch,
-		))
+
+		branches, err := provider.ListBranches(lookupURL, token, providerName)
+		if err == nil && len(branches) > 0 {
+			branchList := buildBranchList(branches, defaultBranch)
+			data["branches"] = branchList
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_branch_confirm", data)
+			b.sendBranchKeyboard(chatID, "This is the first issue for this repository.\nSelect a branch:", branchList)
+		} else {
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_branch_confirm", data)
+			b.send(chatID, fmt.Sprintf(
+				"This is the first issue for this repository.\n"+
+					"Detected default branch: *%s*\n\n"+
+					"Send a different branch name to override, or press Enter to use the detected branch.",
+				defaultBranch,
+			))
+		}
 		return
 	}
 
@@ -2362,4 +2493,62 @@ func extractRepoURL(issueURL string) string {
 		}
 	}
 	return issueURL
+}
+
+func buildBranchList(allBranches []string, savedDefault string) []interface{} {
+	seen := make(map[string]bool)
+	result := make([]interface{}, 0, len(allBranches))
+	if savedDefault != "" {
+		result = append(result, savedDefault)
+		seen[savedDefault] = true
+	}
+	for _, b := range allBranches {
+		if !seen[b] {
+			result = append(result, b)
+			seen[b] = true
+		}
+	}
+	return result
+}
+
+func (b *Bot) sendBranchKeyboard(chatID int64, text string, branches []interface{}) {
+	maxBranches := 20
+	if len(branches) > maxBranches {
+		branches = branches[:maxBranches]
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for i, br := range branches {
+		name, _ := br.(string)
+		label := name
+		if i == 0 {
+			label = "✅ " + label
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("bc:%d", i)),
+		))
+	}
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.API.Send(msg)
+}
+
+func (b *Bot) sendBranchSelectKeyboard(chatID int64, text string, branches []interface{}, repoIdx int) {
+	maxBranches := 20
+	if len(branches) > maxBranches {
+		branches = branches[:maxBranches]
+	}
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for i, br := range branches {
+		name, _ := br.(string)
+		label := name
+		if i == 0 {
+			label = "✅ " + label
+		}
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("bs:%d:%d", repoIdx, i)),
+		))
+	}
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(rows...)
+	b.API.Send(msg)
 }

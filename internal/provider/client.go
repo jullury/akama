@@ -185,6 +185,17 @@ func GetDefaultBranch(repoURL, token, providerName string) string {
 	return branch
 }
 
+// ListBranches returns all branch names for the given repository.
+func ListBranches(repoURL, token, providerName string) ([]string, error) {
+	switch providerName {
+	case "github":
+		return ListGitHubBranches(repoURL, token)
+	case "gitlab":
+		return ListGitLabBranches(repoURL, token)
+	}
+	return nil, fmt.Errorf("unsupported provider: %s", providerName)
+}
+
 // IssueRef holds minimal information about an issue returned by label queries.
 type IssueRef struct {
 	URL   string

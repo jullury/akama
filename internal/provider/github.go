@@ -414,6 +414,41 @@ func findGitHubPR(repoURL, token, branch string) (string, error) {
 	return prs[0].HTMLURL, nil
 }
 
+// ListGitHubBranches fetches all branch names for a GitHub repository.
+func ListGitHubBranches(repoURL, token string) ([]string, error) {
+	owner, repo, err := parseRepoURL(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/branches?per_page=100", owner, repo)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list branches: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, b)
+	}
+	var branches []struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&branches); err != nil {
+		return nil, fmt.Errorf("decode branches: %w", err)
+	}
+	names := make([]string, 0, len(branches))
+	for _, b := range branches {
+		names = append(names, b.Name)
+	}
+	return names, nil
+}
+
 // parseRepoURL extracts owner and repo from a plain repo URL
 // (e.g. https://github.com/owner/repo or https://github.com/owner/repo/issues/1).
 func parseRepoURL(rawURL string) (owner, repo string, err error) {
