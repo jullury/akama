@@ -1,3 +1,10 @@
+# [3.5.0](https://github.com/jullury/akama/compare/v3.4.0...v3.5.0) (2026-05-20)
+
+
+### Features
+
+* add help, metrics, preview, quickfix, and retry_all bot commands ([7e037a8](https://github.com/jullury/akama/commit/7e037a8faffafd1e347df8c6bca107a83f27693e))
+
 # [3.4.0](https://github.com/jullury/akama/compare/v3.3.1...v3.4.0) (2026-05-20)
 
 
