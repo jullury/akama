@@ -1,3 +1,10 @@
+## [3.3.1](https://github.com/jullury/akama/compare/v3.3.0...v3.3.1) (2026-05-20)
+
+
+### Bug Fixes
+
+* chmod plan workspaces to 0755 so agent can chdir as uid 1000 ([ddbddef](https://github.com/jullury/akama/commit/ddbddef2535ac8b398ff81902f9c9feca9e475f9))
+
 # [3.3.0](https://github.com/jullury/akama/compare/v3.2.0...v3.3.0) (2026-05-20)
 
 
