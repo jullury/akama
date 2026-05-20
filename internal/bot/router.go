@@ -2012,6 +2012,8 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 	if cloneErr != nil {
 		log.Printf("[processMultiIssue] Failed to create workspace: %v", cloneErr)
 	} else {
+		// Go drops credentials (to uid 1000) before chdir; 0700 blocks access.
+		os.Chmod(planWorkspace, 0755)
 		repoSources = make([]string, 0, len(repos))
 		for _, repo := range repos {
 			rURL, _ := repo["repo_url"].(string)
