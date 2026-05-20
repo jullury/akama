@@ -1,3 +1,10 @@
+# [3.6.0](https://github.com/jullury/akama/compare/v3.5.0...v3.6.0) (2026-05-20)
+
+
+### Features
+
+* embed skills in binary and support opencode agent ([9494a2f](https://github.com/jullury/akama/commit/9494a2fe018e0b809c151f9447bf0ca43b52ac0d))
+
 # [3.5.0](https://github.com/jullury/akama/compare/v3.4.0...v3.5.0) (2026-05-20)
 
 
