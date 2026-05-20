@@ -1,3 +1,10 @@
+# [3.3.0](https://github.com/jullury/akama/compare/v3.2.0...v3.3.0) (2026-05-20)
+
+
+### Features
+
+* skip clarifying questions when agent output is insufficient ([a4d4e6f](https://github.com/jullury/akama/commit/a4d4e6ff5b43f449777b7322ef66d4d332c41a0a))
+
 # [3.2.0](https://github.com/jullury/akama/compare/v3.1.3...v3.2.0) (2026-05-20)
 
 
