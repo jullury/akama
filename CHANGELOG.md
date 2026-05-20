@@ -1,3 +1,10 @@
+## [3.6.1](https://github.com/jullury/akama/compare/v3.6.0...v3.6.1) (2026-05-20)
+
+
+### Bug Fixes
+
+* use detached exec for model pull ([d4ea53a](https://github.com/jullury/akama/commit/d4ea53a02d95e3784e885762d2da721242340a54))
+
 # [3.6.0](https://github.com/jullury/akama/compare/v3.5.0...v3.6.0) (2026-05-20)
 
 
