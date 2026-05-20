@@ -1,3 +1,15 @@
+# [3.2.0](https://github.com/jullury/akama/compare/v3.1.3...v3.2.0) (2026-05-20)
+
+
+### Bug Fixes
+
+* remove duplicate job creation from proceedWithPlan ([dbd9c92](https://github.com/jullury/akama/commit/dbd9c92b015c21b8ac857673b142e4677982a64e))
+
+
+### Features
+
+* add multi-repo context to clarifying questions and plan prompts ([ddc07a0](https://github.com/jullury/akama/commit/ddc07a02172c2c3a814a2f5f6235c1f2e10c2537))
+
 ## [3.1.3](https://github.com/jullury/akama/compare/v3.1.2...v3.1.3) (2026-05-19)
 
 
