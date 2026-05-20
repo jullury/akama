@@ -29,11 +29,17 @@ func runRestart(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	configDir := resolveConfigDir(cfgPath)
+	applyPendingHostUpdate(configDir)
+	writeHostInfo(configDir)
+
 	dcli, err := docker.NewClient()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Connect to Docker: %v\n", err)
 		os.Exit(1)
 	}
+
+	ensureImages(dcli)
 
 	ctx := context.Background()
 
@@ -70,8 +76,6 @@ func runRestart(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Resolve config and logs directories.
-	configDir := resolveConfigDir(cfgPath)
 	logsDir := filepath.Join(configDir, "logs")
 
 	if err := docker.EnsureDaemonContainer(ctx, dcli, configDir, logsDir); err != nil {

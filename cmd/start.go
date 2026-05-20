@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -32,6 +33,15 @@ func runStart(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Load config: %v\n", err)
 		os.Exit(1)
 	}
+
+	configDir := resolveConfigDir(cfgPath)
+
+	// Apply any binary update staged by a Telegram /update from inside Docker.
+	applyPendingHostUpdate(configDir)
+
+	// Record host OS/arch/binary-path so the daemon container can stage the
+	// correct host binary when the user runs /update from Telegram.
+	writeHostInfo(configDir)
 
 	for _, s := range agent.BuiltinSkills {
 		if s.Required {
@@ -104,7 +114,6 @@ func runStart(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	configDir := resolveConfigDir(cfgPath)
 	logsDir := filepath.Join(configDir, "logs")
 
 	if err := docker.EnsureDaemonContainer(ctx, dcli, configDir, logsDir); err != nil {
@@ -212,4 +221,51 @@ func resolveConfigDir(path string) string {
 		path = filepath.Join(home, path[2:])
 	}
 	return filepath.Dir(path)
+}
+
+// writeHostInfo saves GOOS, GOARCH, and the current binary path to
+// <configDir>/.host_info so the daemon container can download the right
+// binary when the user triggers /update from Telegram.
+func writeHostInfo(configDir string) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return
+	}
+	content := fmt.Sprintf("GOOS=%s\nGOARCH=%s\nBINARY_PATH=%s\n", runtime.GOOS, runtime.GOARCH, exePath)
+	os.WriteFile(filepath.Join(configDir, ".host_info"), []byte(content), 0644)
+}
+
+// applyPendingHostUpdate checks whether a Telegram /update staged a new host
+// binary in <configDir>/akama-update.  If so, it replaces the running binary
+// and removes the staging files so the next ensureImages call picks up the
+// fresh binary.
+func applyPendingHostUpdate(configDir string) {
+	sentinelPath := filepath.Join(configDir, ".pending-host-update")
+	updatePath := filepath.Join(configDir, "akama-update")
+
+	if _, err := os.Stat(sentinelPath); err != nil {
+		return // no pending update
+	}
+
+	data, err := os.ReadFile(updatePath)
+	if err != nil {
+		os.Remove(sentinelPath)
+		return
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		os.Remove(sentinelPath)
+		return
+	}
+
+	if err := os.WriteFile(exePath, data, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Apply pending update: %v\n", err)
+		os.Remove(sentinelPath)
+		return
+	}
+
+	os.Remove(updatePath)
+	os.Remove(sentinelPath)
+	fmt.Printf("Applied pending update to %s\n", exePath)
 }

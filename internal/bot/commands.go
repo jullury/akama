@@ -799,9 +799,16 @@ func (b *Bot) handleUpdateConfirm(chatID int64) {
 		return
 	}
 
-	b.send(chatID, "Update installed. Restarting now...")
-
-	if os.Getpid() != 1 {
+	if os.Getpid() == 1 {
+		// Docker mode: stage the correct host-OS binary so that the next
+		// `akama start` on the host picks it up and rebuilds the image.
+		if err := stageHostBinaryUpdate(); err != nil {
+			b.send(chatID, fmt.Sprintf("Warning: could not stage host binary update: %v\nRun `akama start` to rebuild the container manually.", err))
+		} else {
+			b.send(chatID, "Update staged. Run `akama start` on the host to rebuild the container with the new version.")
+		}
+	} else {
+		b.send(chatID, "Update installed. Restarting now...")
 		// Non-Docker: spawn a detached helper that waits for this process to
 		// exit, pauses briefly for Telegram to drain the old long-poll connection,
 		// then starts the new daemon. We cannot stop ourselves and then continue
@@ -816,11 +823,63 @@ func (b *Bot) handleUpdateConfirm(chatID int64) {
 		}
 	}
 
-	// Signal ourselves to shut down cleanly (closes all connections).
-	// Docker: PID 1 exits → container restarts → entrypoint preserves the
-	// updated binary on the volume.
+	// Signal ourselves to shut down cleanly.
 	proc, _ := os.FindProcess(os.Getpid())
 	proc.Signal(syscall.SIGTERM)
+}
+
+// stageHostBinaryUpdate reads ~/.akama/.host_info (written by `akama start` on
+// the host) to determine the host OS/arch, downloads the matching release
+// binary to ~/.akama/akama-update, and writes ~/.akama/.pending-host-update so
+// that the next `akama start` applies the update before rebuilding the image.
+func stageHostBinaryUpdate() error {
+	configDir := "/root/.akama"
+	infoPath := filepath.Join(configDir, ".host_info")
+
+	data, err := os.ReadFile(infoPath)
+	if err != nil {
+		return fmt.Errorf("read host info: %w (run `akama start` once to register host info)", err)
+	}
+
+	hostGOOS, hostGOARCH := runtime.GOOS, runtime.GOARCH
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "GOOS":
+			hostGOOS = v
+		case "GOARCH":
+			hostGOARCH = v
+		}
+	}
+
+	asset := fmt.Sprintf("akama-%s-%s", hostGOOS, hostGOARCH)
+	url := fmt.Sprintf("https://github.com/jullury/akama/releases/latest/download/%s", asset)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("download %s: %w", asset, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("download %s: HTTP %d", asset, resp.StatusCode)
+	}
+
+	updatePath := filepath.Join(configDir, "akama-update")
+	f, err := os.OpenFile(updatePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("create update file: %w", err)
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		return fmt.Errorf("write update file: %w", err)
+	}
+	f.Close()
+
+	sentinelPath := filepath.Join(configDir, ".pending-host-update")
+	return os.WriteFile(sentinelPath, []byte("pending"), 0644)
 }
 
 func (b *Bot) handleVersionCommand(chatID int64) {
