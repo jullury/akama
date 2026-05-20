@@ -225,6 +225,11 @@ func EnsureOllamaContainer(ctx context.Context, cli *client.Client) error {
 			"11434/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "11434"}},
 		},
 		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		Resources: container.Resources{
+			DeviceRequests: []container.DeviceRequest{
+				{Driver: "nvidia", Count: -1, Capabilities: [][]string{{"gpu"}}},
+			},
+		},
 	}, nil, nil, OllamaContainer)
 	if err != nil {
 		return fmt.Errorf("create ollama container: %w", err)
