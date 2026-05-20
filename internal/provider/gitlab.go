@@ -454,6 +454,41 @@ func PostGitLabComment(issueURL, token, comment string) error {
 	return nil
 }
 
+// ListGitLabBranches fetches all branch names for a GitLab repository.
+func ListGitLabBranches(repoURL, token string) ([]string, error) {
+	projectPath, err := gitLabProjectPath(repoURL)
+	if err != nil {
+		return nil, err
+	}
+	encodedPath := strings.ReplaceAll(projectPath, "/", "%2F")
+	url := fmt.Sprintf("https://gitlab.com/api/v4/projects/%s/repository/branches?per_page=100", encodedPath)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list branches: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitLab API error %d: %s", resp.StatusCode, b)
+	}
+	var branches []struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&branches); err != nil {
+		return nil, fmt.Errorf("decode branches: %w", err)
+	}
+	names := make([]string, 0, len(branches))
+	for _, b := range branches {
+		names = append(names, b.Name)
+	}
+	return names, nil
+}
+
 // ListGitLabIssuesByLabel returns open issues with the given label that were
 // updated at or after since.
 func ListGitLabIssuesByLabel(repoURL, token, label string, since time.Time) ([]IssueRef, error) {
