@@ -348,22 +348,13 @@ func GetContainerHostPort(ctx context.Context, cli *client.Client, name, contain
 
 func PullAndEnsureModel(ctx context.Context, cli *client.Client, model string) error {
 	execResp, err := cli.ContainerExecCreate(ctx, OllamaContainer, container.ExecOptions{
-		Cmd:          []string{"ollama", "pull", model},
-		AttachStdout: true,
-		AttachStderr: true,
+		Cmd: []string{"ollama", "pull", model},
 	})
 	if err != nil {
 		return fmt.Errorf("create exec for ollama pull: %w", err)
 	}
 
-	resp, err := cli.ContainerExecAttach(ctx, execResp.ID, container.ExecStartOptions{})
-	if err != nil {
-		return fmt.Errorf("attach to ollama pull: %w", err)
-	}
-	defer resp.Close()
-
-	io.Copy(io.Discard, resp.Reader)
-	return nil
+	return cli.ContainerExecStart(ctx, execResp.ID, container.ExecStartOptions{Detach: true})
 }
 
 func ContainerStatus(ctx context.Context, cli *client.Client, name string) (string, error) {
