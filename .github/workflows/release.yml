@@ -121,8 +121,7 @@ jobs:
           cache-to: type=registry,ref=ghcr.io/jullury/akama-daemon:cache,mode=max
           build-args: |
             VERSION=${{ needs.release.outputs.version }}
-            BUILD_TIME=${{ github.event.repository.updated_at }}
-            BUILD_PLATFORM=linux/amd64
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
           secrets: |
             github_client_id=${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
             github_client_secret=${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
