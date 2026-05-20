@@ -1,3 +1,10 @@
+# [3.4.0](https://github.com/jullury/akama/compare/v3.3.1...v3.4.0) (2026-05-20)
+
+
+### Features
+
+* add interactive branch selection via inline keyboards in Telegr... ([d67058b](https://github.com/jullury/akama/commit/d67058bf821df9d4aeb5a277ca526ff318c394e9))
+
 ## [3.3.1](https://github.com/jullury/akama/compare/v3.3.0...v3.3.1) (2026-05-20)
 
 
