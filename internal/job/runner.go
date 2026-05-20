@@ -496,14 +496,20 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		return
 	}
 
-	notify(bot, j.ChatID, fmt.Sprintf("🔍 [%s] %s — cloning repo for: %s...", j.Provider, repoName, j.IssueTitle))
+	notify(bot, j.ChatID, fmt.Sprintf("🔍 [%s] %s — preparing workspace for: %s...", j.Provider, repoName, j.IssueTitle))
 
-	if err := withRetry(ctx, "git clone", 3, func() error {
-		return git.Clone(j.RepoURL, j.GitToken, workspacePath, j.DefaultBranch)
-	}); err != nil {
-		metrics.Global.Failed.Add(1)
-		failJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), workspacePath)
-		return
+	_, statErr := os.Stat(filepath.Join(workspacePath, ".git"))
+	if statErr != nil {
+		os.MkdirAll(workspacePath, 0755)
+		if err := withRetry(ctx, "git clone", 3, func() error {
+			return git.Clone(j.RepoURL, j.GitToken, workspacePath, j.DefaultBranch)
+		}); err != nil {
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), workspacePath)
+			return
+		}
+	} else {
+		log.Printf("[runJob %d] Workspace exists at %s, skipping clone", jobID, workspacePath)
 	}
 
 	// Worker containers run as non-root (uid 1000); make the workspace writable.

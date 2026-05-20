@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -683,6 +684,19 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		if data == "plan:cancel" {
 			conv, convErr := storage.GetConversation(b.JobsDB, chatID, "telegram")
 			if convErr == nil {
+				if jobIDFloat, ok := conv.Data["job_id"].(float64); ok {
+					storage.SetJobStatus(b.JobsDB, int64(jobIDFloat), "cancelled")
+				}
+				if jobIDsRaw, ok := conv.Data["job_ids"].([]interface{}); ok {
+					for _, raw := range jobIDsRaw {
+						switch v := raw.(type) {
+						case float64:
+							storage.SetJobStatus(b.JobsDB, int64(v), "cancelled")
+						case int64:
+							storage.SetJobStatus(b.JobsDB, v, "cancelled")
+						}
+					}
+				}
 				if ws, _ := conv.Data["plan_workspace"].(string); ws != "" {
 					os.RemoveAll(ws)
 				}
@@ -1564,22 +1578,48 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 		WorkspaceBaseDir: b.Config.WorkspaceDir,
 	}
 
-	b.send(chatID, "🔍 Cloning repository for analysis...")
-
-	planWorkspace, cloneErr := os.MkdirTemp(b.Config.WorkspaceDir, "plan-")
-	if cloneErr != nil {
-		b.send(chatID, fmt.Sprintf("❌ Failed to create workspace: %v", cloneErr))
-		return
+	repoParsed, _ := url.Parse(repoURL)
+	pathParts := strings.Split(strings.Trim(repoParsed.Path, "/"), "/")
+	var workspacePath string
+	if len(pathParts) >= 2 {
+		workspacePath = filepath.Join(b.Config.WorkspaceDir, providerName, pathParts[0], pathParts[1], issueID)
+	} else {
+		workspacePath = filepath.Join(b.Config.WorkspaceDir, "repo", issueID)
 	}
 
-	if cloneErr := git.Clone(repoURL, gitToken, planWorkspace, defaultBranch); cloneErr != nil {
+	j := &storage.Job{
+		ChatID:        chatID,
+		IssueID:       issueID,
+		IssueTitle:    title,
+		IssueBody:     body,
+		IssueURL:      issueURL,
+		RepoURL:       repoURL,
+		Provider:      providerName,
+		GitToken:      gitToken,
+		Agent:         agentName,
+		AgentModel:    agentModel,
+		DefaultBranch: defaultBranch,
+		Images:        images,
+		Status:        "planning",
+	}
+	jobID, jerr := storage.CreateJob(b.JobsDB, j)
+	if jerr != nil {
+		b.send(chatID, fmt.Sprintf("❌ Failed to create job: %v", jerr))
+		return
+	}
+	storage.SetJobWorkspace(b.JobsDB, jobID, workspacePath)
+
+	b.send(chatID, "🔍 Cloning repository for analysis...")
+
+	os.MkdirAll(workspacePath, 0755)
+	if cloneErr := git.Clone(repoURL, gitToken, workspacePath, defaultBranch); cloneErr != nil {
 		log.Printf("[startPlanMode] Failed to clone repo for plan context: %v", cloneErr)
 	}
 
 	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
 
 	prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
-	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
+	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, workspacePath, prompt, agentCfg)
 	if agentErr != nil {
 		log.Printf("[startPlanMode] Failed to generate questions: %v", agentErr)
 	}
@@ -1605,7 +1645,8 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 		"issue_id":       issueID,
 		"agent_name":     agentName,
 		"agent_model":    agentModel,
-		"plan_workspace": planWorkspace,
+		"plan_workspace": workspacePath,
+		"job_id":         jobID,
 	})
 
 	var qb strings.Builder
@@ -1629,16 +1670,24 @@ func (b *Bot) proceedWithPlan(chatID int64, conv *storage.Conversation) {
 	issueID, _ := conv.Data["issue_id"].(string)
 	plan, _ := conv.Data["plan"].(string)
 
-	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+	jobIDFloat, _ := conv.Data["job_id"].(float64)
+	jobID := int64(jobIDFloat)
 
-	if ws, _ := conv.Data["plan_workspace"].(string); ws != "" {
-		os.RemoveAll(ws)
-	}
+	storage.ResetConversation(b.JobsDB, chatID, "telegram")
 
 	fullBody := body
 	if plan != "" {
 		planSection := fmt.Sprintf("\n\n## Implementation Plan\n\n%s", plan)
 		fullBody = body + planSection
+	}
+
+	if jobID > 0 {
+		storage.SetJobPlan(b.JobsDB, jobID, plan)
+		storage.UpdateJobIssueBody(b.JobsDB, jobID, fullBody)
+		storage.SetJobStatus(b.JobsDB, jobID, "pending")
+		b.send(chatID, "✅ Plan confirmed! Starting implementation...")
+		job.Run(b.ctx, jobID)
+		return
 	}
 
 	j := &storage.Job{
@@ -1657,38 +1706,57 @@ func (b *Bot) proceedWithPlan(chatID int64, conv *storage.Conversation) {
 		Plan:          plan,
 	}
 
-	jobID, err := storage.CreateJob(b.JobsDB, j)
+	jobID2, err := storage.CreateJob(b.JobsDB, j)
 	if err != nil {
 		b.send(chatID, fmt.Sprintf("Failed to create job: %v", err))
 		return
 	}
 
 	b.send(chatID, "✅ Plan confirmed! Starting implementation...")
-	job.Run(b.ctx, jobID)
+	job.Run(b.ctx, jobID2)
 }
 
 func (b *Bot) proceedWithMultiPlan(chatID int64, conv *storage.Conversation) {
-	issueURL, _ := conv.Data["issue_url"].(string)
 	title, _ := conv.Data["title"].(string)
 	body, _ := conv.Data["body"].(string)
-	issueID, _ := conv.Data["issue_id"].(string)
-	images, _ := conv.Data["images"].(string)
 	plan, _ := conv.Data["plan"].(string)
 	groupID, _ := conv.Data["group_id"].(string)
 
-	reposInterface, _ := conv.Data["repos"].([]interface{})
+	jobIDsRaw, _ := conv.Data["job_ids"].([]interface{})
 
 	storage.ResetConversation(b.JobsDB, chatID, "telegram")
-
-	if ws, _ := conv.Data["plan_workspace"].(string); ws != "" {
-		os.RemoveAll(ws)
-	}
 
 	fullBody := body
 	if plan != "" {
 		fullBody = body + fmt.Sprintf("\n\n## Implementation Plan\n\n%s", plan)
 	}
 
+	var existingIDs []int64
+	for _, raw := range jobIDsRaw {
+		switch v := raw.(type) {
+		case float64:
+			existingIDs = append(existingIDs, int64(v))
+		case int64:
+			existingIDs = append(existingIDs, v)
+		}
+	}
+
+	if len(existingIDs) > 0 {
+		for _, jobID := range existingIDs {
+			storage.SetJobPlan(b.JobsDB, jobID, plan)
+			storage.UpdateJobIssueBody(b.JobsDB, jobID, fullBody)
+			storage.SetJobStatus(b.JobsDB, jobID, "pending")
+		}
+		b.send(chatID, "✅ Plan confirmed! Starting implementation across all repositories...")
+		job.RunGrouped(b.ctx, groupID, existingIDs)
+		return
+	}
+
+	// Fallback: create new jobs if no existing job_ids were found
+	issueURL, _ := conv.Data["issue_url"].(string)
+	issueID, _ := conv.Data["issue_id"].(string)
+	images, _ := conv.Data["images"].(string)
+	reposInterface, _ := conv.Data["repos"].([]interface{})
 	createdIDs := make([]int64, 0, len(reposInterface))
 	for _, ri := range reposInterface {
 		repo, ok := ri.(map[string]interface{})
@@ -1881,13 +1949,57 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		}
 	}
 
+	groupID := fmt.Sprintf("group_%d_%s", chatID, issueID)
+	groupWorkspace := filepath.Join(b.Config.WorkspaceDir, "multi", groupID)
+
+	// Create all jobs before any cloning
+	jobIDs := make([]int64, 0, len(repos))
+	for _, repo := range repos {
+		rURL, _ := repo["repo_url"].(string)
+		rProvider, _ := repo["provider"].(string)
+		rToken, _ := repo["token"].(string)
+		rBranch, _ := repo["default_branch"].(string)
+		if rBranch == "" {
+			rBranch = "main"
+		}
+
+		j := &storage.Job{
+			ChatID:        chatID,
+			IssueID:       issueID,
+			IssueTitle:    title,
+			IssueBody:     body,
+			IssueURL:      issueURL,
+			RepoURL:       rURL,
+			Provider:      rProvider,
+			GitToken:      rToken,
+			Agent:         agentName,
+			AgentModel:    agentModel,
+			DefaultBranch: rBranch,
+			Images:        images,
+			GroupID:       groupID,
+			Status:        "planning",
+		}
+		jobID, jerr := storage.CreateJob(b.JobsDB, j)
+		if jerr != nil {
+			log.Printf("[processMultiIssue] Failed to create job for %s: %v", rURL, jerr)
+			continue
+		}
+		storage.SetJobWorkspace(b.JobsDB, jobID, groupWorkspace)
+		jobIDs = append(jobIDs, jobID)
+	}
+
+	if len(jobIDs) == 0 {
+		b.send(chatID, "Failed to create any jobs.")
+		return
+	}
+
 	agentCfg := &agent.Config{
 		APIKeys:          b.Config.APIKeys,
 		TimeoutMins:      b.Config.AgentTimeoutMins,
 		WorkspaceBaseDir: b.Config.WorkspaceDir,
 	}
 
-	b.send(chatID, "🔍 Cloning repositories for analysis...")
+	b.send(chatID, "🔍 Cloning repository for analysis...")
 
 	planWorkspace, cloneErr := os.MkdirTemp(b.Config.WorkspaceDir, "plan-")
 	var repoSources []string
@@ -1931,8 +2043,6 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		}
 	}
 
-	groupID := fmt.Sprintf("group_%d_%s", chatID, issueID)
-
 	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", map[string]interface{}{
 		"issue_url":      issueURL,
 		"provider":       providerName,
@@ -1947,6 +2057,7 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		"repos":          repos,
 		"repo_sources":   repoSources,
 		"plan_workspace": planWorkspace,
+		"job_ids":        jobIDs,
 	})
 
 	var qb strings.Builder

@@ -36,11 +36,15 @@ type Job struct {
 
 func CreateJob(db *sql.DB, j *Job) (int64, error) {
 	var id int64
+	status := j.Status
+	if status == "" {
+		status = "pending"
+	}
 	err := db.QueryRow(`
-		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, default_branch, images, group_id, plan)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, status, default_branch, images, group_id, plan)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id`,
-		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, encryptToken(j.GitToken), j.Agent, j.AgentModel, j.DefaultBranch, j.Images, j.GroupID, j.Plan).Scan(&id)
+		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, encryptToken(j.GitToken), j.Agent, j.AgentModel, status, j.DefaultBranch, j.Images, j.GroupID, j.Plan).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create job: %w", err)
 	}
@@ -92,7 +96,7 @@ func SetJobPRCreated(db *sql.DB, id int64, branch, prURL string) error {
 }
 
 func RecoverInterruptedJobs(db *sql.DB) error {
-	rows, err := db.Query(`SELECT chat_id FROM jobs WHERE status = 'awaiting_input'`)
+	rows, err := db.Query(`SELECT chat_id FROM jobs WHERE status IN ('planning','awaiting_input')`)
 	if err != nil {
 		return err
 	}
@@ -103,16 +107,16 @@ func RecoverInterruptedJobs(db *sql.DB) error {
 			ResetConversation(db, chatID, "telegram")
 		}
 	}
-	_, err = db.Exec(`UPDATE jobs SET status = 'failed', error_msg = 'interrupted by daemon restart', updated_at = NOW() WHERE status IN ('running','awaiting_input')`)
+	_, err = db.Exec(`UPDATE jobs SET status = 'failed', error_msg = 'interrupted by daemon restart', updated_at = NOW() WHERE status IN ('planning','running','awaiting_input')`)
 	if err != nil {
 		return err
 	}
-	db.Exec(`UPDATE conversations SET state = 'idle', data = '{}', updated_at = NOW() WHERE state = 'await_branch_confirm'`)
+	db.Exec(`UPDATE conversations SET state = 'idle', data = '{}', updated_at = NOW() WHERE state IN ('await_branch_confirm','await_clarifying_questions','await_plan_review','await_plan_regen')`)
 	return nil
 }
 
 func FindActiveJobByIssue(db *sql.DB, chatID int64, issueURL string) *Job {
-	row := db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE chat_id = $1 AND issue_url = $2 AND status IN ('pending','running','awaiting_input') ORDER BY created_at DESC LIMIT 1`,
+	row := db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE chat_id = $1 AND issue_url = $2 AND status IN ('planning','pending','running','awaiting_input') ORDER BY created_at DESC LIMIT 1`,
 		chatID, issueURL)
 	j, _ := scanJob(row)
 	return j
@@ -195,12 +199,12 @@ func SetJobPlan(db *sql.DB, id int64, plan string) error {
 
 func CountActiveJobsByGroupID(db *sql.DB, groupID string) (int, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE group_id = $1 AND status IN ('pending', 'running', 'awaiting_input', 'updating')`, groupID).Scan(&count)
+	err := db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE group_id = $1 AND status IN ('planning', 'pending', 'running', 'awaiting_input', 'updating')`, groupID).Scan(&count)
 	return count, err
 }
 
 func CountActiveJobs(db *sql.DB) (int, error) {
-	row := db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running', 'updating')`)
+	row := db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE status IN ('planning', 'pending', 'running', 'updating')`)
 	var count int
 	err := row.Scan(&count)
 	return count, err
@@ -362,15 +366,29 @@ func GetOldestPendingJob(db *sql.DB) (*Job, error) {
 
 func CreateJobWithPlan(db *sql.DB, j *Job) (int64, error) {
 	var id int64
+	status := j.Status
+	if status == "" {
+		status = "pending"
+	}
 	err := db.QueryRow(`
-		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, default_branch, images, group_id, plan)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		INSERT INTO jobs (chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, status, default_branch, images, group_id, plan)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id`,
-		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, encryptToken(j.GitToken), j.Agent, j.AgentModel, j.DefaultBranch, j.Images, j.GroupID, j.Plan).Scan(&id)
+		j.ChatID, j.IssueID, j.IssueTitle, j.IssueBody, j.IssueURL, j.RepoURL, j.Provider, encryptToken(j.GitToken), j.Agent, j.AgentModel, status, j.DefaultBranch, j.Images, j.GroupID, j.Plan).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("create job with plan: %w", err)
 	}
 	return id, nil
+}
+
+func SetJobWorkspace(db *sql.DB, id int64, path string) error {
+	_, err := db.Exec(`UPDATE jobs SET workspace_path = $1, updated_at = NOW() WHERE id = $2`, path, id)
+	return err
+}
+
+func UpdateJobIssueBody(db *sql.DB, id int64, body string) error {
+	_, err := db.Exec(`UPDATE jobs SET issue_body = $1, updated_at = NOW() WHERE id = $2`, body, id)
+	return err
 }
 
 func FindJobsByPRCreatedStatus(db *sql.DB) ([]*Job, error) {
