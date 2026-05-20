@@ -95,9 +95,13 @@ Jobs
 /cancel — reset conversation state
 /done — mark job done and clean up
 /followup — continue working on a job
+/preview — preview diff for a job
+/quickfix — fix an issue directly without plan review
+/retry_all — retry all failed jobs
 
 Settings
 /config — configure git name, email, and model
+/metrics — show internal metrics
 /skills — browse and install skillhub.club skills
 /update — update Akama server binary to the latest version
 /update_agents — update agents to latest version
