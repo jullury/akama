@@ -217,11 +217,13 @@ func (r *opencodeRunner) Run(ctx context.Context, model, workspacePath, promptPa
 		return "", fmt.Errorf("read prompt: %w", readErr)
 	}
 
-	args := []string{"run", string(promptContent), "--dir", workspacePath, "--dangerously-skip-permissions", "--format", "json"}
+	// Pass prompt via stdin to avoid ARG_MAX when content is large.
+	args := []string{"run", "--dir", workspacePath, "--dangerously-skip-permissions", "--format", "json"}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
 	cmd := agentCmd(ctx, "opencode", args, workspacePath, cfg)
+	cmd.Stdin = bytes.NewReader(promptContent)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
