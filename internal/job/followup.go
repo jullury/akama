@@ -122,6 +122,7 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 		storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
 	}
 
+	storage.ResetConversation(jobsDB, j.ChatID, "telegram")
 	os.Remove(promptPath)
 }
 
@@ -245,6 +246,7 @@ func runGroupedFollowUp(ctx context.Context, primary *storage.Job, userText stri
 	}
 
 	storage.SetJobStatus(jobsDB, primary.ID, "pr_created")
+	storage.ResetConversation(jobsDB, primary.ChatID, "telegram")
 	os.Remove(promptPath)
 }
 
