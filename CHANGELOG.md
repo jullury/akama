@@ -1,3 +1,10 @@
+## [3.7.1](https://github.com/jullury/akama/compare/v3.7.0...v3.7.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* use stdin to avoid command ARG_MAX error ([674db4e](https://github.com/jullury/akama/commit/674db4e457c252b1ce2a3c5d9d5127828dda3ee2))
+
 # [3.7.0](https://github.com/jullury/akama/compare/v3.6.2...v3.7.0) (2026-05-20)
 
 
