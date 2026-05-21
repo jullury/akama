@@ -201,7 +201,7 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 			continue
 		}
 
-		if err := chmodWorkspace(clonePath); err != nil {
+		if err := ChmodWorkspace(clonePath); err != nil {
 			log.Printf("chmod workspace: %v", err)
 		}
 
@@ -231,8 +231,12 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 
 	var knowledgePath string
 	if pkgOllamaURL != "" {
+		queryBody := issueBody
+		if len(queryBody) > 2000 {
+			queryBody = queryBody[:2000]
+		}
 		similarJobs, err := knowledge.FindSimilar(ctx, pkgDB, pkgOllamaURL,
-			issueTitle+"\n"+issueBody, 3)
+			issueTitle+"\n"+queryBody, 3)
 		if err != nil {
 			log.Printf("knowledge lookup for group %s: %v", groupID, err)
 		}
@@ -417,8 +421,30 @@ Write as a human developer would.
 	}
 }
 
+func miseBinary() string {
+	if path, err := exec.LookPath("mise"); err == nil {
+		return path
+	}
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		filepath.Join(home, ".local", "bin", "mise"),
+		"/usr/local/bin/mise",
+		"/opt/homebrew/bin/mise",
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 func setupMise(dir string) error {
-	cmd := exec.Command("mise", "install")
+	bin := miseBinary()
+	if bin == "" {
+		return fmt.Errorf("mise install: exec: \"mise\": executable file not found in $PATH")
+	}
+	cmd := exec.Command(bin, "install")
 	cmd.Dir = dir
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -513,7 +539,7 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}
 
 	// Worker containers run as non-root (uid 1000); make the workspace writable.
-	if err := chmodWorkspace(workspacePath); err != nil {
+	if err := ChmodWorkspace(workspacePath); err != nil {
 		log.Printf("chmod workspace: %v", err)
 	}
 
@@ -525,8 +551,12 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 
 	var knowledgePath string
 	if pkgOllamaURL != "" {
+		queryBody := j.IssueBody
+		if len(queryBody) > 2000 {
+			queryBody = queryBody[:2000]
+		}
 		similarJobs, err := knowledge.FindSimilar(ctx, pkgDB, pkgOllamaURL,
-			j.IssueTitle+"\n"+j.IssueBody, 3)
+			j.IssueTitle+"\n"+queryBody, 3)
 		if err != nil {
 			log.Printf("knowledge lookup for job %d: %v", jobID, err)
 		}
@@ -815,9 +845,9 @@ func WaitForJobs(timeoutSec int) {
 	}
 }
 
-// chmodWorkspace recursively opens workspace permissions so that non-root worker
+// ChmodWorkspace recursively opens workspace permissions so that non-root worker
 // containers (uid 1000) can read and write files created by the root daemon.
-func chmodWorkspace(path string) error {
+func ChmodWorkspace(path string) error {
 	return filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable entries

@@ -744,8 +744,8 @@ func RunPlanAgent(ctx context.Context, agentName, model, workspacePath, promptCo
 		if err != nil {
 			return "", fmt.Errorf("create temp dir: %w", err)
 		}
-		// Go drops credentials (to uid 1000) before chdir; 0700 blocks access.
-		os.Chmod(workspacePath, 0755)
+		// Go drops credentials (to uid 1000) before chdir; needs write access.
+		os.Chmod(workspacePath, 0777)
 		defer os.RemoveAll(workspacePath)
 	}
 

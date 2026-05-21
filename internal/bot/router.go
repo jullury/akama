@@ -1746,6 +1746,7 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 	if cloneErr := git.Clone(repoURL, gitToken, workspacePath, defaultBranch); cloneErr != nil {
 		log.Printf("[startPlanMode] Failed to clone repo for plan context: %v", cloneErr)
 	}
+	job.ChmodWorkspace(workspacePath)
 
 	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
 
@@ -2143,8 +2144,6 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 	if cloneErr != nil {
 		log.Printf("[processMultiIssue] Failed to create workspace: %v", cloneErr)
 	} else {
-		// Go drops credentials (to uid 1000) before chdir; 0700 blocks access.
-		os.Chmod(planWorkspace, 0755)
 		repoSources = make([]string, 0, len(repos))
 		for _, repo := range repos {
 			rURL, _ := repo["repo_url"].(string)
@@ -2163,6 +2162,7 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 				repoSources = append(repoSources, fmt.Sprintf("  - %s/%s (%s)", owner, rName, git.DetectProvider(rURL)))
 			}
 		}
+		job.ChmodWorkspace(planWorkspace)
 	}
 
 	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
