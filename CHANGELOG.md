@@ -1,3 +1,10 @@
+## [3.7.3](https://github.com/jullury/akama/compare/v3.7.2...v3.7.3) (2026-05-21)
+
+
+### Bug Fixes
+
+* improve follow-up state validation and cleanup ([fd8e7a6](https://github.com/jullury/akama/commit/fd8e7a68fe3b89afcba81891078c9d51b77f435f))
+
 ## [3.7.2](https://github.com/jullury/akama/compare/v3.7.1...v3.7.2) (2026-05-21)
 
 
