@@ -1,3 +1,10 @@
+## [3.7.2](https://github.com/jullury/akama/compare/v3.7.1...v3.7.2) (2026-05-21)
+
+
+### Bug Fixes
+
+* fix(job): resolve mise PATH lookup and Ollama context overflow ([9a1b08c](https://github.com/jullury/akama/commit/9a1b08c8f09ed193da445252c59dd31f483e391e))
+
 ## [3.7.1](https://github.com/jullury/akama/compare/v3.7.0...v3.7.1) (2026-05-21)
 
 
