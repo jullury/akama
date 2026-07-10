@@ -7,3 +7,4 @@ akama-linux-*
 node_modules
 .dockerignore
 .mise/
+graphify-out/
