@@ -1,3 +1,10 @@
+## [3.7.4](https://github.com/jullury/akama/compare/v3.7.3...v3.7.4) (2026-07-10)
+
+
+### Bug Fixes
+
+* sync embedded skills with host ~/.opencode/skills/ ([2a12556](https://github.com/jullury/akama/commit/2a12556811d45a08bb86648874757c507257c4ce))
+
 ## [3.7.3](https://github.com/jullury/akama/compare/v3.7.2...v3.7.3) (2026-05-21)
 
 
