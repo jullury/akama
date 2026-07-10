@@ -3,6 +3,8 @@ name: executing-plans
 description: Use when you have a written implementation plan to execute in a separate session with review checkpoints
 ---
 
+> **⚠️ OpenCode note:** This skill is NOT available in OpenCode. OpenCode does not support opening parallel/separate sessions. Use `superpowers:subagent-driven-development` instead — it achieves the same result within the current session by dispatching fresh subagents per task.
+
 # Executing Plans
 
 ## Overview

@@ -128,6 +128,12 @@ func findSkillContent(home string, s Skill) []byte {
 	if data, err := embeddedSkills.ReadFile("embedded/" + s.ID + "/SKILL.md"); err == nil {
 		return data
 	}
+	// 4b. Also check ContentFile path (some skills use a directory name different from ID)
+	if s.ContentFile != "" {
+		if data, err := embeddedSkills.ReadFile("embedded/" + s.ContentFile); err == nil {
+			return data
+		}
+	}
 	return nil
 }
 
