@@ -1,3 +1,10 @@
+## [3.8.5](https://github.com/jullury/akama/compare/v3.8.4...v3.8.5) (2026-07-12)
+
+
+### Bug Fixes
+
+* log bot polling loop only after first successful GetUpdates ([13bdc02](https://github.com/jullury/akama/commit/13bdc02f497f0bbc1ffd96135ee2e8465fda1cf0))
+
 ## [3.8.4](https://github.com/jullury/akama/compare/v3.8.3...v3.8.4) (2026-07-12)
 
 
