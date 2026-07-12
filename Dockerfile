@@ -45,11 +45,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1000 -s /bin/bash worker
 
+ARG TARGETARCH=amd64
+
 USER worker
 ENV NPM_CONFIG_PREFIX=/home/worker/.npm-global
 ENV PATH="/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 RUN --mount=type=cache,target=/home/worker/.npm,uid=1000,gid=1000 \
     npm install -g @anthropic-ai/claude-code opencode-ai
+
+# Install RTK (Rust Token Killer) — CLI proxy that reduces LLM token usage 60-90%.
+# Binary is placed in /usr/local/bin so both worker and akama users can execute it.
+ARG RTK_VERSION=0.43.0
+RUN RTK_ARCH=$(case "${TARGETARCH}" in \
+        "amd64") echo "x86_64-unknown-linux-musl" ;; \
+        "arm64") echo "aarch64-unknown-linux-gnu" ;; \
+        *) echo "${TARGETARCH}" ;; esac) && \
+    curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/rtk-${RTK_ARCH}.tar.gz" \
+        | tar xz -C /usr/local/bin rtk && \
+    chmod +x /usr/local/bin/rtk
 
 USER root
 COPY --from=builder /akama /usr/local/bin/akama

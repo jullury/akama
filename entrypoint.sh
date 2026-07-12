@@ -61,6 +61,14 @@ ensure_npm_pkg() {
 ensure_npm_pkg "opencode-ai" "opencode"
 ensure_npm_pkg "@anthropic-ai/claude-code" "claude"
 
+# Install RTK hooks (rewrites shell commands for 60-90% token savings).
+# Sets up: Claude Code PreToolUse hook + RTK.md, OpenCode plugin.
+# Only runs if rtk binary is available and not yet configured.
+if command -v rtk > /dev/null 2>&1 && [ ! -f ~/.config/opencode/plugins/rtk.ts ]; then
+    echo "Installing RTK hooks for Claude Code + OpenCode..."
+    rtk init -g 2>&1 || echo "RTK init failed (non-fatal)"
+fi
+
 mkdir -p ~/.akama/workspaces
 
 # Generate config from environment variables
