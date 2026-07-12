@@ -426,6 +426,20 @@ func ImageExists(ctx context.Context, cli *client.Client, ref string) bool {
 	return err == nil
 }
 
+// ImageCreatedAt returns the creation time of the named image as a time.Time.
+// Returns zero time if the image is not found.
+func ImageCreatedAt(ctx context.Context, cli *client.Client, ref string) time.Time {
+	info, err := cli.ImageInspect(ctx, ref)
+	if err != nil {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, info.Created)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
 // TagImage adds a new tag to an existing local image.
 func TagImage(ctx context.Context, cli *client.Client, source, target string) error {
 	return cli.ImageTag(ctx, source, target)

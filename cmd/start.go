@@ -134,8 +134,8 @@ func runStart(cmd *cobra.Command, args []string) {
 }
 
 // ensureImages ensures all required Docker images are present.
-// The daemon image is always built locally from source so it stays in sync
-// with the running binary. The worker image is pulled from GHCR when available.
+// The daemon image is built locally from source when it doesn't exist or
+// the CLI binary has been updated since the image was last built.
 func ensureImages(dcli *dockerclient.Client) {
 	ctx := context.Background()
 
@@ -153,18 +153,33 @@ func ensureImages(dcli *dockerclient.Client) {
 		}
 	}
 
-	// Daemon image: always build locally from current source so that the
-	// container binary stays in sync with the CLI binary and any local changes
-	// are picked up on every start.
-	fmt.Println("Building akama-daemon image...")
+	// Daemon image: build only when missing or when the CLI binary is newer
+	// than the existing image (indicating a binary update has occurred).
 	exePath, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Get executable path: %v\n", err)
 		os.Exit(1)
 	}
-	if err := docker.BuildDaemonImage(ctx, dcli, exePath, config.Version, os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "Build daemon image: %v\n", err)
-		os.Exit(1)
+
+	needsBuild := true
+	if docker.ImageExists(ctx, dcli, docker.DaemonImage) {
+		exeInfo, err := os.Stat(exePath)
+		if err == nil {
+			imgCreated := docker.ImageCreatedAt(ctx, dcli, docker.DaemonImage)
+			if !imgCreated.IsZero() && !exeInfo.ModTime().After(imgCreated) {
+				needsBuild = false
+			}
+		}
+	}
+
+	if needsBuild {
+		fmt.Println("Building akama-daemon image...")
+		if err := docker.BuildDaemonImage(ctx, dcli, exePath, config.Version, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "Build daemon image: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		fmt.Println("Daemon image is up to date.")
 	}
 }
 
