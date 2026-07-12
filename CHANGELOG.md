@@ -1,3 +1,10 @@
+## [3.8.2](https://github.com/jullury/akama/compare/v3.8.1...v3.8.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* **docker:** use Node.js 22 from NodeSource for Claude Code compatibility ([db0fba4](https://github.com/jullury/akama/commit/db0fba4954c7aec579699ecfdafe2f90eee21a7b))
+
 ## [3.8.1](https://github.com/jullury/akama/compare/v3.8.0...v3.8.1) (2026-07-12)
 
 
