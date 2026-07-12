@@ -40,8 +40,12 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
         -o /akama .
 
 FROM debian:bookworm-slim
+# Install Node.js 22 from NodeSource (Debian bookworm ships Node 18 which is
+# too old for @anthropic-ai/claude-code ≥ 2.x).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git docker.io nodejs npm curl bash \
+    ca-certificates git docker.io curl bash xz-utils \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1000 -s /bin/bash worker
 
