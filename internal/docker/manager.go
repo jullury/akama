@@ -200,6 +200,13 @@ func EnsurePostgresContainer(ctx context.Context, cli *client.Client, hostPort s
 	return nil
 }
 
+// nvidiaAvailable returns true if the nvidia-smi command exists on the host,
+// indicating that the NVIDIA Docker runtime is installed.
+func nvidiaAvailable() bool {
+	_, err := exec.LookPath("nvidia-smi")
+	return err == nil
+}
+
 func EnsureOllamaContainer(ctx context.Context, cli *client.Client) error {
 	running, err := ContainerRunning(ctx, cli, OllamaContainer)
 	if err != nil {
@@ -214,23 +221,31 @@ func EnsureOllamaContainer(ctx context.Context, cli *client.Client) error {
 		return err
 	}
 	if exists {
-		return cli.ContainerStart(ctx, OllamaContainer, container.StartOptions{})
+		// Remove stale containers so we pick up new config (e.g. GPU
+		// settings that may have changed since the container was created).
+		if err := RemoveContainer(ctx, cli, OllamaContainer); err != nil {
+			return fmt.Errorf("remove stale ollama container: %w", err)
+		}
+	}
+
+	hostConfig := &container.HostConfig{
+		PortBindings: nat.PortMap{
+			"11434/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "11434"}},
+		},
+		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+	}
+	// Only request NVIDIA GPU when the driver is available on the host.
+	// macOS and Linux without NVIDIA work fine in CPU-only mode.
+	if nvidiaAvailable() {
+		hostConfig.Resources.DeviceRequests = []container.DeviceRequest{
+			{Driver: "nvidia", Count: -1, Capabilities: [][]string{{"gpu"}}},
+		}
 	}
 
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image:  OllamaImage,
 		Labels: map[string]string{"app": "akama"},
-	}, &container.HostConfig{
-		PortBindings: nat.PortMap{
-			"11434/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "11434"}},
-		},
-		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
-		Resources: container.Resources{
-			DeviceRequests: []container.DeviceRequest{
-				{Driver: "nvidia", Count: -1, Capabilities: [][]string{{"gpu"}}},
-			},
-		},
-	}, nil, nil, OllamaContainer)
+	}, hostConfig, nil, nil, OllamaContainer)
 	if err != nil {
 		return fmt.Errorf("create ollama container: %w", err)
 	}
