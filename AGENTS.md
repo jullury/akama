@@ -2,6 +2,31 @@
 
 Compact guidance for agents working in the Akama repository.
 
+## Codebase Exploration with graphify
+
+**Always use graphify when there is even a 1% chance it could help.** This includes:
+
+- Understanding how components connect or data flows through the system
+- Finding which files/packages depend on each other
+- Tracing a feature across multiple packages
+- Onboarding to unfamiliar parts of the codebase
+- Asking "how does X work?" or "what calls Y?"
+- Any question about architecture, relationships, or cross-cutting concerns
+
+**Usage:**
+```bash
+/graphify                    # build knowledge graph of current directory
+/graphify query "<question>" # query existing graph
+/graphify path "A" "B"       # find shortest path between two concepts
+/graphify explain "NodeName" # plain-language explanation
+```
+
+**When to use graphify vs. grep/ripgrep:**
+- Use **graphify** for understanding *relationships*, *architecture*, *data flow*, and *cross-package connections*
+- Use **grep/ripgrep** for finding *specific strings*, *function definitions*, or *exact code patterns*
+
+**Do not skip graphify** because "it's overkill" or "I can search manually." The graph catches connections you wouldn't think to search for.
+
 ## Build & Verify
 
 - **Toolchain**: After clone, run `make setup` or `curl https://mise.run/ | sh && mise install` to install Go and Node via [mise](https://mise.run/) (defined in `.mise.toml`).
