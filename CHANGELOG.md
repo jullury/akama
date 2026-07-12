@@ -1,3 +1,10 @@
+## [3.8.4](https://github.com/jullury/akama/compare/v3.8.3...v3.8.4) (2026-07-12)
+
+
+### Bug Fixes
+
+* **start:** skip daemon image build when image is up to date ([443f7ef](https://github.com/jullury/akama/commit/443f7ef579472a6d9cefbc20173f8166f3b4398d))
+
 ## [3.8.3](https://github.com/jullury/akama/compare/v3.8.2...v3.8.3) (2026-07-12)
 
 
