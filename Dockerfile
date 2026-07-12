@@ -56,15 +56,13 @@ RUN --mount=type=cache,target=/home/worker/.npm,uid=1000,gid=1000 \
 # Install RTK (Rust Token Killer) — CLI proxy that reduces LLM token usage 60-90%.
 # Binary is placed in /usr/local/bin so both worker and akama users can execute it.
 ARG RTK_VERSION=0.43.0
-RUN RTK_ARCH=$(case "${TARGETARCH}" in \
-        "amd64") echo "x86_64-unknown-linux-musl" ;; \
-        "arm64") echo "aarch64-unknown-linux-gnu" ;; \
-        *) echo "${TARGETARCH}" ;; esac) && \
+USER root
+RUN if [ "${TARGETARCH}" = "arm64" ]; then RTK_ARCH="aarch64-unknown-linux-gnu"; \
+    else RTK_ARCH="x86_64-unknown-linux-musl"; fi && \
     curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/v${RTK_VERSION}/rtk-${RTK_ARCH}.tar.gz" \
         | tar xz -C /usr/local/bin rtk && \
     chmod +x /usr/local/bin/rtk
 
-USER root
 COPY --from=builder /akama /usr/local/bin/akama
 WORKDIR /workspaces
 ENTRYPOINT ["akama", "--daemon"]
