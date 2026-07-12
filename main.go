@@ -153,7 +153,6 @@ func runDaemon() {
 	job.StartLabelPoller(ctx, db, b.API, agentCfg, cfg)
 	job.StartReviewPoller(ctx, db, b.API, agentCfg, cfg)
 
-	log.Println("Starting bot...")
 	go func() {
 		job.CleanOldWorkspaces(cfg.WorkspaceDir, cfg.MaxWorkspaceAgeDays)
 		ticker := time.NewTicker(24 * time.Hour)

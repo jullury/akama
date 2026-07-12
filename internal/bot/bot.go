@@ -111,6 +111,7 @@ func (b *Bot) RunCtx(ctx context.Context) {
 	u.AllowedUpdates = []string{"message", "callback_query"}
 
 	consecutiveErrors := 0
+	firstPoll := true
 
 	for {
 		select {
@@ -143,6 +144,11 @@ func (b *Bot) RunCtx(ctx context.Context) {
 			case <-time.After(3 * time.Second):
 			}
 			continue
+		}
+
+		if firstPoll {
+			firstPoll = false
+			log.Println("Bot polling loop established")
 		}
 
 		consecutiveErrors = 0
