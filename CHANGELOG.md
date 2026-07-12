@@ -1,3 +1,10 @@
+## [3.8.3](https://github.com/jullury/akama/compare/v3.8.2...v3.8.3) (2026-07-12)
+
+
+### Bug Fixes
+
+* **docker:** only request NVIDIA GPU when nvidia-smi is available on host ([fea93e9](https://github.com/jullury/akama/commit/fea93e9ce13f86d1a22c8db9317670e66da4ab9a))
+
 ## [3.8.2](https://github.com/jullury/akama/compare/v3.8.1...v3.8.2) (2026-07-12)
 
 
