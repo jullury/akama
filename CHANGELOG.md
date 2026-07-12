@@ -1,3 +1,11 @@
+# [3.8.0](https://github.com/jullury/akama/compare/v3.7.4...v3.8.0) (2026-07-12)
+
+
+### Features
+
+* add RTK token optimizer to Docker image ([97a9de5](https://github.com/jullury/akama/commit/97a9de5f8479da057aa82932a55a1c036e9efc3e))
+* **knowledge:** enhance knowledge base for better issue resolution ([7ac934a](https://github.com/jullury/akama/commit/7ac934a4275307d4dd967b4a7e6da5af787046d9))
+
 ## [3.7.4](https://github.com/jullury/akama/compare/v3.7.3...v3.7.4) (2026-07-10)
 
 
