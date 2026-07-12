@@ -230,18 +230,33 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 	}
 
 	var knowledgePath string
+	var similarJobIDs []int64
 	if pkgOllamaURL != "" {
 		queryBody := issueBody
 		if len(queryBody) > 2000 {
 			queryBody = queryBody[:2000]
 		}
-		similarJobs, err := knowledge.FindSimilar(ctx, pkgDB, pkgOllamaURL,
-			issueTitle+"\n"+queryBody, 3)
+		// For grouped jobs, search across all repos in the group
+		// Use the first job's repo as primary context
+		primaryRepoURL := ""
+		if len(jobs) > 0 {
+			primaryRepoURL = jobs[0].RepoURL
+		}
+		similarJobs, err := knowledge.FindSimilarForRepo(ctx, pkgDB, pkgOllamaURL,
+			issueTitle+"\n"+queryBody, primaryRepoURL, 5)
 		if err != nil {
 			log.Printf("knowledge lookup for group %s: %v", groupID, err)
 		}
 		if len(similarJobs) > 0 {
 			knowledgePath, _ = knowledge.WriteKnowledgeFile(groupWorkspace, similarJobs)
+			// Track similar job IDs for feedback
+			for _, sj := range similarJobs {
+				similarJobIDs = append(similarJobIDs, sj.ID)
+			}
+			// Track knowledge usage for primary job
+			if len(jobs) > 0 {
+				knowledge.TrackUsage(ctx, pkgDB, jobs[0].ID, knowledgePath, similarJobIDs)
+			}
 		}
 	}
 
@@ -550,18 +565,26 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] %s — running AI agent on: %s", j.Provider, repoName, j.IssueTitle))
 
 	var knowledgePath string
+	var similarJobIDs []int64
 	if pkgOllamaURL != "" {
 		queryBody := j.IssueBody
 		if len(queryBody) > 2000 {
 			queryBody = queryBody[:2000]
 		}
-		similarJobs, err := knowledge.FindSimilar(ctx, pkgDB, pkgOllamaURL,
-			j.IssueTitle+"\n"+queryBody, 3)
+		// Use enhanced search with repository context for better matching
+		similarJobs, err := knowledge.FindSimilarForRepo(ctx, pkgDB, pkgOllamaURL,
+			j.IssueTitle+"\n"+queryBody, j.RepoURL, 5)
 		if err != nil {
 			log.Printf("knowledge lookup for job %d: %v", jobID, err)
 		}
 		if len(similarJobs) > 0 {
 			knowledgePath, _ = knowledge.WriteKnowledgeFile(workspacePath, similarJobs)
+			// Track similar job IDs for feedback
+			for _, sj := range similarJobs {
+				similarJobIDs = append(similarJobIDs, sj.ID)
+			}
+			// Track knowledge usage
+			knowledge.TrackUsage(ctx, pkgDB, jobID, knowledgePath, similarJobIDs)
 		}
 	}
 

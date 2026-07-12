@@ -45,6 +45,16 @@ func EmbedJob(ctx context.Context, db *sql.DB, ollamaURL string, job storage.Job
 
 func buildEmbeddingText(job storage.Job) string {
 	var parts []string
+
+	// Repository context for better matching
+	if job.RepoURL != "" {
+		parts = append(parts, "Repository: "+job.RepoURL)
+	}
+	if job.Provider != "" {
+		parts = append(parts, "Provider: "+job.Provider)
+	}
+
+	// Issue details
 	if job.IssueTitle != "" {
 		parts = append(parts, "Issue: "+job.IssueTitle)
 	}
@@ -55,6 +65,8 @@ func buildEmbeddingText(job storage.Job) string {
 		}
 		parts = append(parts, body)
 	}
+
+	// Implementation plan
 	if job.Plan != "" {
 		plan := job.Plan
 		if len(plan) > 1000 {
@@ -62,6 +74,22 @@ func buildEmbeddingText(job storage.Job) string {
 		}
 		parts = append(parts, "Plan: "+plan)
 	}
+
+	// Agent output contains reasoning and steps taken
+	if job.AgentOutput != "" {
+		output := job.AgentOutput
+		if len(output) > 1500 {
+			output = output[:1500]
+		}
+		parts = append(parts, "AgentReasoning: "+output)
+	}
+
+	// Error context if job failed
+	if job.ErrorMsg != "" {
+		parts = append(parts, "Error: "+job.ErrorMsg)
+	}
+
+	// Result context
 	result := ""
 	if job.PRURL != "" {
 		result = "Result: " + job.PRURL
@@ -76,6 +104,7 @@ func buildEmbeddingText(job storage.Job) string {
 	if result != "" {
 		parts = append(parts, result)
 	}
+
 	return strings.Join(parts, "\n\n")
 }
 

@@ -121,6 +121,19 @@ func Migrate(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_job_embeddings_vec
 		ON job_embeddings USING ivfflat (embedding vector_cosine_ops)
 		WITH (lists = 100);
+
+	CREATE TABLE IF NOT EXISTS knowledge_usage (
+		id                 BIGSERIAL PRIMARY KEY,
+		job_id             BIGINT UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+		knowledge_file_path TEXT,
+		similar_jobs_found  INT DEFAULT 0,
+		similar_job_ids     TEXT,
+		agent_referenced    BOOLEAN DEFAULT FALSE,
+		created_at         TIMESTAMPTZ DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_knowledge_usage_job_id
+		ON knowledge_usage (job_id);
 	`
 	if _, err := db.Exec(schema); err != nil {
 		return err

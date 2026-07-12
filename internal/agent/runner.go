@@ -403,7 +403,19 @@ Write as a human developer would.
 
 	if knowledgePath != "" {
 		prompt += fmt.Sprintf(`
-Prior art from similar resolved issues is available in %s — read it before implementing.
+## Prior Art Analysis Required
+
+Before implementing, you MUST read and analyze the knowledge base at: %s
+
+This file contains similar issues that were previously resolved. Use it to:
+
+1. **Identify Root Cause**: Understand WHY similar issues occurred, not just HOW they were fixed
+2. **Recognize Patterns**: Look for recurring patterns across similar issues
+3. **Apply Proven Solutions**: Use approaches that worked for similar problems
+4. **Prevent Recurrence**: Consider what can prevent similar issues
+
+Analyze the knowledge base thoroughly, then implement your fix while applying insights from prior art.
+Reference specific patterns or approaches from the knowledge base in your implementation.
 `, knowledgePath)
 	}
 
