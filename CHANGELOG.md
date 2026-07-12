@@ -1,3 +1,10 @@
+## [3.8.1](https://github.com/jullury/akama/compare/v3.8.0...v3.8.1) (2026-07-12)
+
+
+### Bug Fixes
+
+* **docker:** fix RTK binary install in container image ([ee6cd72](https://github.com/jullury/akama/commit/ee6cd7255deb9a7446533bd186fe0fa32acd73bc))
+
 # [3.8.0](https://github.com/jullury/akama/compare/v3.7.4...v3.8.0) (2026-07-12)
 
 
