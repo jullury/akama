@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,12 +17,13 @@ import (
 
 	"github.com/jullury/akama/internal/config"
 	"github.com/jullury/akama/internal/daemon"
+	docker "github.com/jullury/akama/internal/docker"
 	"github.com/spf13/cobra"
 )
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
-	Short: "Check for newer version and update binary",
+	Short: "Check for newer version and update (Docker container or native binary)",
 	Run:   runUpdate,
 }
 
@@ -63,6 +65,12 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Printf("New version available: %s\n", latest)
+
+	// Docker mode: if the daemon runs as a container, pull the new image
+	// and recreate the container instead of doing a native binary update.
+	if dockerUpdate(latest) {
+		return
+	}
 
 	fmt.Println("Downloading and installing...")
 	if err := downloadUpdate(); err != nil {
@@ -112,6 +120,62 @@ func runUpdate(cmd *cobra.Command, args []string) {
 	}
 	fmt.Fprintln(os.Stderr, "akama daemon did not start in time — check logs with `akama logs`")
 	os.Exit(1)
+}
+
+// dockerUpdate checks whether the daemon is running as a Docker container.
+// If so, it pulls the latest image, recreates the container, and returns true.
+// If Docker is unavailable or the daemon container is not running, it returns
+// false so the caller falls through to the native binary update path.
+func dockerUpdate(newVersion string) bool {
+	dcli, err := docker.NewClient()
+	if err != nil {
+		return false // Docker not available, fall through to native update
+	}
+
+	ctx := context.Background()
+
+	running, _ := docker.ContainerRunning(ctx, dcli, docker.DaemonContainer)
+	if !running {
+		return false // daemon container not running, fall through to native update
+	}
+
+	fmt.Println("Daemon is running in Docker — pulling new image...")
+
+	// Pull the latest daemon image from GHCR.
+	if err := docker.PullImage(ctx, dcli, docker.DaemonImageRef, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "Pull daemon image: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Falling back to native update...")
+		return false
+	}
+
+	// Tag the pulled image as the local name the daemon container expects.
+	if err := dcli.ImageTag(ctx, docker.DaemonImageRef, docker.DaemonImage); err != nil {
+		fmt.Fprintf(os.Stderr, "Tag daemon image: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Falling back to native update...")
+		return false
+	}
+
+	configDir := resolveConfigDir(cfgPath)
+	logsDir := filepath.Join(configDir, "logs")
+
+	// Recreate the daemon container with the new image.
+	fmt.Println("Recreating daemon container...")
+	if err := docker.EnsureDaemonContainer(ctx, dcli, configDir, logsDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Recreate daemon container: %v\n", err)
+		os.Exit(1)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if running, _ := docker.ContainerRunning(ctx, dcli, docker.DaemonContainer); running {
+			fmt.Printf("akama daemon updated and restarted (Docker container %s)\n", docker.DaemonContainer)
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	fmt.Fprintln(os.Stderr, "akama daemon container did not start in time — check logs with `akama logs`")
+	os.Exit(1)
+	return false
 }
 
 func getLatestVersion() (string, error) {
