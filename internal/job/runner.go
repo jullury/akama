@@ -154,8 +154,6 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 	issueURL := jobs[0].IssueURL
 	issueBody := jobs[0].IssueBody
 
-	groupWorkspace := filepath.Join(workspaceDir, "multi", groupID)
-
 	// Load user config and apply to all jobs
 	userCfg, _ := storage.GetUserConfig(jobsDB, chatID)
 	gitName, gitEmail := "", ""
@@ -171,7 +169,7 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 		}
 	}
 
-	// Refresh tokens from connections and set workspace for all jobs
+	// Refresh tokens from connections
 	for _, j := range jobs {
 		if conn, err := storage.FindConnectionByRepo(jobsDB, j.ChatID, j.RepoURL); err == nil && conn != nil {
 			if conn.GitToken != j.GitToken {
@@ -179,26 +177,41 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 				storage.UpdateJobToken(jobsDB, j.ID, conn.GitToken)
 			}
 		}
-		storage.SetJobRunning(jobsDB, j.ID, groupWorkspace)
 	}
 
 	notify(bot, chatID, fmt.Sprintf("🔍 Cloning %d repositories for: %s...", len(jobs), issueTitle))
 
-	// Clone all repos into subdirectories of the shared workspace
+	// Clone each repo into its own structured workspace
 	clonePaths := make(map[int64]string)
 	cloneFailedJobs := make(map[int64]bool)
 	for _, j := range jobs {
-		owner, repo, _ := git.OwnerRepo(j.RepoURL)
-		dirName := owner + "-" + repo
-		clonePath := filepath.Join(groupWorkspace, dirName)
+		clonePath := j.WorkspacePath
+		if clonePath == "" {
+			// Fallback: compute structured path
+			repoParsed, _ := url.Parse(j.RepoURL)
+			parts := strings.Split(strings.Trim(repoParsed.Path, "/"), "/")
+			if len(parts) >= 2 {
+				clonePath = filepath.Join(workspaceDir, j.Provider, parts[0], parts[1], j.IssueID)
+			} else {
+				clonePath = filepath.Join(workspaceDir, fmt.Sprintf("%d", j.ID))
+			}
+			storage.SetJobRunning(jobsDB, j.ID, clonePath)
+		} else {
+			storage.SetJobRunning(jobsDB, j.ID, clonePath)
+		}
 		clonePaths[j.ID] = clonePath
 
-		if err := withRetry(ctx, "git clone", 3, func() error {
-			return git.Clone(j.RepoURL, j.GitToken, clonePath, j.DefaultBranch)
-		}); err != nil {
-			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err))
-			cloneFailedJobs[j.ID] = true
-			continue
+		if _, err := os.Stat(filepath.Join(clonePath, ".git")); err == nil {
+			log.Printf("[runGrouped] Workspace exists at %s, skipping clone for job %d", clonePath, j.ID)
+		} else {
+			os.MkdirAll(clonePath, 0755)
+			if err := withRetry(ctx, "git clone", 3, func() error {
+				return git.Clone(j.RepoURL, j.GitToken, clonePath, j.DefaultBranch)
+			}); err != nil {
+				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err))
+				cloneFailedJobs[j.ID] = true
+				continue
+			}
 		}
 
 		if err := ChmodWorkspace(clonePath); err != nil {
@@ -210,18 +223,26 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 		}
 	}
 
-	if len(cloneFailedJobs) > 0 {
-		// Only cleanup if ALL clones failed
-		if len(cloneFailedJobs) == len(jobs) {
-			cleanupGroupWorkspace(jobsDB, groupID, groupWorkspace)
+	if len(cloneFailedJobs) > 0 && len(cloneFailedJobs) == len(jobs) {
+		// All clones failed — clean up all workspaces
+		cleaned := map[string]bool{}
+		for _, j := range jobs {
+			if ws := clonePaths[j.ID]; ws != "" && !cleaned[ws] {
+				os.RemoveAll(ws)
+				cleaned[ws] = true
+			}
 		}
 	}
 
-	// Build multi-repo prompt
+	// Use the first job's workspace as the agent's working directory
+	primaryWorkspace := clonePaths[jobs[0].ID]
+
+	// Build multi-repo prompt with workspace paths
 	repoList := make([]string, 0, len(jobs))
 	for _, j := range jobs {
 		owner, repo, _ := git.OwnerRepo(j.RepoURL)
-		repoList = append(repoList, fmt.Sprintf("  - %s/%s (%s)", owner, repo, j.Provider))
+		wsPath := clonePaths[j.ID]
+		repoList = append(repoList, fmt.Sprintf("  - %s/%s (%s) → %s", owner, repo, j.Provider, wsPath))
 	}
 
 	truncated := issueBody
@@ -248,7 +269,7 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 			log.Printf("knowledge lookup for group %s: %v", groupID, err)
 		}
 		if len(similarJobs) > 0 {
-			knowledgePath, _ = knowledge.WriteKnowledgeFile(groupWorkspace, similarJobs)
+			knowledgePath, _ = knowledge.WriteKnowledgeFile(primaryWorkspace, similarJobs)
 			// Track similar job IDs for feedback
 			for _, sj := range similarJobs {
 				similarJobIDs = append(similarJobIDs, sj.ID)
@@ -262,7 +283,7 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 
 	prompt := fmt.Sprintf(`You are a developer fixing an issue across %d repositories.
 
-The workspace contains the following repositories as subdirectories:
+Each repository is in a separate workspace directory. Other repositories are at these paths:
 %s
 
 All repository code may be interdependent. Process all repositories at once and make changes across them as needed.
@@ -282,7 +303,7 @@ Write as a human developer would.
 		prompt += fmt.Sprintf("\nPrior art from similar resolved issues is available in %s — read it before implementing.\n", filepath.Base(knowledgePath))
 	}
 
-	promptPath, err := agent.WritePrompt(groupWorkspace, agentName, prompt)
+	promptPath, err := agent.WritePrompt(primaryWorkspace, agentName, prompt)
 	if err != nil {
 		for _, j := range jobs {
 			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
@@ -311,7 +332,7 @@ Write as a human developer would.
 	var rawOutput string
 	agentErr := withRetry(ctx, "agent run", 3, func() error {
 		var e error
-		rawOutput, e = agent.Run(ctx, agentName, agentModel, groupWorkspace, promptPath, agentCfg)
+		rawOutput, e = agent.Run(ctx, agentName, agentModel, primaryWorkspace, promptPath, agentCfg)
 		return e
 	})
 	close(heartbeatStop)
@@ -721,6 +742,25 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		sent, _ := bot.Send(msg)
 		if sent.MessageID != 0 {
 			storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
+		}
+	}
+
+	// Check for a queued follow-up message. If the user sent a follow-up while
+	// the job was still running, process it now instead of waiting for a reply.
+	conv, convErr := storage.GetConversation(jobsDB, j.ChatID, "telegram")
+	if convErr == nil && conv.State == "await_followup" {
+		queuedText, _ := conv.Data["queued_text"].(string)
+		isQueued, _ := conv.Data["queued"].(bool)
+		if isQueued && queuedText != "" {
+			// Clear the conversation state before processing the follow-up.
+			storage.ResetConversation(jobsDB, j.ChatID, "telegram")
+			agentCfgCopy := *agentCfg
+			go RunFollowUp(ctx, jobID, queuedText, jobsDB, bot, &agentCfgCopy)
+			os.Remove(promptPath)
+			if knowledgePath != "" {
+				os.Remove(knowledgePath)
+			}
+			return
 		}
 	}
 

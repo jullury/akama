@@ -662,7 +662,12 @@ Do NOT mention AI, bots, or automation tools.`, title, truncated, answers, multi
 }
 
 func IsQuestion(text string) bool {
-	return strings.Contains(text, "INPUT_REQUIRED:")
+	if !strings.Contains(text, "INPUT_REQUIRED:") {
+		return false
+	}
+	// Guard against false positives: the marker must have non-empty question text after it.
+	q := ExtractQuestion(text)
+	return strings.TrimSpace(q) != ""
 }
 
 func ExtractQuestion(text string) string {
@@ -678,23 +683,10 @@ func ExtractQuestion(text string) string {
 }
 
 // RunPlanAgent runs the agent to generate plan-related content.
-// If workspacePath is non-empty it is used directly (caller owns cleanup).
-// If empty, a fresh temporary directory is created and removed on return.
+// workspacePath must be provided — it is the cloned repository workspace.
 func RunPlanAgent(ctx context.Context, agentName, model, workspacePath, promptContent string, cfg *Config) (string, error) {
-	ownDir := workspacePath == ""
-	if ownDir {
-		var err error
-		baseDir := ""
-		if cfg != nil && cfg.WorkspaceBaseDir != "" {
-			baseDir = cfg.WorkspaceBaseDir
-		}
-		workspacePath, err = os.MkdirTemp(baseDir, "akama-plan-")
-		if err != nil {
-			return "", fmt.Errorf("create temp dir: %w", err)
-		}
-		// Go drops credentials (to uid 1000) before chdir; needs write access.
-		os.Chmod(workspacePath, 0777)
-		defer os.RemoveAll(workspacePath)
+	if workspacePath == "" {
+		return "", fmt.Errorf("workspace path is required for plan agent")
 	}
 
 	promptPath, err := WritePrompt(workspacePath, agentName, promptContent)

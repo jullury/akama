@@ -24,6 +24,14 @@ func TestIsQuestion_Empty(t *testing.T) {
 	}
 }
 
+func TestIsQuestion_EmptyQuestionAfterMarker(t *testing.T) {
+	// Marker present but no question text — should NOT be treated as a question.
+	text := "some output\nINPUT_REQUIRED:"
+	if IsQuestion(text) {
+		t.Fatal("expected IsQuestion to return false when marker has no question text")
+	}
+}
+
 func TestExtractQuestion_ReturnsQuestion(t *testing.T) {
 	text := "Some agent output.\nINPUT_REQUIRED: What is your name?"
 	got := ExtractQuestion(text)

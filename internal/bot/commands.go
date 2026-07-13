@@ -543,16 +543,10 @@ func (b *Bot) doneJob(chatID int64, jobID int64) {
 	storage.SetJobStatus(b.JobsDB, jobID, "done")
 	storage.ResetConversation(b.JobsDB, chatID, "telegram")
 
-	// For grouped jobs, only remove workspace when all jobs in the group are done
-	if j.GroupID != "" {
-		active, _ := storage.CountActiveJobsByGroupID(b.JobsDB, j.GroupID)
-		if active > 0 {
-			b.send(chatID, fmt.Sprintf("Job %d marked as done. Other jobs in the same group are still active.", jobID))
-			return
-		}
+	// Each job owns its own workspace — clean it up when done
+	if j.WorkspacePath != "" {
+		os.RemoveAll(j.WorkspacePath)
 	}
-
-	os.RemoveAll(j.WorkspacePath)
 	b.send(chatID, fmt.Sprintf("Job %d marked as done. Workspace cleaned up.", jobID))
 }
 
@@ -569,22 +563,10 @@ func (b *Bot) doneAll(chatID int64) {
 		if j.Status == "pr_created" || j.Status == "failed" || j.Status == "done" {
 			storage.SetJobStatus(b.JobsDB, j.ID, "done")
 
-			// For grouped jobs, only remove workspace once
-			if j.GroupID != "" {
-				if !cleanedPaths[j.WorkspacePath] {
-					active, _ := storage.CountActiveJobsByGroupID(b.JobsDB, j.GroupID)
-					if active == 0 {
-						if j.WorkspacePath != "" {
-							os.RemoveAll(j.WorkspacePath)
-							cleanedPaths[j.WorkspacePath] = true
-						}
-					}
-				}
-			} else if j.WorkspacePath != "" {
-				if !cleanedPaths[j.WorkspacePath] {
-					os.RemoveAll(j.WorkspacePath)
-					cleanedPaths[j.WorkspacePath] = true
-				}
+			// Each job owns its own workspace — clean it up
+			if j.WorkspacePath != "" && !cleanedPaths[j.WorkspacePath] {
+				os.RemoveAll(j.WorkspacePath)
+				cleanedPaths[j.WorkspacePath] = true
 			}
 			count++
 		}
@@ -600,8 +582,17 @@ func (b *Bot) startFollowUp(chatID int64, jobID int64) {
 		return
 	}
 
+	if j.Status == "running" {
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", map[string]interface{}{
+			"job_id":    float64(jobID),
+			"queued":    true,
+		})
+		b.send(chatID, fmt.Sprintf("Job #%d is still working. Send your message and it will be processed when the job completes.", jobID))
+		return
+	}
+
 	if j.Status != "pr_created" && j.Status != "updating" {
-		b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created' or 'updating'. Current status: %s", j.Status))
+		b.send(chatID, fmt.Sprintf("Follow-up not available for job with status '%s'. Use /followup when the job has a PR ready.", j.Status))
 		return
 	}
 

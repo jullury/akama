@@ -339,8 +339,26 @@ func (b *Bot) handleReply(chatID int64, msg *tgbotapi.Message) {
 		}
 		go job.RunFollowUp(b.ctx, j.ID, msg.Text, b.JobsDB, b.API, agentCfg)
 		b.send(chatID, fmt.Sprintf("[%s] Updating...", j.Provider))
+	} else if j.Status == "awaiting_input" {
+		// Agent asked a question — treat this reply as the answer.
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_agent_input",
+			map[string]interface{}{"job_id": float64(j.ID)})
+		agentCfg := &agent.Config{
+			APIKeys:     b.Config.APIKeys,
+			TimeoutMins: b.Config.AgentTimeoutMins,
+		}
+		go job.RunFollowUp(b.ctx, j.ID, msg.Text, b.JobsDB, b.API, agentCfg)
+		b.send(chatID, fmt.Sprintf("[%s] Got it, continuing work...", j.Provider))
+	} else if j.Status == "running" {
+		// Queue the follow-up — it will be processed when the job finishes.
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", map[string]interface{}{
+			"job_id":      float64(j.ID),
+			"queued":      true,
+			"queued_text": msg.Text,
+		})
+		b.send(chatID, fmt.Sprintf("[%s] Job is still working. Your message has been queued.", j.Provider))
 	} else {
-		b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created' or 'updating'. Current status: %s", j.Status))
+		b.send(chatID, fmt.Sprintf("Job is not active (status: %s). Use /followup to try again.", j.Status))
 	}
 }
 
@@ -706,9 +724,19 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 						}
 					}
 				}
-				if ws, _ := conv.Data["plan_workspace"].(string); ws != "" {
-					os.RemoveAll(ws)
+			if ws, _ := conv.Data["plan_workspace"].(string); ws != "" {
+				os.RemoveAll(ws)
+			}
+			// Clean up additional per-repo workspaces for multi-repo plans
+			if wps, ok := conv.Data["workspace_paths"].([]interface{}); ok {
+				cleaned := map[string]bool{}
+				for _, raw := range wps {
+					if wp, ok := raw.(string); ok && !cleaned[wp] {
+						os.RemoveAll(wp)
+						cleaned[wp] = true
+					}
 				}
+			}
 			}
 			storage.ResetConversation(b.JobsDB, chatID, "telegram")
 			b.send(chatID, "Plan cancelled. You can send another issue URL to start over.")
@@ -1005,8 +1033,8 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, "Job not found.")
 			return
 		}
-		if j.Status != "pr_created" && j.Status != "updating" {
-			b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created' or 'updating'. Current status: %s", j.Status))
+		if j.Status != "awaiting_input" && j.Status != "pr_created" && j.Status != "updating" {
+			b.send(chatID, fmt.Sprintf("Agent is not waiting for input. Current status: %s", j.Status))
 			return
 		}
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", conv.Data)
@@ -1189,9 +1217,19 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, "A follow-up is already in progress. Please wait for it to complete.")
 			return
 		}
+		if j.Status == "running" {
+			// Queue the follow-up — it will be processed when the job finishes.
+			storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", map[string]interface{}{
+				"job_id": float64(jobID),
+				"queued": true,
+				"queued_text": text,
+			})
+			b.send(chatID, fmt.Sprintf("Job #%d is still working. Your message has been queued and will be processed when it completes.", jobID))
+			return
+		}
 		if j.Status != "pr_created" {
 			storage.ResetConversation(b.JobsDB, chatID, "telegram")
-			b.send(chatID, fmt.Sprintf("Follow-up only available for jobs with status 'pr_created'. Current status: %s", j.Status))
+			b.send(chatID, fmt.Sprintf("Follow-up not available for job with status '%s'.", j.Status))
 			return
 		}
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
@@ -2130,9 +2168,8 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 	}
 
 	groupID := fmt.Sprintf("group_%d_%s", chatID, issueID)
-	groupWorkspace := filepath.Join(b.Config.WorkspaceDir, "multi", groupID)
 
-	// Create all jobs before any cloning
+	// Create all jobs with per-repo structured workspace paths
 	jobIDs := make([]int64, 0, len(repos))
 	for _, repo := range repos {
 		rURL, _ := repo["repo_url"].(string)
@@ -2141,6 +2178,16 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		rBranch, _ := repo["default_branch"].(string)
 		if rBranch == "" {
 			rBranch = "main"
+		}
+
+		// Compute structured workspace path: {workspaceDir}/{provider}/{owner}/{repo}/{issueID}
+		repoParsed, _ := url.Parse(rURL)
+		pathParts := strings.Split(strings.Trim(repoParsed.Path, "/"), "/")
+		var wsPath string
+		if len(pathParts) >= 2 {
+			wsPath = filepath.Join(b.Config.WorkspaceDir, rProvider, pathParts[0], pathParts[1], issueID)
+		} else {
+			wsPath = filepath.Join(b.Config.WorkspaceDir, rProvider, issueID)
 		}
 
 		j := &storage.Job{
@@ -2164,7 +2211,7 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 			log.Printf("[processMultiIssue] Failed to create job for %s: %v", rURL, jerr)
 			continue
 		}
-		storage.SetJobWorkspace(b.JobsDB, jobID, groupWorkspace)
+		storage.SetJobWorkspace(b.JobsDB, jobID, wsPath)
 		jobIDs = append(jobIDs, jobID)
 	}
 
@@ -2179,32 +2226,46 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		WorkspaceBaseDir: b.Config.WorkspaceDir,
 	}
 
-	b.send(chatID, "🔍 Cloning repository for analysis...")
+	b.send(chatID, "🔍 Cloning repositories for analysis...")
 
-	planWorkspace, cloneErr := os.MkdirTemp(b.Config.WorkspaceDir, "plan-")
-	var repoSources []string
-	if cloneErr != nil {
-		log.Printf("[processMultiIssue] Failed to create workspace: %v", cloneErr)
-	} else {
-		repoSources = make([]string, 0, len(repos))
-		for _, repo := range repos {
-			rURL, _ := repo["repo_url"].(string)
-			rToken, _ := repo["token"].(string)
-			rBranch, _ := repo["default_branch"].(string)
-			owner, rName, err := git.OwnerRepo(rURL)
-			if err != nil {
-				log.Printf("[processMultiIssue] Failed to parse repo URL %s: %v", rURL, err)
-				continue
-			}
-			subDir := fmt.Sprintf("%s-%s", owner, rName)
-			clonePath := filepath.Join(planWorkspace, subDir)
-			if cloneErr := git.Clone(rURL, rToken, clonePath, rBranch); cloneErr != nil {
-				log.Printf("[processMultiIssue] Failed to clone %s: %v", rURL, cloneErr)
-			} else {
-				repoSources = append(repoSources, fmt.Sprintf("  - %s/%s (%s)", owner, rName, git.DetectProvider(rURL)))
-			}
+	// Clone each repo into its own structured workspace
+	repoSources := make([]string, 0, len(repos))
+	workspacePaths := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		rURL, _ := repo["repo_url"].(string)
+		rToken, _ := repo["token"].(string)
+		rBranch, _ := repo["default_branch"].(string)
+		rProvider, _ := repo["provider"].(string)
+		owner, rName, err := git.OwnerRepo(rURL)
+		if err != nil {
+			log.Printf("[processMultiIssue] Failed to parse repo URL %s: %v", rURL, err)
+			continue
 		}
-		job.ChmodWorkspace(planWorkspace)
+
+		// Compute structured workspace path: {workspaceDir}/{provider}/{owner}/{repo}/{issueID}
+		repoParsed, _ := url.Parse(rURL)
+		pathParts := strings.Split(strings.Trim(repoParsed.Path, "/"), "/")
+		var clonePath string
+		if len(pathParts) >= 2 {
+			clonePath = filepath.Join(b.Config.WorkspaceDir, rProvider, pathParts[0], pathParts[1], issueID)
+		} else {
+			clonePath = filepath.Join(b.Config.WorkspaceDir, rProvider, issueID)
+		}
+
+		os.MkdirAll(clonePath, 0755)
+		if cloneErr := git.Clone(rURL, rToken, clonePath, rBranch); cloneErr != nil {
+			log.Printf("[processMultiIssue] Failed to clone %s: %v", rURL, cloneErr)
+		} else {
+			repoSources = append(repoSources, fmt.Sprintf("  - %s/%s (%s)", owner, rName, rProvider))
+			workspacePaths = append(workspacePaths, clonePath)
+		}
+		job.ChmodWorkspace(clonePath)
+	}
+
+	// Use the first repo's workspace as the agent's working directory
+	planWorkspace := ""
+	if len(workspacePaths) > 0 {
+		planWorkspace = workspacePaths[0]
 	}
 
 	var firstToken string
@@ -2213,20 +2274,21 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 	}
 
 	multiConvData := map[string]interface{}{
-		"issue_url":      issueURL,
-		"provider":       providerName,
-		"title":          title,
-		"body":           body,
-		"issue_id":       issueID,
-		"images":         images,
-		"agent_name":     agentName,
-		"agent_model":    agentModel,
-		"group_id":       groupID,
-		"multi_repo":     true,
-		"repos":          repos,
-		"repo_sources":   repoSources,
-		"plan_workspace": planWorkspace,
-		"job_ids":        jobIDs,
+		"issue_url":       issueURL,
+		"provider":        providerName,
+		"title":           title,
+		"body":            body,
+		"issue_id":        issueID,
+		"images":          images,
+		"agent_name":      agentName,
+		"agent_model":     agentModel,
+		"group_id":        groupID,
+		"multi_repo":      true,
+		"repos":           repos,
+		"repo_sources":    repoSources,
+		"plan_workspace":  planWorkspace,
+		"workspace_paths": workspacePaths,
+		"job_ids":         jobIDs,
 	}
 
 	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
