@@ -55,6 +55,8 @@ jobs:
             goarch: amd64
           - goos: darwin
             goarch: arm64
+          - goos: windows
+            goarch: amd64
 
     steps:
       - uses: actions/checkout@v4
@@ -64,6 +66,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Set binary suffix
+        id: suffix
+        run: |
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            echo "ext=.exe" >> $GITHUB_OUTPUT
+          else
+            echo "ext=" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build binary
         env:
@@ -81,13 +92,13 @@ jobs:
               -X github.com/jullury/akama/internal/config.Version=$VERSION \
               -X github.com/jullury/akama/internal/config.BuildTime=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
               -X github.com/jullury/akama/internal/config.BuildPlatform=${{ matrix.goos }}/${{ matrix.goarch }}" \
-            -o akama-${{ matrix.goos }}-${{ matrix.goarch }} .
+            -o "akama-${{ matrix.goos }}-${{ matrix.goarch }}${{ steps.suffix.outputs.ext }}" .
 
       - name: Upload binary to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.release.outputs.version }}
-        run: gh release upload "v$VERSION" "akama-${{ matrix.goos }}-${{ matrix.goarch }}" --clobber
+        run: gh release upload "v$VERSION" "akama-${{ matrix.goos }}-${{ matrix.goarch }}${{ steps.suffix.outputs.ext }}" --clobber
 
   build-daemon:
     name: Build and push daemon image

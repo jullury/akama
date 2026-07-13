@@ -48,9 +48,11 @@ start: build
 dist:
 	@echo "Building release binaries for all platforms..."
 	@mkdir -p dist
-	@for pair in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do \
-		os=$$(echo $$pair | cut -d/ -f1); \
+	@for pair in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do \
+		os=$$(echo $$pair | cut -d/ - -f1); \
 		arch=$$(echo $$pair | cut -d/ -f2); \
+		ext=""; \
+		if [ "$$os" = "windows" ]; then ext=".exe"; fi; \
 		echo "  Building $$os/$$arch..."; \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -ldflags "-s -w \
 		-X github.com/jullury/akama/internal/config.GitHubClientID=$(GITHUB_CLIENT_ID) \
@@ -60,7 +62,7 @@ dist:
 		-X github.com/jullury/akama/internal/config.Version=$(VERSION) \
 		-X github.com/jullury/akama/internal/config.BuildTime=$(BUILD_TIME) \
 		-X github.com/jullury/akama/internal/config.BuildPlatform=$$os/$$arch" \
-		-o dist/akama-$$os-$$arch . ; \
+		-o "dist/akama-$$os-$$arch$$ext" . ; \
 	done
 	@echo "Binaries written to dist/"
 

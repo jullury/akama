@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -809,23 +808,14 @@ func (b *Bot) handleUpdateConfirm(chatID int64) {
 		}
 	} else {
 		b.send(chatID, "Update installed. Restarting now...")
-		// Non-Docker: spawn a detached helper that waits for this process to
-		// exit, pauses briefly for Telegram to drain the old long-poll connection,
-		// then starts the new daemon. We cannot stop ourselves and then continue
-		// in the same goroutine — sending SIGTERM to the daemon kills the goroutine
-		// running this handler before any restart logic executes.
-		script := fmt.Sprintf("while kill -0 %d 2>/dev/null; do sleep 1; done; sleep 3; '%s' start", os.Getpid(), exePath)
-		helper := exec.Command("sh", "-c", script)
-		helper.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		if err := helper.Start(); err != nil {
+		if err := spawnDetachedRestart(exePath); err != nil {
 			b.send(chatID, fmt.Sprintf("Failed to schedule restart: %v", err))
 			return
 		}
 	}
 
 	// Signal ourselves to shut down cleanly.
-	proc, _ := os.FindProcess(os.Getpid())
-	proc.Signal(syscall.SIGTERM)
+	signalSelf()
 }
 
 // stageHostBinaryUpdate reads ~/.akama/.host_info (written by `akama start` on
@@ -914,17 +904,13 @@ func (b *Bot) handleRestartConfirm(chatID int64) {
 	}
 
 	if os.Getpid() != 1 {
-		script := fmt.Sprintf("while kill -0 %d 2>/dev/null; do sleep 1; done; sleep 3; '%s' start", os.Getpid(), exePath)
-		helper := exec.Command("sh", "-c", script)
-		helper.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		if err := helper.Start(); err != nil {
+		if err := spawnDetachedRestart(exePath); err != nil {
 			b.send(chatID, fmt.Sprintf("Failed to schedule restart: %v", err))
 			return
 		}
 	}
 
-	proc, _ := os.FindProcess(os.Getpid())
-	proc.Signal(syscall.SIGTERM)
+	signalSelf()
 }
 
 func (b *Bot) downloadUpdate() error {
