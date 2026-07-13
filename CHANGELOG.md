@@ -1,3 +1,10 @@
+## [3.9.1](https://github.com/jullury/akama/compare/v3.9.0...v3.9.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* add Postgres data volume for container management ([118cd79](https://github.com/jullury/akama/commit/118cd7988e1e073e4ea3d5088410ab2399951a9e))
+
 # [3.9.0](https://github.com/jullury/akama/compare/v3.8.5...v3.9.0) (2026-07-13)
 
 
