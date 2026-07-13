@@ -520,17 +520,32 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		j.AgentModel = connAgentModel
 	}
 
-	repoPath, _ := url.Parse(j.RepoURL)
-	parts := strings.Split(strings.Trim(repoPath.Path, "/"), "/")
-	var workspacePath string
-	if len(parts) >= 2 {
-		workspacePath = filepath.Join(workspaceDir, j.Provider, parts[0], parts[1], j.IssueID)
-	} else {
-		workspacePath = filepath.Join(workspaceDir, fmt.Sprintf("%d", jobID))
-	}
-
 	owner, repo, _ := git.OwnerRepo(j.RepoURL)
 	repoName := owner + "/" + repo
+
+	// Prefer the workspace path already stored by the plan phase (set via
+	// SetJobWorkspace during startPlanMode).  This avoids re-cloning a repo
+	// that was already cloned for plan generation.
+	workspacePath := j.WorkspacePath
+	if workspacePath != "" {
+		if _, err := os.Stat(filepath.Join(workspacePath, ".git")); err == nil {
+			log.Printf("[runJob %d] Reusing plan-phase workspace at %s", jobID, workspacePath)
+		} else {
+			// Plan-phase workspace lost its .git (cleaned up or never cloned);
+			// fall back to computing a fresh path.
+			log.Printf("[runJob %d] Plan workspace %s has no .git, recomputing path", jobID, workspacePath)
+			workspacePath = ""
+		}
+	}
+	if workspacePath == "" {
+		repoParsed, _ := url.Parse(j.RepoURL)
+		parts := strings.Split(strings.Trim(repoParsed.Path, "/"), "/")
+		if len(parts) >= 2 {
+			workspacePath = filepath.Join(workspaceDir, j.Provider, parts[0], parts[1], j.IssueID)
+		} else {
+			workspacePath = filepath.Join(workspaceDir, fmt.Sprintf("%d", jobID))
+		}
+	}
 
 	if err := storage.SetJobRunning(jobsDB, jobID, workspacePath); err != nil {
 		log.Printf("set running: %v", err)
