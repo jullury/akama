@@ -153,30 +153,46 @@ func ensureImages(dcli *dockerclient.Client) {
 		}
 	}
 
-	// Daemon image: build only when missing or when the CLI binary is newer
-	// than the existing image (indicating a binary update has occurred).
+	// Daemon image: pull from GHCR if missing or stale, fall back to local build.
 	exePath, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Get executable path: %v\n", err)
 		os.Exit(1)
 	}
 
-	needsBuild := true
+	needsDaemon := true
 	if docker.ImageExists(ctx, dcli, docker.DaemonImage) {
 		exeInfo, err := os.Stat(exePath)
 		if err == nil {
 			imgCreated := docker.ImageCreatedAt(ctx, dcli, docker.DaemonImage)
 			if !imgCreated.IsZero() && !exeInfo.ModTime().After(imgCreated) {
-				needsBuild = false
+				needsDaemon = false
 			}
 		}
 	}
 
-	if needsBuild {
-		fmt.Println("Building akama-daemon image...")
-		if err := docker.BuildDaemonImage(ctx, dcli, exePath, config.Version, os.Stdout); err != nil {
-			fmt.Fprintf(os.Stderr, "Build daemon image: %v\n", err)
-			os.Exit(1)
+	if needsDaemon {
+		// Try pulling the pre-built image from GHCR first.
+		pulled := false
+		fmt.Printf("Pulling daemon image from %s...\n", docker.DaemonImageRef)
+		if err := docker.PullImage(ctx, dcli, docker.DaemonImageRef, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "Pull daemon image (will build locally): %v\n", err)
+		} else {
+			// Tag the pulled image as the local name the daemon container expects.
+			if err := dcli.ImageTag(ctx, docker.DaemonImageRef, docker.DaemonImage); err != nil {
+				fmt.Fprintf(os.Stderr, "Tag daemon image: %v\n", err)
+			} else {
+				pulled = true
+			}
+		}
+
+		if !pulled {
+			// Fall back to local build from source.
+			fmt.Println("Building akama-daemon image locally...")
+			if err := docker.BuildDaemonImage(ctx, dcli, exePath, config.Version, os.Stdout); err != nil {
+				fmt.Fprintf(os.Stderr, "Build daemon image: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	} else {
 		fmt.Println("Daemon image is up to date.")

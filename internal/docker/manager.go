@@ -35,6 +35,7 @@ const (
 	OllamaContainer   = "akama-ollama"
 	DaemonContainer   = "akama-daemon"
 	DaemonImage       = "akama-daemon:latest"
+	DaemonImageRef    = "ghcr.io/jullury/akama-daemon:latest"
 	PostgresImage     = "docker.io/pgvector/pgvector:pg16"
 	OllamaImage       = "docker.io/ollama/ollama:latest"
 	WorkspacesVolume   = "akama-workspaces"
