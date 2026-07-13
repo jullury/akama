@@ -37,7 +37,8 @@ const (
 	DaemonImage       = "akama-daemon:latest"
 	PostgresImage     = "docker.io/pgvector/pgvector:pg16"
 	OllamaImage       = "docker.io/ollama/ollama:latest"
-	WorkspacesVolume  = "akama-workspaces"
+	WorkspacesVolume   = "akama-workspaces"
+	PostgresDataVolume = "akama-postgres-data"
 	// PostgresURL is the connection string for the host-side CLI.
 	PostgresURL  = "postgres://akama:akama@127.0.0.1:5432/akama"
 	PostgresPort = "5432"
@@ -171,6 +172,10 @@ func EnsurePostgresContainer(ctx context.Context, cli *client.Client, hostPort s
 		return cli.ContainerStart(ctx, PostgresContainer, container.StartOptions{})
 	}
 
+	if err := EnsureVolume(ctx, cli, PostgresDataVolume); err != nil {
+		return fmt.Errorf("ensure postgres data volume: %w", err)
+	}
+
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
 		Image: PostgresImage,
 		Env: []string{
@@ -184,6 +189,13 @@ func EnsurePostgresContainer(ctx context.Context, cli *client.Client, hostPort s
 			"5432/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: hostPort}},
 		},
 		RestartPolicy: container.RestartPolicy{Name: "unless-stopped"},
+		Mounts: []mount.Mount{
+			{
+				Type:   mount.TypeVolume,
+				Source: PostgresDataVolume,
+				Target: "/var/lib/postgresql/data",
+			},
+		},
 	}, nil, nil, PostgresContainer)
 	if err != nil {
 		return fmt.Errorf("create postgres container: %w", err)
