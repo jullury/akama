@@ -1,3 +1,10 @@
+# [3.11.0](https://github.com/jullury/akama/compare/v3.10.2...v3.11.0) (2026-07-13)
+
+
+### Features
+
+* **release:** add Windows binary to release assets ([3840039](https://github.com/jullury/akama/commit/3840039e123c0f8fd2273f4be6fe39376d1bed9e))
+
 ## [3.10.2](https://github.com/jullury/akama/compare/v3.10.1...v3.10.2) (2026-07-13)
 
 
