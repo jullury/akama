@@ -1,3 +1,10 @@
+## [3.9.3](https://github.com/jullury/akama/compare/v3.9.2...v3.9.3) (2026-07-13)
+
+
+### Bug Fixes
+
+* **job:** reuse plan-phase workspace instead of re-cloning ([9f436ab](https://github.com/jullury/akama/commit/9f436abbe7561517d7824bd8d191200e3413f854))
+
 ## [3.9.2](https://github.com/jullury/akama/compare/v3.9.1...v3.9.2) (2026-07-13)
 
 
