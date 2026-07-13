@@ -68,6 +68,10 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then RTK_ARCH="aarch64-unknown-linux-gnu";
         | tar xz -C /usr/local/bin rtk && \
     chmod +x /usr/local/bin/rtk
 
+# Install mise — runtime version manager used by cloned repos (.mise.toml).
+# Placed in /usr/local/bin so it's on the default PATH for all users.
+RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
+
 COPY --from=builder /akama /usr/local/bin/akama
 WORKDIR /workspaces
 ENTRYPOINT ["akama", "--daemon"]
