@@ -1,3 +1,15 @@
+# [3.9.0](https://github.com/jullury/akama/compare/v3.8.5...v3.9.0) (2026-07-13)
+
+
+### Bug Fixes
+
+* ensure pnpm is available in container ([8a81a1f](https://github.com/jullury/akama/commit/8a81a1f4a46293ababf90261fbf1a777655ca3e7))
+
+
+### Features
+
+* run clarifying question generation asynchronously ([4d05b4a](https://github.com/jullury/akama/commit/4d05b4a78a2989eb1bcd65696333b66b7b794d3d))
+
 ## [3.8.5](https://github.com/jullury/akama/compare/v3.8.4...v3.8.5) (2026-07-12)
 
 
