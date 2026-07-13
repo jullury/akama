@@ -58,6 +58,7 @@ ensure_npm_pkg() {
     fi
 }
 
+ensure_npm_pkg "pnpm" "pnpm"
 ensure_npm_pkg "opencode-ai" "opencode"
 ensure_npm_pkg "@anthropic-ai/claude-code" "claude"
 

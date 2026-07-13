@@ -46,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git docker.io curl bash xz-utils \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g pnpm \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1000 -s /bin/bash worker
 
