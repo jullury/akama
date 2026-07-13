@@ -1,3 +1,10 @@
+# [3.10.0](https://github.com/jullury/akama/compare/v3.9.3...v3.10.0) (2026-07-13)
+
+
+### Features
+
+* auto-pull Ollama embedding model at daemon startup ([43fdf71](https://github.com/jullury/akama/commit/43fdf71b4b16279bda0a951735a88a015a7d04a1))
+
 ## [3.9.3](https://github.com/jullury/akama/compare/v3.9.2...v3.9.3) (2026-07-13)
 
 
