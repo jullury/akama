@@ -1,3 +1,10 @@
+## [3.11.1](https://github.com/jullury/akama/compare/v3.11.0...v3.11.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **bot:** fix broken follow-up and question-answering flow ([bdecb03](https://github.com/jullury/akama/commit/bdecb038c8714a9caa850cb7991f04b0bd0d87a1))
+
 # [3.11.0](https://github.com/jullury/akama/compare/v3.10.2...v3.11.0) (2026-07-13)
 
 
