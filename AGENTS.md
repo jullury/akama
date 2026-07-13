@@ -71,6 +71,7 @@ Compact guidance for agents working in the Akama repository.
 - **SQLite time format**: `jobs` table uses `DATETIME DEFAULT CURRENT_TIMESTAMP` (text `"2006-01-02 15:04:05"`). Go code parses with `time.Parse("2006-01-02 15:04:05", ...)`.
 - **`GIT_ASKPASS` temp file** lands in OS temp dir (`os.CreateTemp("", "git-askpass-*")`), never inside the repo. `GIT_TERMINAL_PROMPT=0` is set.
 - **Prompt file** written to `<workspacePath>/.akama-prompt.txt` (inside cloned workspace), passed via `-p`, cleaned up after run. Appended to workspace `.gitignore`.
+- **Follow-up workspace recovery**: `ensureWorkspace()` in `internal/job/followup.go` checks for `.git` before writing the prompt. If the workspace was deleted (by `/done`, `failJob`, or `CleanOldWorkspaces`), it re-clones the repo and checks out `j.BranchName` (not default branch) so the follow-up agent continues on top of prior changes. Grouped follow-ups handle re-clone inline per repo subdirectory.
 
 ## Bot Polling
 
