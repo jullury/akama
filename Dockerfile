@@ -40,6 +40,16 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
         -o /akama .
 
 FROM debian:bookworm-slim
+
+# Docker image metadata — logo for container registries (Docker Hub, GHCR, etc.)
+LABEL org.opencontainers.image.title="akama" \
+      org.opencontainers.image.description="Coding agent orchestration system controlled via Telegram" \
+      org.opencontainers.image.vendor="Jullury" \
+      org.opencontainers.image.logo="/app/logo.png"
+
+# Copy logo into the image
+COPY logo.png /app/logo.png
+
 # Install Node.js 22 from NodeSource (Debian bookworm ships Node 18 which is
 # too old for @anthropic-ai/claude-code ≥ 2.x).
 RUN apt-get update && apt-get install -y --no-install-recommends \
