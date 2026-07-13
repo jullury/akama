@@ -1,3 +1,10 @@
+## [3.9.2](https://github.com/jullury/akama/compare/v3.9.1...v3.9.2) (2026-07-13)
+
+
+### Bug Fixes
+
+* pull daemon image from GHCR before falling back to local build ([d046189](https://github.com/jullury/akama/commit/d046189e75280eb596f69972b85b43c34eaabc85))
+
 ## [3.9.1](https://github.com/jullury/akama/compare/v3.9.0...v3.9.1) (2026-07-13)
 
 
