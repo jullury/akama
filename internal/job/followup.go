@@ -43,6 +43,14 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 
 	storage.SetJobStatus(jobsDB, jobID, "updating")
 
+	// Re-clone the workspace if it was cleaned up (e.g. by /done, failJob, or
+	// the workspace cleanup cron). Without this, WritePrompt and the agent run
+	// would fail with "no such file or directory".
+	if err := ensureWorkspace(ctx, j); err != nil {
+		failFollowUp(jobsDB, bot, j, fmt.Sprintf("re-clone workspace: %v", err))
+		return
+	}
+
 	userCfg, err := storage.GetUserConfig(jobsDB, j.ChatID)
 	if err != nil {
 		log.Printf("get user config: %v", err)
@@ -152,6 +160,32 @@ func runGroupedFollowUp(ctx context.Context, primary *storage.Job, userText stri
 		}
 	}
 
+	// Re-clone each repo's subdirectory if the group workspace was cleaned up.
+	for _, j := range jobs {
+		owner, repo, _ := git.OwnerRepo(j.RepoURL)
+		clonePath := j.WorkspacePath
+		if clonePath == "" {
+			clonePath = filepath.Join(groupWorkspace, fmt.Sprintf("%s-%s", owner, repo))
+			storage.SetJobWorkspace(jobsDB, j.ID, clonePath)
+		}
+		if _, err := os.Stat(filepath.Join(clonePath, ".git")); err == nil {
+			continue // workspace exists
+		}
+		// Workspace missing — re-clone and checkout the branch we pushed to.
+		branch := j.BranchName
+		if branch == "" {
+			branch = j.DefaultBranch
+		}
+		os.MkdirAll(clonePath, 0755)
+		if err := withRetry(ctx, "git clone", 3, func() error {
+			return git.Clone(j.RepoURL, j.GitToken, clonePath, branch)
+		}); err != nil {
+			failFollowUp(jobsDB, bot, j, fmt.Sprintf("re-clone %s/%s: %v", owner, repo, err))
+			continue
+		}
+		log.Printf("[runGroupedFollowUp] Re-cloned %s/%s at %s (branch %s)", owner, repo, clonePath, branch)
+	}
+
 	userCfg, _ := storage.GetUserConfig(jobsDB, chatID)
 	gitName, gitEmail := "", ""
 	if userCfg != nil {
@@ -248,6 +282,33 @@ func runGroupedFollowUp(ctx context.Context, primary *storage.Job, userText stri
 	storage.SetJobStatus(jobsDB, primary.ID, "pr_created")
 	storage.ResetConversation(jobsDB, primary.ChatID, "telegram")
 	os.Remove(promptPath)
+}
+
+// ensureWorkspace checks that the job's workspace directory exists with a valid
+// .git inside. If the workspace was cleaned up (by /done, failJob, or the
+// workspace cleanup cron), it re-clones the repo and checks out the branch
+// that was previously pushed to so the follow-up agent can continue on top
+// of the latest changes.
+func ensureWorkspace(ctx context.Context, j *storage.Job) error {
+	if j.WorkspacePath == "" {
+		return fmt.Errorf("job has no workspace path")
+	}
+	if _, err := os.Stat(filepath.Join(j.WorkspacePath, ".git")); err == nil {
+		return nil // workspace exists and has .git
+	}
+
+	// Workspace missing — re-clone. Pick the branch the agent already pushed to
+	// so the follow-up continues on top of those changes (not the default branch).
+	branch := j.BranchName
+	if branch == "" {
+		branch = j.DefaultBranch
+	}
+	log.Printf("[ensureWorkspace] Workspace %s missing, re-cloning %s (branch %s)", j.WorkspacePath, j.RepoURL, branch)
+	os.MkdirAll(j.WorkspacePath, 0755)
+	if err := git.Clone(j.RepoURL, j.GitToken, j.WorkspacePath, branch); err != nil {
+		return fmt.Errorf("clone %s: %w", j.RepoURL, err)
+	}
+	return nil
 }
 
 func failFollowUp(jobsDB *sql.DB, bot *tgbotapi.BotAPI, j *storage.Job, errMsg string) {
