@@ -18,6 +18,7 @@ import (
 	"github.com/jullury/akama/internal/crypto"
 	"github.com/jullury/akama/internal/daemon"
 	"github.com/jullury/akama/internal/job"
+	"github.com/jullury/akama/internal/knowledge"
 	"github.com/jullury/akama/internal/logger"
 	"github.com/jullury/akama/internal/metrics"
 	"github.com/jullury/akama/internal/storage"
@@ -152,6 +153,10 @@ func runDaemon() {
 	job.InitScheduler(db, b.API, agentCfg, cfg.WorkspaceDir, cfg.MaxConcurrentJobs, cfg.QuietHoursStart, cfg.QuietHoursEnd, cfg.OllamaURL)
 	job.StartLabelPoller(ctx, db, b.API, agentCfg, cfg)
 	job.StartReviewPoller(ctx, db, b.API, agentCfg, cfg)
+
+	// Pull the Ollama embedding model in the background so it's ready
+	// when the first job needs knowledge retrieval.
+	go knowledge.EnsureModel(ctx, cfg.OllamaURL, knowledge.EmbeddingModel)
 
 	go func() {
 		job.CleanOldWorkspaces(cfg.WorkspaceDir, cfg.MaxWorkspaceAgeDays)

@@ -10,12 +10,91 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jullury/akama/internal/storage"
 )
 
+const EmbeddingModel = "nomic-embed-text"
+
 type ollamaEmbedResponse struct {
 	Embedding []float32 `json:"embedding"`
+}
+
+// EnsureModel waits for Ollama to be ready and pulls the named model
+// if it is not already available. Intended to run once at daemon startup.
+func EnsureModel(ctx context.Context, ollamaURL, model string) {
+	if ollamaURL == "" || model == "" {
+		return
+	}
+
+	// Wait for Ollama to become reachable.
+	log.Printf("[ollama] Waiting for Ollama at %s ...", ollamaURL)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ollamaURL+"/api/tags", nil)
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	log.Printf("[ollama] Ollama is reachable")
+
+	// Check if the model is already pulled.
+	type tagsResponse struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ollamaURL+"/api/tags", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[ollama] Failed to list models: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	var tags tagsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		log.Printf("[ollama] Failed to decode model list: %v", err)
+		return
+	}
+	for _, m := range tags.Models {
+		if m.Name == model || m.Name == model+":latest" {
+			log.Printf("[ollama] Model %s already pulled", model)
+			return
+		}
+	}
+
+	// Pull the model.
+	log.Printf("[ollama] Pulling model %s (this may take a while)...", model)
+	pullBody, _ := json.Marshal(map[string]string{"name": model})
+	pullReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, ollamaURL+"/api/pull", bytes.NewReader(pullBody))
+	pullReq.Header.Set("Content-Type", "application/json")
+	pullResp, err := http.DefaultClient.Do(pullReq)
+	if err != nil {
+		log.Printf("[ollama] Failed to pull model: %v", err)
+		return
+	}
+	defer pullResp.Body.Close()
+	// Read the streaming response to completion.
+	io.Copy(io.Discard, pullResp.Body)
+	if pullResp.StatusCode != http.StatusOK {
+		log.Printf("[ollama] Pull returned status %d", pullResp.StatusCode)
+		return
+	}
+	log.Printf("[ollama] Model %s pulled successfully", model)
 }
 
 func EmbedJob(ctx context.Context, db *sql.DB, ollamaURL string, job storage.Job) error {
@@ -114,7 +193,7 @@ func getEmbedding(ctx context.Context, ollamaURL, text string) ([]float32, error
 	}
 
 	body := map[string]interface{}{
-		"model":  "nomic-embed-text",
+		"model":  EmbeddingModel,
 		"prompt": text,
 	}
 	data, err := json.Marshal(body)
