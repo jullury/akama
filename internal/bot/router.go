@@ -1173,6 +1173,9 @@ func (b *Bot) handleText(chatID int64, text string) {
 	case "await_plan_regen":
 		b.send(chatID, "⏳ Still regenerating the plan — please wait a moment.")
 
+	case "await_clarifying_questions_gen":
+		b.send(chatID, "⏳ Still analyzing the issue — please wait a moment.")
+
 	case "await_followup":
 		jobIDFloat, _ := conv.Data["job_id"].(float64)
 		jobID := int64(jobIDFloat)
@@ -1764,16 +1767,6 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 	}
 	job.ChmodWorkspace(workspacePath)
 
-	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
-
-	prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
-	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, workspacePath, prompt, agentCfg)
-	if agentErr != nil {
-		log.Printf("[startPlanMode] Failed to generate questions: %v", agentErr)
-	}
-
-	questions := agent.ParseClarifyingQuestions(output)
-
 	convData := map[string]interface{}{
 		"issue_url":      issueURL,
 		"git_token":      gitToken,
@@ -1790,20 +1783,53 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 		"job_id":         jobID,
 	}
 
-	if agentErr != nil || len(questions) < 2 {
-		b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, workspacePath, issueURL, providerName, gitToken, agentCfg, convData)
-		return
-	}
+	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions_gen", convData)
 
-	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", convData)
+	go func() {
+		heartbeatStop := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-heartbeatStop:
+					return
+				case <-ticker.C:
+					b.send(chatID, "⏳ Still analyzing...")
+				}
+			}
+		}()
 
-	var qb strings.Builder
-	qb.WriteString("I have a few questions to better understand the issue:\n\n")
-	for i, q := range questions {
-		qb.WriteString(fmt.Sprintf("%d. %s\n", i+1, q))
-	}
-	qb.WriteString("\nPlease answer all questions in a single message.")
-	b.send(chatID, qb.String())
+		prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
+		output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, workspacePath, prompt, agentCfg)
+		close(heartbeatStop)
+
+		questions := agent.ParseClarifyingQuestions(output)
+
+		if agentErr != nil {
+			log.Printf("[startPlanMode] Failed to generate questions: %v", agentErr)
+			b.send(chatID, fmt.Sprintf("⚠️ Could not generate clarifying questions (%v). Proceeding with plan generation...", agentErr))
+			b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, workspacePath, issueURL, providerName, gitToken, agentCfg, convData)
+			return
+		}
+
+		if len(questions) < 2 {
+			b.send(chatID, "No clarifying questions needed. Proceeding with plan generation...")
+			b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, workspacePath, issueURL, providerName, gitToken, agentCfg, convData)
+			return
+		}
+
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", convData)
+
+		var qb strings.Builder
+		qb.WriteString("I have a few questions to better understand the issue:\n\n")
+		for i, q := range questions {
+			qb.WriteString(fmt.Sprintf("%d. %s\n", i+1, q))
+		}
+		qb.WriteString("\nPlease answer all questions in a single message.")
+		b.send(chatID, qb.String())
+	}()
 }
 
 // generateAndReviewPlan runs plan generation with the given answers (may be empty)
@@ -2181,16 +2207,6 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		job.ChmodWorkspace(planWorkspace)
 	}
 
-	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
-
-	prompt := agent.BuildClarifyingQuestionsPrompt(title, body, repoSources...)
-	output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
-	if agentErr != nil {
-		log.Printf("[processMultiIssue] Failed to generate questions: %v", agentErr)
-	}
-
-	questions := agent.ParseClarifyingQuestions(output)
-
 	var firstToken string
 	if len(repos) > 0 {
 		firstToken, _ = repos[0]["token"].(string)
@@ -2213,20 +2229,53 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		"job_ids":        jobIDs,
 	}
 
-	if agentErr != nil || len(questions) < 2 {
-		b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, planWorkspace, issueURL, providerName, firstToken, agentCfg, multiConvData, repoSources...)
-		return
-	}
+	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
+	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions_gen", multiConvData)
 
-	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", multiConvData)
+	go func() {
+		heartbeatStop := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-heartbeatStop:
+					return
+				case <-ticker.C:
+					b.send(chatID, "⏳ Still analyzing...")
+				}
+			}
+		}()
 
-	var qb strings.Builder
-	qb.WriteString("I have a few questions to better understand the issue (across all repositories):\n\n")
-	for i, q := range questions {
-		qb.WriteString(fmt.Sprintf("%d. %s\n", i+1, q))
-	}
-	qb.WriteString("\nPlease answer all questions in a single message.")
-	b.send(chatID, qb.String())
+		prompt := agent.BuildClarifyingQuestionsPrompt(title, body, repoSources...)
+		output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
+		close(heartbeatStop)
+
+		questions := agent.ParseClarifyingQuestions(output)
+
+		if agentErr != nil {
+			log.Printf("[processMultiIssue] Failed to generate questions: %v", agentErr)
+			b.send(chatID, fmt.Sprintf("⚠️ Could not generate clarifying questions (%v). Proceeding with plan generation...", agentErr))
+			b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, planWorkspace, issueURL, providerName, firstToken, agentCfg, multiConvData, repoSources...)
+			return
+		}
+
+		if len(questions) < 2 {
+			b.send(chatID, "No clarifying questions needed. Proceeding with plan generation...")
+			b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, planWorkspace, issueURL, providerName, firstToken, agentCfg, multiConvData, repoSources...)
+			return
+		}
+
+		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", multiConvData)
+
+		var qb strings.Builder
+		qb.WriteString("I have a few questions to better understand the issue (across all repositories):\n\n")
+		for i, q := range questions {
+			qb.WriteString(fmt.Sprintf("%d. %s\n", i+1, q))
+		}
+		qb.WriteString("\nPlease answer all questions in a single message.")
+		b.send(chatID, qb.String())
+	}()
 }
 
 func (b *Bot) send(chatID int64, text string) {
