@@ -1,3 +1,10 @@
+## [3.11.2](https://github.com/jullury/akama/compare/v3.11.1...v3.11.2) (2026-07-13)
+
+
+### Bug Fixes
+
+* re-clone workspace on follow-up when cleaned up ([69935fe](https://github.com/jullury/akama/commit/69935fe811bdc98f59d430432fa46303b9a329b2))
+
 ## [3.11.1](https://github.com/jullury/akama/compare/v3.11.0...v3.11.1) (2026-07-13)
 
 
