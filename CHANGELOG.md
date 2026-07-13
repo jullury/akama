@@ -1,3 +1,10 @@
+## [3.10.2](https://github.com/jullury/akama/compare/v3.10.1...v3.10.2) (2026-07-13)
+
+
+### Bug Fixes
+
+* **update:** detect Docker daemon and pull new image instead of forking local process ([93bda9d](https://github.com/jullury/akama/commit/93bda9d5dc02bb259f000583447bcac783a190c7))
+
 ## [3.10.1](https://github.com/jullury/akama/compare/v3.10.0...v3.10.1) (2026-07-13)
 
 
