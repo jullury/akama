@@ -181,20 +181,19 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 
 	notify(bot, chatID, fmt.Sprintf("🔍 Cloning %d repositories for: %s...", len(jobs), issueTitle))
 
-	// Clone each repo into its own structured workspace
+	// Each job's WorkspacePath is a subdirectory under the shared issue workspace.
+	// The shared issue workspace is the parent directory.
+	sharedWorkspace := filepath.Dir(jobs[0].WorkspacePath)
+
+	// Clone each repo into its subdirectory under the shared issue workspace
 	clonePaths := make(map[int64]string)
 	cloneFailedJobs := make(map[int64]bool)
 	for _, j := range jobs {
 		clonePath := j.WorkspacePath
 		if clonePath == "" {
-			// Fallback: compute structured path
-			repoParsed, _ := url.Parse(j.RepoURL)
-			parts := strings.Split(strings.Trim(repoParsed.Path, "/"), "/")
-			if len(parts) >= 2 {
-				clonePath = filepath.Join(workspaceDir, j.Provider, parts[0], parts[1], j.IssueID)
-			} else {
-				clonePath = filepath.Join(workspaceDir, fmt.Sprintf("%d", j.ID))
-			}
+			// Fallback: compute path from repo URL
+			owner, repo, _ := git.OwnerRepo(j.RepoURL)
+			clonePath = filepath.Join(sharedWorkspace, fmt.Sprintf("%s-%s", owner, repo))
 			storage.SetJobRunning(jobsDB, j.ID, clonePath)
 		} else {
 			storage.SetJobRunning(jobsDB, j.ID, clonePath)
@@ -224,25 +223,15 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 	}
 
 	if len(cloneFailedJobs) > 0 && len(cloneFailedJobs) == len(jobs) {
-		// All clones failed — clean up all workspaces
-		cleaned := map[string]bool{}
-		for _, j := range jobs {
-			if ws := clonePaths[j.ID]; ws != "" && !cleaned[ws] {
-				os.RemoveAll(ws)
-				cleaned[ws] = true
-			}
-		}
+		// All clones failed — clean up the shared workspace
+		os.RemoveAll(sharedWorkspace)
 	}
 
-	// Use the first job's workspace as the agent's working directory
-	primaryWorkspace := clonePaths[jobs[0].ID]
-
-	// Build multi-repo prompt with workspace paths
+	// Build multi-repo prompt — repos are subdirectories of CWD
 	repoList := make([]string, 0, len(jobs))
 	for _, j := range jobs {
 		owner, repo, _ := git.OwnerRepo(j.RepoURL)
-		wsPath := clonePaths[j.ID]
-		repoList = append(repoList, fmt.Sprintf("  - %s/%s (%s) → %s", owner, repo, j.Provider, wsPath))
+		repoList = append(repoList, fmt.Sprintf("  - %s/%s (%s)", owner, repo, j.Provider))
 	}
 
 	truncated := issueBody
@@ -269,7 +258,7 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 			log.Printf("knowledge lookup for group %s: %v", groupID, err)
 		}
 		if len(similarJobs) > 0 {
-			knowledgePath, _ = knowledge.WriteKnowledgeFile(primaryWorkspace, similarJobs)
+			knowledgePath, _ = knowledge.WriteKnowledgeFile(sharedWorkspace, similarJobs)
 			// Track similar job IDs for feedback
 			for _, sj := range similarJobs {
 				similarJobIDs = append(similarJobIDs, sj.ID)
@@ -283,7 +272,7 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 
 	prompt := fmt.Sprintf(`You are a developer fixing an issue across %d repositories.
 
-Each repository is in a separate workspace directory. Other repositories are at these paths:
+The workspace contains the following repositories as subdirectories:
 %s
 
 All repository code may be interdependent. Process all repositories at once and make changes across them as needed.
@@ -303,7 +292,7 @@ Write as a human developer would.
 		prompt += fmt.Sprintf("\nPrior art from similar resolved issues is available in %s — read it before implementing.\n", filepath.Base(knowledgePath))
 	}
 
-	promptPath, err := agent.WritePrompt(primaryWorkspace, agentName, prompt)
+	promptPath, err := agent.WritePrompt(sharedWorkspace, agentName, prompt)
 	if err != nil {
 		for _, j := range jobs {
 			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
@@ -332,7 +321,7 @@ Write as a human developer would.
 	var rawOutput string
 	agentErr := withRetry(ctx, "agent run", 3, func() error {
 		var e error
-		rawOutput, e = agent.Run(ctx, agentName, agentModel, primaryWorkspace, promptPath, agentCfg)
+		rawOutput, e = agent.Run(ctx, agentName, agentModel, sharedWorkspace, promptPath, agentCfg)
 		return e
 	})
 	close(heartbeatStop)

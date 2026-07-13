@@ -727,16 +727,6 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			if ws, _ := conv.Data["plan_workspace"].(string); ws != "" {
 				os.RemoveAll(ws)
 			}
-			// Clean up additional per-repo workspaces for multi-repo plans
-			if wps, ok := conv.Data["workspace_paths"].([]interface{}); ok {
-				cleaned := map[string]bool{}
-				for _, raw := range wps {
-					if wp, ok := raw.(string); ok && !cleaned[wp] {
-						os.RemoveAll(wp)
-						cleaned[wp] = true
-					}
-				}
-			}
 			}
 			storage.ResetConversation(b.JobsDB, chatID, "telegram")
 			b.send(chatID, "Plan cancelled. You can send another issue URL to start over.")
@@ -2169,7 +2159,20 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 
 	groupID := fmt.Sprintf("group_%d_%s", chatID, issueID)
 
-	// Create all jobs with per-repo structured workspace paths
+	// Compute shared issue workspace: {workspaceDir}/{provider}/{owner}/{repo}/{issueID}
+	// All repos in a grouped issue live as subdirectories under this path.
+	firstRepoURL := repos[0]["repo_url"].(string)
+	firstRepoProvider := repos[0]["provider"].(string)
+	firstParsed, _ := url.Parse(firstRepoURL)
+	firstParts := strings.Split(strings.Trim(firstParsed.Path, "/"), "/")
+	var issueWorkspace string
+	if len(firstParts) >= 2 {
+		issueWorkspace = filepath.Join(b.Config.WorkspaceDir, firstRepoProvider, firstParts[0], firstParts[1], issueID)
+	} else {
+		issueWorkspace = filepath.Join(b.Config.WorkspaceDir, firstRepoProvider, issueID)
+	}
+
+	// Create all jobs — each workspace is a subdirectory under the shared issue workspace
 	jobIDs := make([]int64, 0, len(repos))
 	for _, repo := range repos {
 		rURL, _ := repo["repo_url"].(string)
@@ -2180,15 +2183,13 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 			rBranch = "main"
 		}
 
-		// Compute structured workspace path: {workspaceDir}/{provider}/{owner}/{repo}/{issueID}
-		repoParsed, _ := url.Parse(rURL)
-		pathParts := strings.Split(strings.Trim(repoParsed.Path, "/"), "/")
-		var wsPath string
-		if len(pathParts) >= 2 {
-			wsPath = filepath.Join(b.Config.WorkspaceDir, rProvider, pathParts[0], pathParts[1], issueID)
-		} else {
-			wsPath = filepath.Join(b.Config.WorkspaceDir, rProvider, issueID)
+		owner, rName, err := git.OwnerRepo(rURL)
+		if err != nil {
+			log.Printf("[processMultiIssue] Failed to parse repo URL %s: %v", rURL, err)
+			continue
 		}
+
+		wsPath := filepath.Join(issueWorkspace, fmt.Sprintf("%s-%s", owner, rName))
 
 		j := &storage.Job{
 			ChatID:        chatID,
@@ -2228,9 +2229,8 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 
 	b.send(chatID, "🔍 Cloning repositories for analysis...")
 
-	// Clone each repo into its own structured workspace
+	// Clone each repo into its subdirectory under the shared issue workspace
 	repoSources := make([]string, 0, len(repos))
-	workspacePaths := make([]string, 0, len(repos))
 	for _, repo := range repos {
 		rURL, _ := repo["repo_url"].(string)
 		rToken, _ := repo["token"].(string)
@@ -2242,31 +2242,18 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 			continue
 		}
 
-		// Compute structured workspace path: {workspaceDir}/{provider}/{owner}/{repo}/{issueID}
-		repoParsed, _ := url.Parse(rURL)
-		pathParts := strings.Split(strings.Trim(repoParsed.Path, "/"), "/")
-		var clonePath string
-		if len(pathParts) >= 2 {
-			clonePath = filepath.Join(b.Config.WorkspaceDir, rProvider, pathParts[0], pathParts[1], issueID)
-		} else {
-			clonePath = filepath.Join(b.Config.WorkspaceDir, rProvider, issueID)
-		}
-
+		clonePath := filepath.Join(issueWorkspace, fmt.Sprintf("%s-%s", owner, rName))
 		os.MkdirAll(clonePath, 0755)
 		if cloneErr := git.Clone(rURL, rToken, clonePath, rBranch); cloneErr != nil {
 			log.Printf("[processMultiIssue] Failed to clone %s: %v", rURL, cloneErr)
 		} else {
 			repoSources = append(repoSources, fmt.Sprintf("  - %s/%s (%s)", owner, rName, rProvider))
-			workspacePaths = append(workspacePaths, clonePath)
 		}
 		job.ChmodWorkspace(clonePath)
 	}
 
-	// Use the first repo's workspace as the agent's working directory
-	planWorkspace := ""
-	if len(workspacePaths) > 0 {
-		planWorkspace = workspacePaths[0]
-	}
+	// Agent CWD = shared issue workspace (sees all repos as subdirectories)
+	planWorkspace := issueWorkspace
 
 	var firstToken string
 	if len(repos) > 0 {
@@ -2274,21 +2261,20 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 	}
 
 	multiConvData := map[string]interface{}{
-		"issue_url":       issueURL,
-		"provider":        providerName,
-		"title":           title,
-		"body":            body,
-		"issue_id":        issueID,
-		"images":          images,
-		"agent_name":      agentName,
-		"agent_model":     agentModel,
-		"group_id":        groupID,
-		"multi_repo":      true,
-		"repos":           repos,
-		"repo_sources":    repoSources,
-		"plan_workspace":  planWorkspace,
-		"workspace_paths": workspacePaths,
-		"job_ids":         jobIDs,
+		"issue_url":      issueURL,
+		"provider":       providerName,
+		"title":          title,
+		"body":           body,
+		"issue_id":       issueID,
+		"images":         images,
+		"agent_name":     agentName,
+		"agent_model":    agentModel,
+		"group_id":       groupID,
+		"multi_repo":     true,
+		"repos":          repos,
+		"repo_sources":   repoSources,
+		"plan_workspace": planWorkspace,
+		"job_ids":        jobIDs,
 	}
 
 	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
