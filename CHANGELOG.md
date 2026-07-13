@@ -1,3 +1,10 @@
+## [3.10.1](https://github.com/jullury/akama/compare/v3.10.0...v3.10.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **docker:** install mise in container image ([d861c61](https://github.com/jullury/akama/commit/d861c61cff0f44135fa5f853b5cd568f67094e6a))
+
 # [3.10.0](https://github.com/jullury/akama/compare/v3.9.3...v3.10.0) (2026-07-13)
 
 
