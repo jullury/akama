@@ -1,3 +1,10 @@
+## [3.12.3](https://github.com/jullury/akama/compare/v3.12.2...v3.12.3) (2026-07-14)
+
+
+### Bug Fixes
+
+* **job:** resolve grouped follow-up workspace path ([d2e80e6](https://github.com/jullury/akama/commit/d2e80e6d2a2436492a785470645400d62261d694))
+
 ## [3.12.2](https://github.com/jullury/akama/compare/v3.12.1...v3.12.2) (2026-07-14)
 
 
