@@ -1,3 +1,10 @@
+## [3.12.2](https://github.com/jullury/akama/compare/v3.12.1...v3.12.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* remove redundant `-C repoPath` from git commands and normalize e... ([fa3b356](https://github.com/jullury/akama/commit/fa3b3562192571c651622afaec6ef86b62d240a3))
+
 ## [3.12.1](https://github.com/jullury/akama/compare/v3.12.0...v3.12.1) (2026-07-14)
 
 
