@@ -1,7 +1,7 @@
 # Build configuration from .env file
 # Usage: make build
 
-.PHONY: setup build clean start dist release
+.PHONY: setup build build-daemon clean start dist release
 
 # Load .env file if it exists
 ifneq (,$(wildcard .env))
@@ -24,8 +24,9 @@ setup:
 	$$MISE install
 	@echo "Toolchain ready."
 
+# build: host CLI binary
 build:
-	@echo "Building akama with OAuth credentials from .env..."
+	@echo "Building akama (host CLI) with OAuth credentials from .env..."
 	go build -ldflags "\
 	-X github.com/jullury/akama/internal/config.GitHubClientID=$(GITHUB_CLIENT_ID) \
 	-X github.com/jullury/akama/internal/config.GitHubClientSecret=$(GITHUB_CLIENT_SECRET) \
@@ -37,6 +38,17 @@ build:
 	-o akama .
 	@echo "Build complete: ./akama (version: $(VERSION))"
 
+# build-daemon: in-container daemon binary
+build-daemon:
+	@echo "Building akama-daemon (in-container binary)..."
+	CGO_ENABLED=0 go build -ldflags "-s -w \
+	-X github.com/jullury/akama/internal/config.Version=$(VERSION) \
+	-X github.com/jullury/akama/internal/config.BuildTime=$(BUILD_TIME) \
+	-X github.com/jullury/akama/internal/config.BuildPlatform=$(BUILD_PLATFORM)" \
+	-o akama-daemon ./cmd/akama-daemon
+	@echo "Build complete: ./akama-daemon (version: $(VERSION))"
+
+# start: build both and start
 start: build
 	@echo "Stopping any running akama instance..."
 	@./akama stop 2>/dev/null || true
@@ -45,11 +57,12 @@ start: build
 	@./akama start
 	@echo "Akama started."
 
+# dist: cross-compile host CLI for all platforms
 dist:
 	@echo "Building release binaries for all platforms..."
 	@mkdir -p dist
 	@for pair in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do \
-		os=$$(echo $$pair | cut -d/ - -f1); \
+		os=$$(echo $$pair | cut -d/ -f1); \
 		arch=$$(echo $$pair | cut -d/ -f2); \
 		ext=""; \
 		if [ "$$os" = "windows" ]; then ext=".exe"; fi; \
@@ -64,7 +77,7 @@ dist:
 		-X github.com/jullury/akama/internal/config.BuildPlatform=$$os/$$arch" \
 		-o "dist/akama-$$os-$$arch$$ext" . ; \
 	done
-	@echo "Binaries written to dist/"
+	@echo "Host CLI binaries written to dist/"
 
 release:
 	@echo "Release is now handled by semantic-release on push to main."
@@ -92,6 +105,7 @@ docker-push:
 	@docker push ghcr.io/jullury/akama-daemon:$(VERSION)
 	@echo "Pushed: ghcr.io/jullury/akama-daemon:$(VERSION)"
 
+# clean: remove all built artifacts
 clean:
-	rm -f akama
+	rm -f akama akama-daemon
 	rm -rf dist
