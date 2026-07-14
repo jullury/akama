@@ -51,15 +51,15 @@ func Commit(repoPath, branchName, token, gitName, gitEmail, commitMsg string) er
 
 	var cmds [][]string
 	if gitName != "" {
-		cmds = append(cmds, []string{"git", "-C", repoPath, "config", "user.name", gitName})
+		cmds = append(cmds, []string{"git", "config", "user.name", gitName})
 	}
 	if gitEmail != "" {
-		cmds = append(cmds, []string{"git", "-C", repoPath, "config", "user.email", gitEmail})
+		cmds = append(cmds, []string{"git", "config", "user.email", gitEmail})
 	}
 	cmds = append(cmds,
-		[]string{"git", "-C", repoPath, "add", "-A"},
-		[]string{"git", "-C", repoPath, "commit", "--allow-empty", "-m", commitMsg},
-		[]string{"git", "-C", repoPath, "checkout", "-B", branchName},
+		[]string{"git", "add", "-A"},
+		[]string{"git", "commit", "--allow-empty", "-m", commitMsg},
+		[]string{"git", "checkout", "-B", branchName},
 	)
 	for _, args := range cmds {
 		cmd := newCommand(repoPath, askpassPath, args[0], args[1:]...)
@@ -78,7 +78,7 @@ func Push(repoPath, branchName, token string) error {
 	}
 	defer os.Remove(askpassPath)
 
-	cmd := newCommand(repoPath, askpassPath, "git", "-C", repoPath, "push", "origin", branchName, "--force")
+	cmd := newCommand(repoPath, askpassPath, "git", "push", "origin", branchName, "--force")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git push: %w\n%s", err, output)
 	}
