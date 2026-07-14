@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -303,6 +304,8 @@ Write as a human developer would.
 	notify(bot, chatID, fmt.Sprintf("🤖 Running AI agent across %d repositories for: %s", len(jobs), issueTitle))
 
 	heartbeatStop := make(chan struct{})
+	var agentProc *os.Process
+	var agentProcMu sync.Mutex
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -313,6 +316,15 @@ Write as a human developer would.
 				return
 			case <-ticker.C:
 				elapsed += 5
+				agentProcMu.Lock()
+				proc := agentProc
+				agentProcMu.Unlock()
+				if proc != nil {
+					if err := proc.Signal(syscall.Signal(0)); err != nil {
+						notify(bot, chatID, fmt.Sprintf("⚠️ Agent process died after %d min — retrying", elapsed))
+						return
+					}
+				}
 				notify(bot, chatID, fmt.Sprintf("⏳ Agent still working... (%d min elapsed across %d repos)", elapsed, len(jobs)))
 			}
 		}
@@ -321,7 +333,11 @@ Write as a human developer would.
 	var rawOutput string
 	agentErr := withRetry(ctx, "agent run", 3, func() error {
 		var e error
-		rawOutput, e = agent.Run(ctx, agentName, agentModel, sharedWorkspace, promptPath, agentCfg)
+		rawOutput, e = agent.RunDetached(ctx, agentName, agentModel, sharedWorkspace, promptPath, agentCfg, func(p *os.Process) {
+			agentProcMu.Lock()
+			agentProc = p
+			agentProcMu.Unlock()
+		})
 		return e
 	})
 	close(heartbeatStop)
@@ -622,6 +638,8 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}
 
 	heartbeatStop := make(chan struct{})
+	var agentProc *os.Process
+	var agentProcMu sync.Mutex
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
@@ -632,6 +650,16 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 				return
 			case <-ticker.C:
 				elapsed += 5
+				agentProcMu.Lock()
+				proc := agentProc
+				agentProcMu.Unlock()
+				if proc != nil {
+					// Signal 0 checks process existence without killing it.
+					if err := proc.Signal(syscall.Signal(0)); err != nil {
+						notify(bot, j.ChatID, fmt.Sprintf("⚠️ [%s] Agent process died after %d min — retrying", repoName, elapsed))
+						return
+					}
+				}
 				notify(bot, j.ChatID, fmt.Sprintf("⏳ [%s] Agent still working... (%d min elapsed)", repoName, elapsed))
 			}
 		}
@@ -640,7 +668,11 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	var rawOutput string
 	agentErr := withRetry(ctx, "agent run", 3, func() error {
 		var e error
-		rawOutput, e = agent.Run(ctx, j.Agent, j.AgentModel, workspacePath, promptPath, agentCfg)
+		rawOutput, e = agent.RunDetached(ctx, j.Agent, j.AgentModel, workspacePath, promptPath, agentCfg, func(p *os.Process) {
+			agentProcMu.Lock()
+			agentProc = p
+			agentProcMu.Unlock()
+		})
 		return e
 	})
 	close(heartbeatStop)

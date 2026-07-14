@@ -66,12 +66,28 @@ func Run(ctx context.Context, agentName, model, workspacePath, promptPath string
 	if r == nil {
 		return "", fmt.Errorf("unknown agent: %s", agentName)
 	}
-	if cfg.TimeoutMins > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(cfg.TimeoutMins)*time.Minute)
-		defer cancel()
-	}
 	return r.Run(ctx, model, workspacePath, promptPath, cfg)
+}
+
+// RunDetached is like Run but calls onProcess with the agent's OS process
+// immediately after it starts. The callback can be used by the caller to
+// monitor whether the process is still alive (e.g. from a heartbeat goroutine).
+// Pass nil for onProcess if you don't need process monitoring.
+func RunDetached(ctx context.Context, agentName, model, workspacePath, promptPath string, cfg *Config, onProcess func(*os.Process)) (string, error) {
+	r := Get(agentName)
+	if r == nil {
+		return "", fmt.Errorf("unknown agent: %s", agentName)
+	}
+	if dr, ok := r.(detachedRunner); ok {
+		return dr.RunDetached(ctx, model, workspacePath, promptPath, cfg, onProcess)
+	}
+	// Fallback for runners that don't support detached mode.
+	return r.Run(ctx, model, workspacePath, promptPath, cfg)
+}
+
+// detachedRunner is implemented by agents that can expose their OS process.
+type detachedRunner interface {
+	RunDetached(ctx context.Context, model, workspacePath, promptPath string, cfg *Config, onProcess func(*os.Process)) (string, error)
 }
 
 // claudeRunner implements AgentRunner for the claude CLI.
@@ -80,6 +96,10 @@ type claudeRunner struct{}
 func (r *claudeRunner) Name() string { return "claude" }
 
 func (r *claudeRunner) Run(ctx context.Context, model, workspacePath, promptPath string, cfg *Config) (string, error) {
+	return r.RunDetached(ctx, model, workspacePath, promptPath, cfg, nil)
+}
+
+func (r *claudeRunner) RunDetached(ctx context.Context, model, workspacePath, promptPath string, cfg *Config, onProcess func(*os.Process)) (string, error) {
 	args := []string{"-p", promptPath, "--dangerously-skip-permissions", "--output-format", "json"}
 	if model != "" {
 		args = append(args, "--model", model)
@@ -90,7 +110,13 @@ func (r *claudeRunner) Run(ctx context.Context, model, workspacePath, promptPath
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("agent claude start: %w", err)
+	}
+	if onProcess != nil {
+		onProcess(cmd.Process)
+	}
+	if err := cmd.Wait(); err != nil {
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("agent claude cancelled: %w", ctx.Err())
 		}
@@ -152,6 +178,10 @@ type opencodeRunner struct{}
 func (r *opencodeRunner) Name() string { return "opencode" }
 
 func (r *opencodeRunner) Run(ctx context.Context, model, workspacePath, promptPath string, cfg *Config) (string, error) {
+	return r.RunDetached(ctx, model, workspacePath, promptPath, cfg, nil)
+}
+
+func (r *opencodeRunner) RunDetached(ctx context.Context, model, workspacePath, promptPath string, cfg *Config, onProcess func(*os.Process)) (string, error) {
 	promptContent, readErr := os.ReadFile(promptPath)
 	if readErr != nil {
 		return "", fmt.Errorf("read prompt: %w", readErr)
@@ -169,7 +199,13 @@ func (r *opencodeRunner) Run(ctx context.Context, model, workspacePath, promptPa
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("agent opencode start: %w", err)
+	}
+	if onProcess != nil {
+		onProcess(cmd.Process)
+	}
+	if err := cmd.Wait(); err != nil {
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("agent opencode cancelled: %w", ctx.Err())
 		}
