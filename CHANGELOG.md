@@ -1,3 +1,10 @@
+## [3.12.1](https://github.com/jullury/akama/compare/v3.12.0...v3.12.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* propagate EmbedJob errors instead of swallowing them ([b70b813](https://github.com/jullury/akama/commit/b70b813b29adeb32067e22db4e0b2e4b30a7e68c))
+
 # [3.12.0](https://github.com/jullury/akama/compare/v3.11.4...v3.12.0) (2026-07-14)
 
 
