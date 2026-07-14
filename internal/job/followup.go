@@ -155,6 +155,20 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 	os.Remove(promptPath)
 }
 
+// resolveGroupWorkspace returns the shared parent directory for a group of jobs.
+// Each job's WorkspacePath is a subdirectory under the shared workspace (e.g.
+// {shared}/{owner}-{repo}), so the shared workspace is the parent directory of
+// any job's WorkspacePath.
+func resolveGroupWorkspace(primary *storage.Job, jobs []*storage.Job) string {
+	if primary != nil && primary.WorkspacePath != "" {
+		return filepath.Dir(primary.WorkspacePath)
+	}
+	if len(jobs) > 0 && jobs[0] != nil && jobs[0].WorkspacePath != "" {
+		return filepath.Dir(jobs[0].WorkspacePath)
+	}
+	return ""
+}
+
 func runGroupedFollowUp(ctx context.Context, primary *storage.Job, userText string, jobsDB *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config) {
 	jobs, err := storage.FindJobsByGroupID(jobsDB, primary.GroupID)
 	if err != nil || len(jobs) == 0 {
@@ -163,10 +177,7 @@ func runGroupedFollowUp(ctx context.Context, primary *storage.Job, userText stri
 	}
 
 	chatID := primary.ChatID
-	groupWorkspace := primary.WorkspacePath
-	if groupWorkspace == "" && len(jobs) > 0 {
-		groupWorkspace = jobs[0].WorkspacePath
-	}
+	groupWorkspace := resolveGroupWorkspace(primary, jobs)
 
 	// Set all jobs to updating
 	for _, j := range jobs {
