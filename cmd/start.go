@@ -10,7 +10,6 @@ import (
 	"time"
 
 	dockerclient "github.com/docker/docker/client"
-	"github.com/jullury/akama/internal/agent"
 	"github.com/jullury/akama/internal/config"
 	docker "github.com/jullury/akama/internal/docker"
 	"github.com/jullury/akama/internal/storage"
@@ -42,14 +41,6 @@ func runStart(cmd *cobra.Command, args []string) {
 	// Record host OS/arch/binary-path so the daemon container can stage the
 	// correct host binary when the user runs /update from Telegram.
 	writeHostInfo(configDir)
-
-	for _, s := range agent.BuiltinSkills {
-		if s.Required {
-			if err := agent.InstallSkill(s); err != nil {
-				fmt.Fprintf(os.Stderr, "Install skill %s: %v\n", s.Name, err)
-			}
-		}
-	}
 
 	dcli, err := docker.NewClient()
 	if err != nil {
