@@ -1,3 +1,10 @@
+# [3.12.0](https://github.com/jullury/akama/compare/v3.11.4...v3.12.0) (2026-07-14)
+
+
+### Features
+
+* add daemon entry point as separate binary ([a355430](https://github.com/jullury/akama/commit/a355430abb27973970a64d0ad1f9530219d3d55f))
+
 ## [3.11.4](https://github.com/jullury/akama/compare/v3.11.3...v3.11.4) (2026-07-14)
 
 
