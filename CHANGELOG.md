@@ -1,3 +1,10 @@
+## [3.11.4](https://github.com/jullury/akama/compare/v3.11.3...v3.11.4) (2026-07-14)
+
+
+### Bug Fixes
+
+* prevent agent planning loop in akama-daemon ([19871a0](https://github.com/jullury/akama/commit/19871a0d0c6ab673dc4bff6011cf90d81a80bbf2))
+
 ## [3.11.3](https://github.com/jullury/akama/compare/v3.11.2...v3.11.3) (2026-07-14)
 
 
