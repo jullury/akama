@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/root/go/pkg/mod \
           -X github.com/jullury/akama/internal/config.Version=${VERSION} \
           -X github.com/jullury/akama/internal/config.BuildTime=${BUILD_TIME} \
           -X github.com/jullury/akama/internal/config.BuildPlatform=${TARGETPLATFORM}" \
-        -o /akama .
+        -o /akama-daemon ./cmd/akama-daemon
 
 FROM debian:bookworm-slim
 
@@ -82,6 +82,6 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then RTK_ARCH="aarch64-unknown-linux-gnu";
 # Placed in /usr/local/bin so it's on the default PATH for all users.
 RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
 
-COPY --from=builder /akama /usr/local/bin/akama
+COPY --from=builder /akama-daemon /usr/local/bin/akama-daemon
 WORKDIR /workspaces
-ENTRYPOINT ["akama", "--daemon"]
+ENTRYPOINT ["akama-daemon"]
