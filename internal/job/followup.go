@@ -30,6 +30,18 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 		return
 	}
 
+	// Check question limit to prevent infinite loops
+	const maxQuestions = 3
+	questionCount, err := storage.GetQuestionCount(jobsDB, jobID)
+	if err != nil {
+		log.Printf("[RunFollowUp] Failed to get question count: %v", err)
+	}
+	if questionCount >= maxQuestions {
+		log.Printf("[RunFollowUp] Job %d hit question limit (%d), forcing completion", jobID, questionCount)
+		storage.SetJobStatus(jobsDB, jobID, "running")
+		bot.Send(tgbotapi.NewMessage(j.ChatID, fmt.Sprintf("Agent asked %d questions — proceeding with current changes.", questionCount)))
+	}
+
 	// Refresh git token from connection so follow-ups pick up refreshed tokens.
 	if conn, err := storage.FindConnectionByRepo(jobsDB, j.ChatID, j.RepoURL); err == nil && conn != nil {
 		if conn.GitToken != j.GitToken {
@@ -81,6 +93,15 @@ func RunFollowUp(ctx context.Context, jobID int64, userText string, jobsDB *sql.
 	followUpText := agent.ParseOutput(j.Agent, followUpOutput)
 	if followUpText != "" {
 		notifyChunked(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:", j.Provider), followUpText)
+	}
+
+	// Check if agent asked a question
+	if agent.IsQuestion(followUpText) {
+		newCount, err := storage.IncrementQuestionCount(jobsDB, jobID)
+		if err != nil {
+			log.Printf("[RunFollowUp] Failed to increment question count: %v", err)
+		}
+		log.Printf("[RunFollowUp] Agent asked question (count: %d)", newCount)
 	}
 
 	branchName := j.BranchName

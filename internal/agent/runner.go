@@ -367,10 +367,28 @@ Issue URL:   %s
 Description:
 %s
 
+## CRITICAL INSTRUCTIONS — READ BEFORE DOING ANYTHING
+
+1. **EXECUTE IMMEDIATELY** — Do NOT ask questions. Do NOT request clarification. Do NOT output INPUT_REQUIRED. The issue description has everything you need.
+2. **FOLLOW THE PLAN** — If an Implementation Plan is included below, follow it step-by-step. Do NOT deviate. Do NOT regenerate the plan. Do NOT create your own plan.
+3. **NO PLANNING PHASE** — Do NOT write a plan. Do NOT outline steps. Do NOT say "here's what I'll do". Just DO it. Write the code.
+4. **NO QUESTIONS ALLOWED** — Even if something is ambiguous, make a reasonable assumption and proceed. The user has already reviewed and approved this plan.
+5. **COMMIT TO CODE** — Your first response should be code changes, not analysis. Start editing files immediately.
+
+## What To Do
+
 Implement a complete fix. Make all necessary code changes.
 Do NOT create pull requests or push branches — that is handled separately.
 Do NOT mention AI, bots, automation, or any tool in code comments.
 Write as a human developer would.
+
+## What NOT To Do
+
+- ❌ Do NOT ask clarifying questions (use INPUT_REQUIRED only for truly blocking issues)
+- ❌ Do NOT write implementation plans (the plan is already provided)
+- ❌ Do NOT explain what you're going to do (just do it)
+- ❌ Do NOT request confirmation before proceeding (you are already confirmed)
+- ❌ Do NOT output meta-commentary about the task
 `, title, url, truncated)
 
 	if knowledgePath != "" {
@@ -399,6 +417,13 @@ func BuildFollowUpPrompt(userText string) string {
 Additional instructions:
 
 %s
+
+## CRITICAL INSTRUCTIONS
+
+1. **EXECUTE IMMEDIATELY** — Apply the changes requested. Do NOT ask questions. Do NOT request clarification.
+2. **NO PLANNING** — Do NOT write a plan. Do NOT outline steps. Just make the code changes.
+3. **NO QUESTIONS** — Even if something is ambiguous, make a reasonable assumption and proceed.
+4. **COMMIT TO CODE** — Your first response should be code changes, not analysis.
 
 Apply these changes to the existing code.
 Do NOT open pull requests — only make code changes.

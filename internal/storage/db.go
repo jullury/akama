@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -60,6 +61,7 @@ func Migrate(db *sql.DB) error {
 		images              TEXT NOT NULL DEFAULT '',
 		group_id            TEXT NOT NULL DEFAULT '',
 		plan                TEXT NOT NULL DEFAULT '',
+		question_count      INTEGER NOT NULL DEFAULT 0,
 		last_review_check_at TIMESTAMPTZ,
 		created_at          TIMESTAMPTZ DEFAULT NOW(),
 		updated_at          TIMESTAMPTZ DEFAULT NOW()
@@ -138,7 +140,27 @@ func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
+
+	// Migrations for existing databases
+	if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS question_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+		log.Printf("[migrate] adding question_count column: %v (may already exist)", err)
+	}
+
 	return nil
+}
+
+// IncrementQuestionCount increments the question count for a job and returns the new count.
+func IncrementQuestionCount(db *sql.DB, jobID int64) (int, error) {
+	var count int
+	err := db.QueryRow(`UPDATE jobs SET question_count = question_count + 1, updated_at = NOW() WHERE id = $1 RETURNING question_count`, jobID).Scan(&count)
+	return count, err
+}
+
+// GetQuestionCount returns the current question count for a job.
+func GetQuestionCount(db *sql.DB, jobID int64) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT question_count FROM jobs WHERE id = $1`, jobID).Scan(&count)
+	return count, err
 }
 
 func FindConnectionsByChat(db *sql.DB, chatID int64) ([]*Connection, error) {

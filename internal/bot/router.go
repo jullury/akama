@@ -1114,6 +1114,26 @@ func (b *Bot) handleText(chatID int64, text string) {
 
 	case "await_plan_review":
 		mods := strings.TrimSpace(text)
+		modsLower := strings.ToLower(mods)
+
+		// Detect confirmation intent — user sent text instead of tapping Confirm button
+		confirmPhrases := []string{
+			"yes", "confirm", "proceed", "go ahead", "start", "execute",
+			"do it", "looks good", "ship it", "lgtm", "approved", "approve",
+			"start executing", "begin", "run", "execute it", "apply",
+		}
+		for _, phrase := range confirmPhrases {
+			if modsLower == phrase || strings.HasPrefix(modsLower, phrase+" ") || strings.HasPrefix(modsLower, phrase+"!") {
+				log.Printf("[await_plan_review] Text match confirm intent: %q", mods)
+				// Treat as button tap — proceed with execution
+				if multiRepo, _ := conv.Data["multi_repo"].(bool); multiRepo {
+					b.proceedWithMultiPlan(chatID, conv)
+				} else {
+					b.proceedWithPlan(chatID, conv)
+				}
+				return
+			}
+		}
 
 		title, _ := conv.Data["title"].(string)
 		body, _ := conv.Data["body"].(string)
