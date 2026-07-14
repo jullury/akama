@@ -52,8 +52,18 @@ COPY logo.png /app/logo.png
 
 # Install Node.js 22 from NodeSource (Debian bookworm ships Node 18 which is
 # too old for @anthropic-ai/claude-code ≥ 2.x).
+#
+# NOTE: We install the Docker CLI only (not the full engine) via the official
+# Docker APT repo.  The "docker.io" package pulls in containerd, runc, and
+# other daemon deps we don't need inside the container.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git docker.io curl bash xz-utils \
+    ca-certificates git curl bash xz-utils gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g pnpm \
@@ -82,6 +92,9 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then RTK_ARCH="aarch64-unknown-linux-gnu";
 # Placed in /usr/local/bin so it's on the default PATH for all users.
 RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
 
-COPY --from=builder /akama-daemon /usr/local/bin/akama-daemon
+# --link creates a smaller diff layer by reference-only linking to the source
+# layer instead of embedding a full filesystem snapshot.  This means when only
+# the binary changes, the pushed/pulled diff is minimal.
+COPY --link --from=builder /akama-daemon /usr/local/bin/akama-daemon
 WORKDIR /workspaces
 ENTRYPOINT ["akama-daemon"]
