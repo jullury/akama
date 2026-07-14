@@ -99,13 +99,16 @@ func EnsureModel(ctx context.Context, ollamaURL, model string) {
 
 func EmbedJob(ctx context.Context, db *sql.DB, ollamaURL string, job storage.Job) error {
 	text := buildEmbeddingText(job)
-	embedding, err := getEmbedding(ctx, ollamaURL, text)
-	if err != nil {
-		log.Printf("embed job %d: %v", job.ID, err)
+	if text == "" {
+		log.Printf("[knowledge] skip embed job %d: no text to embed", job.ID)
 		return nil
 	}
+	embedding, err := getEmbedding(ctx, ollamaURL, text)
+	if err != nil {
+		return fmt.Errorf("embed job %d: %w", job.ID, err)
+	}
 	if embedding == nil {
-		return nil
+		return fmt.Errorf("embed job %d: got nil embedding", job.ID)
 	}
 
 	vecStr := formatVector(embedding)
@@ -117,8 +120,9 @@ func EmbedJob(ctx context.Context, db *sql.DB, ollamaURL string, job storage.Job
 			indexed_at = NOW()
 	`, job.ID, vecStr)
 	if err != nil {
-		log.Printf("store embedding for job %d: %v", job.ID, err)
+		return fmt.Errorf("store embedding for job %d: %w", job.ID, err)
 	}
+	log.Printf("[knowledge] embedded job %d successfully", job.ID)
 	return nil
 }
 

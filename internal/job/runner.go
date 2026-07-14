@@ -429,8 +429,12 @@ Write as a human developer would.
 
 		// Embed completed job asynchronously
 		go func(jobRef storage.Job) {
-			if pkgOllamaURL != "" {
-				knowledge.EmbedJob(context.Background(), pkgDB, pkgOllamaURL, jobRef)
+			if pkgOllamaURL == "" {
+				log.Printf("[knowledge] skip embed job %d: ollama_url not configured", jobRef.ID)
+				return
+			}
+			if err := knowledge.EmbedJob(context.Background(), pkgDB, pkgOllamaURL, jobRef); err != nil {
+				log.Printf("[knowledge] embed job %d failed: %v", jobRef.ID, err)
 			}
 		}(*j)
 
@@ -796,11 +800,17 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}
 
 	go func() {
-		if pkgOllamaURL != "" {
-			updated, err := storage.GetJob(pkgDB, jobID)
-			if err == nil {
-				knowledge.EmbedJob(context.Background(), pkgDB, pkgOllamaURL, *updated)
-			}
+		if pkgOllamaURL == "" {
+			log.Printf("[knowledge] skip embed job %d: ollama_url not configured", jobID)
+			return
+		}
+		updated, err := storage.GetJob(pkgDB, jobID)
+		if err != nil {
+			log.Printf("[knowledge] get job %d for embedding: %v", jobID, err)
+			return
+		}
+		if err := knowledge.EmbedJob(context.Background(), pkgDB, pkgOllamaURL, *updated); err != nil {
+			log.Printf("[knowledge] embed job %d failed: %v", jobID, err)
 		}
 	}()
 }
