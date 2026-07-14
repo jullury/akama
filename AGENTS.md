@@ -30,7 +30,9 @@ Compact guidance for agents working in the Akama repository.
 ## Build & Verify
 
 - **Toolchain**: After clone, run `make setup` or `curl https://mise.run/ | sh && mise install` to install Go and Node via [mise](https://mise.run/) (defined in `.mise.toml`).
-- **Always build via `make build`** — OAuth credentials injected via `-ldflags` from `.env` at compile time.
+- **Two binaries, two build targets**:
+  - `make build` — builds host CLI (`./akama`) from root `main.go`. OAuth credentials injected via `-ldflags` from `.env` at compile time.
+  - `make build-daemon` — builds in-container daemon (`./akama-daemon`) from `cmd/akama-daemon/main.go`.
 - `.env` must contain: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET` (case-sensitive).
 - Quick compile check without OAuth: `go build ./...` (sets `Version = "dev"`; `akama update` refuses dev builds).
 - Cross-compile: `make dist` builds 4 platforms (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64) with `CGO_ENABLED=0`.
@@ -39,9 +41,13 @@ Compact guidance for agents working in the Akama repository.
 
 ## Architecture
 
-- **Two modes**, detected in `main.go` before Cobra runs:
-  - Normal mode: `cmd.Execute()` → `init`, `start`, `stop`, `status`, `logs`, `restart`, `update`
-  - Daemon mode: `--daemon` in `os.Args` → `runDaemon()` → loads config, opens SQLite, recovers interrupted jobs, runs `bot.RunCtx(ctx)`
+- **Two binaries**:
+  - **`akama`** (host CLI): `main.go` → `cmd.Execute()`. Manages Docker containers, config, init.
+    - Commands: `init`, `start`, `stop`, `status`, `logs`, `restart`, `update`, `db`, `migrate`
+    - Built from: `.` (root `main.go`)
+  - **`akama-daemon`** (in-container): `cmd/akama-daemon/main.go`. Runs Telegram bot, agent execution, job scheduling.
+    - Built from: `./cmd/akama-daemon/`
+    - Runs inside Docker container (`ghcr.io/jullury/akama-daemon:latest`)
 
 - **Daemon lifecycle**: `akama start` atomically claims PID file via `daemon.ClaimPIDFile()` (O_EXCL), then forks via `daemon.ForkDaemon()`. The child writes its own PID; the parent's PID file was just a lock. `akama stop` sends SIGTERM and polls `IsProcessAlive(pid)` (not the PID file) every 300ms with 35s timeout. This prevents a new daemon from starting while the old one's Telegram goroutines are still draining.
 
@@ -91,7 +97,7 @@ Compact guidance for agents working in the Akama repository.
 
 ## Update Flow
 
-- **CLI `akama update`**: Downloads new binary BEFORE stopping the daemon. In Docker, stopping daemon (PID 1) restarts the container — the binary must be on disk first.
+- **CLI `akama update`**: Downloads new daemon binary BEFORE stopping the container. In Docker, stopping daemon (PID 1) restarts the container — the binary must be on disk first.
 - **Telegram `/update`**: Same download-before-stop order. After download, sends SIGTERM to self. In Docker (PID 1), container restarts. In native mode, spawns a detached shell script that waits for the process to die, sleeps 3s, then starts the new daemon.
 - **Agent updates** (`/update_agents`): Updates `claude` and `opencode` via their package managers (brew, npm, curl fallback). Runs in a goroutine.
 
@@ -99,7 +105,8 @@ Compact guidance for agents working in the Akama repository.
 
 - **`.env` for Docker**: Requires `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` (NOT the build-time OAuth vars).
 - **Non-root user**: Container runs as `akama`. All `docker exec` commands must use `gosu akama` (e.g. `docker exec akama gosu akama akama init`, `docker exec -it akama gosu akama opencode login`).
-- **Volume seeding** (`entrypoint.sh`): Binary at `/opt/akama/bin/akama` (from image) is compared against `/home/akama/.akama/bin/akama` (volume) via `sort -V`. Volume is overwritten only if empty or seed is strictly newer. This means `akama update` (writes to volume) survives container recreation.
+- **Entrypoint**: Container runs `akama-daemon` directly (not `akama --daemon`). The daemon is the only process, running as PID 1.
+- **Volume seeding** (`entrypoint.sh`): Binary at `/opt/akama/bin/akama-daemon` (from image) is compared against `/home/akama/.akama/bin/akama-daemon` (volume) via `sort -V`. Volume is overwritten only if empty or seed is strictly newer. This means `akama-daemon update` (writes to volume) survives container recreation.
 - **`CACHEBUST` build arg**: Forces re-download of the binary on `docker compose build`. Use `CACHEBUST=$(date +%s) docker compose build`.
 - **`restart: unless-stopped`**: Container auto-restarts. For forced recreation: `docker compose up -d --force-recreate`.
 - **Config generation**: `config.yaml` is generated at container startup from `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` env vars. Default agent is `opencode`.
