@@ -1,3 +1,10 @@
+## [3.11.3](https://github.com/jullury/akama/compare/v3.11.2...v3.11.3) (2026-07-14)
+
+
+### Bug Fixes
+
+* **agent:** remove deadline, add real process health checks to heartbeat ([4d46977](https://github.com/jullury/akama/commit/4d4697787a247c238d1ba2df20ad74ff51663274))
+
 ## [3.11.2](https://github.com/jullury/akama/compare/v3.11.1...v3.11.2) (2026-07-13)
 
 
