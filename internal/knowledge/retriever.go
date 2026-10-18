@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jullury/akama/internal/storage"
@@ -24,7 +25,8 @@ func FindSimilarForRepo(ctx context.Context, db *sql.DB, ollamaURL string, text 
 
 	embedding, err := getEmbedding(ctx, ollamaURL, text)
 	if err != nil {
-		return nil, fmt.Errorf("embed query: %w", err)
+		log.Printf("[knowledge] embed query failed, skipping similarity search: %v", err)
+		return nil, nil
 	}
 	if embedding == nil {
 		return nil, nil
@@ -51,7 +53,8 @@ func FindSimilarForRepo(ctx context.Context, db *sql.DB, ollamaURL string, text 
 	`
 	rows, err := db.QueryContext(ctx, query, vecStr, repoURL, limit)
 	if err != nil {
-		return nil, fmt.Errorf("similarity search: %w", err)
+		log.Printf("[knowledge] similarity search failed: %v", err)
+		return nil, nil
 	}
 	defer rows.Close()
 
