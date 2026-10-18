@@ -18,7 +18,8 @@ import (
 const EmbeddingModel = "nomic-embed-text"
 
 type ollamaEmbedResponse struct {
-	Embedding []float32 `json:"embedding"`
+	Embedding   []float32   `json:"embedding"`
+	Embeddings  [][]float32 `json:"embeddings"`
 }
 
 // EnsureModel waits for Ollama to be ready and pulls the named model
@@ -28,13 +29,18 @@ func EnsureModel(ctx context.Context, ollamaURL, model string) {
 		return
 	}
 
-	// Wait for Ollama to become reachable.
+	// Wait for Ollama to become reachable, bounded to 60 seconds.
 	log.Printf("[ollama] Waiting for Ollama at %s ...", ollamaURL)
+	deadline := time.Now().Add(60 * time.Second)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
+		}
+		if time.Now().After(deadline) {
+			log.Printf("[ollama] Timed out waiting for Ollama at %s after 60s; knowledge flow disabled", ollamaURL)
+			return
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ollamaURL+"/api/tags", nil)
 		if err != nil {
@@ -196,16 +202,30 @@ func getEmbedding(ctx context.Context, ollamaURL, text string) ([]float32, error
 		return nil, nil
 	}
 
-	body := map[string]interface{}{
+	// Try the newer /api/embed endpoint first.
+	if emb, err := tryEmbedEndpoint(ctx, ollamaURL, "/api/embed", map[string]interface{}{
+		"model": EmbeddingModel,
+		"input": text,
+	}); err == nil && emb != nil {
+		return emb, nil
+	} else if err != nil {
+		log.Printf("[knowledge] /api/embed failed, falling back to /api/embeddings: %v", err)
+	}
+
+	// Fall back to legacy /api/embeddings endpoint.
+	return tryEmbedEndpoint(ctx, ollamaURL, "/api/embeddings", map[string]interface{}{
 		"model":  EmbeddingModel,
 		"prompt": text,
-	}
+	})
+}
+
+func tryEmbedEndpoint(ctx context.Context, ollamaURL, path string, body map[string]interface{}) ([]float32, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", ollamaURL+"/api/embeddings", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", ollamaURL+path, bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -231,7 +251,13 @@ func getEmbedding(ctx context.Context, ollamaURL, text string) ([]float32, error
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
-	return result.Embedding, nil
+	if len(result.Embedding) > 0 {
+		return result.Embedding, nil
+	}
+	if len(result.Embeddings) > 0 && len(result.Embeddings[0]) > 0 {
+		return result.Embeddings[0], nil
+	}
+	return nil, fmt.Errorf("ollama returned no embedding")
 }
 
 func formatVector(embedding []float32) string {
