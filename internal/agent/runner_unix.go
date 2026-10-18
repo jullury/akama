@@ -52,7 +52,7 @@ func agentCmd(ctx context.Context, bin string, args []string, workspacePath stri
 		}
 		cmd.Env = []string{
 			"HOME=/home/worker",
-			"PATH=/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+			"PATH=/home/worker/.opencode/bin:/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		}
 	} else {
 		cmd.Env = os.Environ()

@@ -276,7 +276,7 @@ The new binary is written to the volume and survives container recreation.
 **Agents (opencode / claude):**
 Checked and updated automatically on every container start. To force an immediate update:
 ```sh
-docker exec akama gosu akama npm install -g opencode-ai@latest
+docker exec akama gosu akama bash -c 'curl -fsSL https://opencode.ai/v2/install | bash'
 docker exec akama gosu akama npm install -g @anthropic-ai/claude-code@latest
 ```
 

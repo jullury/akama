@@ -188,7 +188,7 @@ func (r *opencodeRunner) RunDetached(ctx context.Context, model, workspacePath, 
 	}
 
 	// Pass prompt via stdin to avoid ARG_MAX when content is large.
-	args := []string{"run", "--dir", workspacePath, "--dangerously-skip-permissions", "--format", "json"}
+	args := []string{"run", "--auto", "--format", "json"}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
@@ -223,7 +223,7 @@ func (r *opencodeRunner) FetchModels(_ map[string]string) []string {
 	cmd := exec.Command("opencode", "models")
 	cmd.Env = []string{
 		"HOME=/home/worker",
-		"PATH=/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"PATH=/home/worker/.opencode/bin:/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	dropPrivileges(cmd)
 	out, err := cmd.Output()
@@ -326,12 +326,12 @@ func parseOpencodeOutput(output string) string {
 		if evtType == "tool_use" {
 			var tu struct {
 				Part struct {
-					Type   string `json:"type"`
-					Tool   string `json:"tool"`
-					State  struct {
-						Status string `json:"status"`
+					Type  string `json:"type"`
+					Tool  string `json:"tool"`
+					State struct {
+						Status string          `json:"status"`
 						Input  json.RawMessage `json:"input"`
-						Output string `json:"output"`
+						Output string          `json:"output"`
 					} `json:"state"`
 				} `json:"part"`
 			}
@@ -809,27 +809,18 @@ func InstallClaudeCmd() error {
 	return fmt.Errorf("no supported package manager found (brew, npm, or curl required)")
 }
 
-// InstallOpencodeCmd installs the opencode agent using available package managers.
+// InstallOpencodeCmd installs the opencode agent (OpenCode 2) using the official installer.
 func InstallOpencodeCmd() error {
-	// brew tap formulas may not have Linux bottles; use npm/curl on Linux.
-	if runtime.GOOS == "darwin" {
-		if _, err := exec.LookPath("brew"); err == nil {
-			return exec.Command("brew", "install", "anomalyco/tap/opencode").Run()
-		}
-	}
-	if _, err := exec.LookPath("npm"); err == nil {
-		return exec.Command("npm", "install", "-g", "--force", "opencode-ai@latest").Run()
-	}
 	if _, err := exec.LookPath("curl"); err == nil {
 		tmpScript := filepath.Join(os.TempDir(), "opencode-install.sh")
-		if err := exec.Command("curl", "-fsSL", "https://opencode.ai/install", "-o", tmpScript).Run(); err != nil {
+		if err := exec.Command("curl", "-fsSL", "https://opencode.ai/v2/install", "-o", tmpScript).Run(); err != nil {
 			return err
 		}
 		err := exec.Command("bash", tmpScript).Run()
 		os.Remove(tmpScript)
 		return err
 	}
-	return fmt.Errorf("no supported package manager found (brew, npm, or curl required)")
+	return fmt.Errorf("curl is required to install opencode")
 }
 
 // UpdateClaude updates the claude agent to the latest version.
@@ -850,19 +841,14 @@ func UpdateClaude() error {
 	return InstallClaudeCmd()
 }
 
-// UpdateOpencode updates the opencode agent to the latest version.
+// UpdateOpencode updates the opencode agent to the latest version (OpenCode 2).
 // Installs it if not present.
 func UpdateOpencode() error {
 	if _, err := exec.LookPath("opencode"); err == nil {
-		if runtime.GOOS == "darwin" {
-			if _, err := exec.LookPath("brew"); err == nil {
-				return exec.Command("brew", "upgrade", "anomalyco/tap/opencode").Run()
-			}
+		// Prefer opencode's native upgrader when available.
+		if err := exec.Command("opencode", "upgrade").Run(); err == nil {
+			return nil
 		}
-	if _, err := exec.LookPath("npm"); err == nil {
-		return exec.Command("npm", "install", "-g", "--force", "opencode-ai@latest").Run()
-	}
-		return fmt.Errorf("no supported package manager found (brew or npm required)")
 	}
 	return InstallOpencodeCmd()
 }

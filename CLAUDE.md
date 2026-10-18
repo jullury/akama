@@ -169,7 +169,7 @@ router.handleReply / handleText(await_agent_input)
 - Agent providers are registered via a registry pattern in `internal/agent/runner.go` — `agent.Register()` adds providers, `agent.Get()` retrieves them
 - Built-in providers: `claude` and `opencode`; new providers just need to implement `agent.AgentRunner` interface and call `agent.Register()`
 - `claude`: `claude -p <promptFile> --dangerously-skip-permissions --output-format json` — outputs a single JSON envelope `{"result":"..."}`
-- `opencode`: reads prompt file content, passes as message string arg with `--dir <workspacePath> --dangerously-skip-permissions --format json` — outputs NDJSON event stream; exits 0 on API errors, so `extractOpencodeError` scans for `{"type":"api_error"}` events
+- `opencode`: reads prompt file content, passes via stdin with `--auto --format json` (working dir set by cmd.Dir) — outputs NDJSON event stream; exits 0 on API errors, so `extractOpencodeError` scans for `{"type":"api_error"}` events
 - Both use `exec.CommandContext` so the subprocess is killed when the daemon context is cancelled (SIGTERM) or the per-job timeout (`agent_timeout_mins`, default 30) expires.
 - `agent.FetchModels(name)` calls the provider's API to list available models; used to populate the paginated model picker in `/config`.
 - Agent binaries are installed on first use via `agent.Install()` — tries Homebrew, then npm, then curl as fallback. Users must authenticate the installed CLI manually after installation.
