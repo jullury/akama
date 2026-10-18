@@ -1,3 +1,19 @@
+# [3.13.0](https://github.com/jullury/akama/compare/v3.12.3...v3.13.0) (2026-10-18)
+
+
+### Bug Fixes
+
+* **agent:** migrate opencode integration to OpenCode 2 ([3c72985](https://github.com/jullury/akama/commit/3c7298525866cfbe67e9d151cf5bbfa2ff063427))
+* **docker:** re-enable ollama service and wire OLLAMA_URL into daemon config ([32352ec](https://github.com/jullury/akama/commit/32352eccdb91ccc07a00a3409068bccc8942a9e9))
+* **job:** single disabled-state log for knowledge flow ([132f430](https://github.com/jullury/akama/commit/132f4305e4f0c1541d905cdf7ba43dc14d6dfeeb))
+* **knowledge:** graceful empty/error handling in similarity search ([fd8097c](https://github.com/jullury/akama/commit/fd8097c9a2f69e2ed74b53e9165332333af6ba53))
+* **knowledge:** support both /api/embed and /api/embeddings endpoints with bounded reachability wait ([f29d52c](https://github.com/jullury/akama/commit/f29d52c1d922008e44d089a6956c4e0365716c5b))
+
+
+### Features
+
+* **agent:** add agent profile pipeline (spec/plan/task/analyze/implement/converge/reviewer) ([172f58b](https://github.com/jullury/akama/commit/172f58b6dcdbeb12e0f85b221b793834ff2827da))
+
 ## [3.12.3](https://github.com/jullury/akama/compare/v3.12.2...v3.12.3) (2026-07-14)
 
 
