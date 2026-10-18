@@ -56,6 +56,9 @@ func InitScheduler(db *sql.DB, bot *tgbotapi.BotAPI, agentCfg *agent.Config, wor
 	pkgQuietStart = quietStart
 	pkgQuietEnd = quietEnd
 	pkgOllamaURL = ollamaURL
+	if ollamaURL == "" {
+		log.Printf("[knowledge] Ollama URL not configured; knowledge base flow disabled")
+	}
 }
 
 func isQuietHours() bool {
@@ -430,7 +433,6 @@ Write as a human developer would.
 		// Embed completed job asynchronously
 		go func(jobRef storage.Job) {
 			if pkgOllamaURL == "" {
-				log.Printf("[knowledge] skip embed job %d: ollama_url not configured", jobRef.ID)
 				return
 			}
 			if err := knowledge.EmbedJob(context.Background(), pkgDB, pkgOllamaURL, jobRef); err != nil {
@@ -840,7 +842,6 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 
 	go func() {
 		if pkgOllamaURL == "" {
-			log.Printf("[knowledge] skip embed job %d: ollama_url not configured", jobID)
 			return
 		}
 		updated, err := storage.GetJob(pkgDB, jobID)
