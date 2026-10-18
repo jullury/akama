@@ -27,11 +27,12 @@ type Job struct {
 	AgentOutput       string
 	DefaultBranch     string
 	Images            string
-	GroupID            string
-	Plan               string
-	LastReviewCheckAt  *time.Time
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	GroupID           string
+	Plan              string
+	ProfileOutputs    string
+	LastReviewCheckAt *time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 func CreateJob(db *sql.DB, j *Job) (int64, error) {
@@ -51,7 +52,7 @@ func CreateJob(db *sql.DB, j *Job) (int64, error) {
 	return id, nil
 }
 
-const jobColumns = `id, chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, status, workspace_path, branch_name, pr_url, notification_msg_id, error_msg, agent_output, default_branch, images, group_id, plan, created_at, updated_at, last_review_check_at`
+const jobColumns = `id, chat_id, issue_id, issue_title, issue_body, issue_url, repo_url, provider, git_token, agent, agent_model, status, workspace_path, branch_name, pr_url, notification_msg_id, error_msg, agent_output, default_branch, images, group_id, plan, profile_outputs, created_at, updated_at, last_review_check_at`
 
 func GetJob(db *sql.DB, id int64) (*Job, error) {
 	row := db.QueryRow(`SELECT `+jobColumns+` FROM jobs WHERE id = $1`, id)
@@ -70,7 +71,7 @@ func scanJob(row *sql.Row) (*Job, error) {
 	err := row.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 		&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 		&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-		&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
+		&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &j.ProfileOutputs, &createdAt, &updatedAt, &lastReview)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +178,7 @@ func FindJobsByGroupID(db *sql.DB, groupID string) ([]*Job, error) {
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &j.ProfileOutputs, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}
@@ -194,6 +195,11 @@ func FindJobsByGroupID(db *sql.DB, groupID string) ([]*Job, error) {
 
 func SetJobPlan(db *sql.DB, id int64, plan string) error {
 	_, err := db.Exec(`UPDATE jobs SET plan = $1, updated_at = NOW() WHERE id = $2`, plan, id)
+	return err
+}
+
+func SetJobProfileOutputs(db *sql.DB, id int64, outputs string) error {
+	_, err := db.Exec(`UPDATE jobs SET profile_outputs = $1, updated_at = NOW() WHERE id = $2`, outputs, id)
 	return err
 }
 
@@ -251,7 +257,7 @@ func ListJobsByChatIDWithOffset(db *sql.DB, chatID int64, filterStatus string, l
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &j.ProfileOutputs, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}
@@ -280,7 +286,7 @@ func ListJobsByChatID(db *sql.DB, chatID int64, limit int) ([]*Job, error) {
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &j.ProfileOutputs, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}
@@ -309,7 +315,7 @@ func ListFailedJobsByChatID(db *sql.DB, chatID int64) ([]*Job, error) {
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &j.ProfileOutputs, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}
@@ -344,7 +350,7 @@ func ListJobs(db *sql.DB, limit, offset int) ([]*Job, error) {
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &j.ProfileOutputs, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}
@@ -405,7 +411,7 @@ func FindJobsByPRCreatedStatus(db *sql.DB) ([]*Job, error) {
 		err := rows.Scan(&j.ID, &j.ChatID, &j.IssueID, &j.IssueTitle, &j.IssueBody, &j.IssueURL,
 			&j.RepoURL, &j.Provider, &j.GitToken, &j.Agent, &j.AgentModel, &j.Status,
 			&j.WorkspacePath, &j.BranchName, &j.PRURL, &j.NotificationMsgID, &j.ErrorMsg,
-			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &createdAt, &updatedAt, &lastReview)
+			&j.AgentOutput, &j.DefaultBranch, &j.Images, &j.GroupID, &j.Plan, &j.ProfileOutputs, &createdAt, &updatedAt, &lastReview)
 		if err != nil {
 			return nil, err
 		}

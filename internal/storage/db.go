@@ -61,6 +61,7 @@ func Migrate(db *sql.DB) error {
 		images              TEXT NOT NULL DEFAULT '',
 		group_id            TEXT NOT NULL DEFAULT '',
 		plan                TEXT NOT NULL DEFAULT '',
+		profile_outputs     TEXT NOT NULL DEFAULT '{}',
 		question_count      INTEGER NOT NULL DEFAULT 0,
 		last_review_check_at TIMESTAMPTZ,
 		created_at          TIMESTAMPTZ DEFAULT NOW(),
@@ -144,6 +145,9 @@ func Migrate(db *sql.DB) error {
 	// Migrations for existing databases
 	if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS question_count INTEGER NOT NULL DEFAULT 0`); err != nil {
 		log.Printf("[migrate] adding question_count column: %v (may already exist)", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE jobs ADD COLUMN IF NOT EXISTS profile_outputs TEXT NOT NULL DEFAULT '{}'`); err != nil {
+		log.Printf("[migrate] adding profile_outputs column: %v (may already exist)", err)
 	}
 
 	return nil

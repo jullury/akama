@@ -40,8 +40,8 @@ var (
 )
 
 var pkgQuietStart int
-var pkgQuietEnd   int
-var pkgOllamaURL  string
+var pkgQuietEnd int
+var pkgOllamaURL string
 
 // InitScheduler sets package-level state used by Run and RunGrouped.
 // Must be called once before any jobs are started.
@@ -633,8 +633,27 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		}
 	}
 
-	prompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody, filepath.Base(knowledgePath))
-	promptPath, err := agent.WritePrompt(workspacePath, j.Agent, prompt)
+	// Run pre-implementation agent profiles (spec, plan, task, analyze).
+	profileOutputs := agent.ProfileOutputs{}
+	priorOutputs := ""
+	for _, prof := range []agent.Profile{agent.ProfileSpec, agent.ProfilePlan, agent.ProfileTask, agent.ProfileAnalyze} {
+		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running profile: %s", j.Provider, prof))
+		out, err := agent.RunProfileAgent(ctx, prof, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(prof, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+		if err != nil {
+			log.Printf("[runJob %d] profile %s failed: %v", jobID, prof, err)
+			out = fmt.Sprintf("profile %s failed: %v", prof, err)
+		}
+		profileOutputs[string(prof)] = out
+		if out != "" {
+			priorOutputs += fmt.Sprintf("\n## %s\n%s\n", prof, out)
+		}
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+	}
+
+	// Implement phase (main code-changing run).
+	basePrompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody, filepath.Base(knowledgePath))
+	implementPrompt := agent.ProfilePrompt(agent.ProfileImplement, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs) + "\n" + basePrompt
+	promptPath, err := agent.WritePrompt(workspacePath, j.Agent, implementPrompt)
 	if err != nil {
 		metrics.Global.Failed.Add(1)
 		failJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err), workspacePath)
@@ -658,7 +677,6 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 				proc := agentProc
 				agentProcMu.Unlock()
 				if proc != nil {
-					// Signal 0 checks process existence without killing it.
 					if err := proc.Signal(syscall.Signal(0)); err != nil {
 						notify(bot, j.ChatID, fmt.Sprintf("⚠️ [%s] Agent process died after %d min — retrying", repoName, elapsed))
 						return
@@ -689,6 +707,9 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	storage.SetJobAgentOutput(jobsDB, jobID, rawOutput)
 
 	agentText := agent.ParseOutput(j.Agent, rawOutput)
+	profileOutputs[string(agent.ProfileImplement)] = agentText
+	priorOutputs += "\n## implement\n" + agentText
+	storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
 
 	if agent.IsQuestion(agentText) {
 		if err := storage.SetJobAwaitingInput(jobsDB, jobID, agentText); err != nil {
@@ -710,6 +731,19 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	if agentText != "" {
 		notifyChunked(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:", j.Provider), agentText)
 	}
+
+	// Converge phase.
+	notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running profile: converge", j.Provider))
+	convergeOut, _ := agent.RunProfileAgent(ctx, agent.ProfileConverge, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileConverge, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+	profileOutputs[string(agent.ProfileConverge)] = convergeOut
+	priorOutputs += "\n## converge\n" + convergeOut
+	storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+
+	// Reviewer phase.
+	notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running profile: reviewer", j.Provider))
+	reviewOutput, _ := agent.RunProfileAgent(ctx, agent.ProfileReviewer, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileReviewer, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+	profileOutputs[string(agent.ProfileReviewer)] = reviewOutput
+	storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
 
 	notify(bot, j.ChatID, fmt.Sprintf("📦 [%s] %s — committing and pushing changes...", j.Provider, repoName))
 
@@ -754,6 +788,11 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 
 	if err := storage.SetJobPRCreated(jobsDB, jobID, branchName, prURL); err != nil {
 		log.Printf("set pr_created: %v", err)
+	}
+	if reviewOutput != "" {
+		if err := provider.PostIssueComment(j.Provider, j.IssueURL, j.GitToken, "## Agent Review\n\n"+reviewOutput); err != nil {
+			log.Printf("[runJob %d] post review comment: %v", jobID, err)
+		}
 	}
 
 	msgText := fmt.Sprintf("[%s] PR ready — %s", j.Provider, prURL)
