@@ -23,17 +23,9 @@ ARG BUILD_TIME
 
 RUN --mount=type=cache,target=/root/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=secret,id=github_client_id \
-    --mount=type=secret,id=github_client_secret \
-    --mount=type=secret,id=gitlab_client_id \
-    --mount=type=secret,id=gitlab_client_secret \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
         -trimpath \
         -ldflags "-s -w \
-          -X github.com/jullury/akama/internal/config.GitHubClientID=$(cat /run/secrets/github_client_id) \
-          -X github.com/jullury/akama/internal/config.GitHubClientSecret=$(cat /run/secrets/github_client_secret) \
-          -X github.com/jullury/akama/internal/config.GitLabClientID=$(cat /run/secrets/gitlab_client_id) \
-          -X github.com/jullury/akama/internal/config.GitLabClientSecret=$(cat /run/secrets/gitlab_client_secret) \
           -X github.com/jullury/akama/internal/config.Version=${VERSION} \
           -X github.com/jullury/akama/internal/config.BuildTime=${BUILD_TIME} \
           -X github.com/jullury/akama/internal/config.BuildPlatform=${TARGETPLATFORM}" \

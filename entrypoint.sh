@@ -86,6 +86,7 @@ default_agent: opencode
 default_model: ""
 agent_timeout_mins: 30
 workspace_dir: ~/.akama/workspaces
+ollama_url: "${OLLAMA_URL:-http://localhost:11434}"
 db_path: ~/.akama/akama.db
 log_path: ~/.akama/akama.log
 pid_path: ~/.akama/akama.pid
