@@ -74,9 +74,10 @@ ARG TARGETARCH=amd64
 
 USER worker
 ENV NPM_CONFIG_PREFIX=/home/worker/.npm-global
-ENV PATH="/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/home/worker/.opencode/bin:/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 RUN --mount=type=cache,target=/home/worker/.npm,uid=1000,gid=1000 \
-    npm install -g @anthropic-ai/claude-code opencode-ai
+    npm install -g @anthropic-ai/claude-code
+RUN curl -fsSL https://opencode.ai/v2/install | bash
 
 # Install RTK (Rust Token Killer) — CLI proxy that reduces LLM token usage 60-90%.
 # Binary is placed in /usr/local/bin so both worker and akama users can execute it.
@@ -92,9 +93,16 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then RTK_ARCH="aarch64-unknown-linux-gnu";
 # Placed in /usr/local/bin so it's on the default PATH for all users.
 RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
 
+# Ensure the workspaces directory is writable by the worker user.
+RUN mkdir -p /workspaces && chown worker:worker /workspaces
+
+# Drop back to the non-root worker user for runtime.
+USER worker
+ENV HOME=/home/worker
+WORKDIR /home/worker
+
 # --link creates a smaller diff layer by reference-only linking to the source
 # layer instead of embedding a full filesystem snapshot.  This means when only
 # the binary changes, the pushed/pulled diff is minimal.
 COPY --link --from=builder /akama-daemon /usr/local/bin/akama-daemon
-WORKDIR /workspaces
 ENTRYPOINT ["akama-daemon"]

@@ -59,7 +59,11 @@ ensure_npm_pkg() {
 }
 
 ensure_npm_pkg "pnpm" "pnpm"
-ensure_npm_pkg "opencode-ai" "opencode"
+# OpenCode 2 is distributed via the official installer, not npm.
+if ! command -v opencode > /dev/null 2>&1; then
+    echo "Installing opencode..."
+    curl -fsSL https://opencode.ai/v2/install | bash
+fi
 ensure_npm_pkg "@anthropic-ai/claude-code" "claude"
 
 # Install RTK hooks (rewrites shell commands for 60-90% token savings).

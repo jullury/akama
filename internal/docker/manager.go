@@ -17,10 +17,10 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/build"
-	dockerimage "github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	dockerimage "github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	volume "github.com/docker/docker/api/types/volume"
@@ -30,14 +30,14 @@ import (
 )
 
 const (
-	NetworkName       = "akama-net"
-	PostgresContainer = "akama-postgres"
-	OllamaContainer   = "akama-ollama"
-	DaemonContainer   = "akama-daemon"
-	DaemonImage       = "akama-daemon:latest"
-	DaemonImageRef    = "ghcr.io/jullury/akama-daemon:latest"
-	PostgresImage     = "docker.io/pgvector/pgvector:pg16"
-	OllamaImage       = "docker.io/ollama/ollama:latest"
+	NetworkName        = "akama-net"
+	PostgresContainer  = "akama-postgres"
+	OllamaContainer    = "akama-ollama"
+	DaemonContainer    = "akama-daemon"
+	DaemonImage        = "akama-daemon:latest"
+	DaemonImageRef     = "ghcr.io/jullury/akama-daemon:latest"
+	PostgresImage      = "docker.io/pgvector/pgvector:pg16"
+	OllamaImage        = "docker.io/ollama/ollama:latest"
 	WorkspacesVolume   = "akama-workspaces"
 	PostgresDataVolume = "akama-postgres-data"
 	// PostgresURL is the connection string for the host-side CLI.
@@ -274,7 +274,6 @@ func EnsureOllamaContainer(ctx context.Context, cli *client.Client) error {
 	return nil
 }
 
-
 func StartContainer(ctx context.Context, cli *client.Client, name string) error {
 	containers, err := cli.ContainerList(ctx, container.ListOptions{
 		All:     true,
@@ -499,7 +498,6 @@ func CheckHTTP(ctx context.Context, url string) error {
 	return nil
 }
 
-
 // daemonDockerfile is the combined image that runs the akama daemon (as root)
 // and the agent CLIs (claude, opencode) as the non-root worker user (uid 1000).
 // The daemon drops privileges to uid/gid 1000 before exec-ing agent processes.
@@ -510,8 +508,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd -m -u 1000 -s /bin/bash worker
 USER worker
 ENV NPM_CONFIG_PREFIX=/home/worker/.npm-global
-ENV PATH="/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-RUN npm install -g @anthropic-ai/claude-code opencode-ai
+ENV PATH="/home/worker/.opencode/bin:/home/worker/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+RUN npm install -g @anthropic-ai/claude-code
+RUN curl -fsSL https://opencode.ai/v2/install | bash
 USER root
 COPY akama /usr/local/bin/akama
 WORKDIR /workspaces
@@ -745,4 +744,3 @@ func EnsureDaemonContainer(ctx context.Context, cli *client.Client, configDir, l
 
 	return nil
 }
-
