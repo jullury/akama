@@ -693,6 +693,25 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 				b.send(chatID, "Failed to load conversation state.")
 				return
 			}
+			if conv.State == "await_plan_approval" {
+				jobIDFloat, _ := conv.Data["job_id"].(float64)
+				jobID := int64(jobIDFloat)
+				j, _ := storage.GetJob(b.JobsDB, jobID)
+				storage.SetJobStatus(b.JobsDB, jobID, "plan_confirmed")
+				storage.ResetConversation(b.JobsDB, chatID, "telegram")
+				b.send(chatID, "✅ Plan confirmed. Continuing...")
+				if j != nil && j.GroupID != "" {
+					jobs, _ := storage.FindJobsByGroupID(b.JobsDB, j.GroupID)
+					ids := make([]int64, 0, len(jobs))
+					for _, jj := range jobs {
+						ids = append(ids, jj.ID)
+					}
+					go job.RunGrouped(b.ctx, j.GroupID, ids)
+				} else {
+					go job.Run(b.ctx, jobID)
+				}
+				return
+			}
 			if conv.State == "await_plan_regen" {
 				b.send(chatID, "⏳ Plan is still being regenerated — please wait.")
 				return
@@ -706,6 +725,19 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			} else {
 				b.proceedWithPlan(chatID, conv)
 			}
+			return
+		}
+		if data == "plan:revise" {
+			conv, err := storage.GetConversation(b.JobsDB, chatID, "telegram")
+			if err != nil {
+				b.send(chatID, "Failed to load conversation state.")
+				return
+			}
+			if conv.State != "await_plan_approval" {
+				b.send(chatID, "No plan awaiting revision.")
+				return
+			}
+			b.send(chatID, "Type your feedback / what's wrong with the plan. It will be used to revise the spec.")
 			return
 		}
 		if data == "plan:cancel" {
@@ -761,7 +793,7 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 			if err := storage.UpdateConnectionDefaultBranch(b.JobsDB, chatID, repoURL, branchName); err != nil {
 				log.Printf("[bc] Failed to persist branch: %v", err)
 			}
-			b.startPlanMode(chatID, issueURL, gitToken, branchName, "")
+			b.startJob(chatID, issueURL, gitToken, branchName, "")
 			return
 		}
 		if rest, ok := strings.CutPrefix(data, "bs:"); ok {
@@ -1027,6 +1059,45 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, fmt.Sprintf("Agent is not waiting for input. Current status: %s", j.Status))
 			return
 		}
+		// Detect whether this pause happened during the spec (clarification) phase
+		// rather than the implement phase. Spec pauses have no "implement" output yet.
+		po := agent.ParseProfileOutputs(j.ProfileOutputs)
+		if _, hasImpl := po["implement"]; !hasImpl {
+			// Spec clarification path: fold the answer into the issue body and
+			// re-run the whole profile pipeline (spec is the first phase).
+			newCount, _ := storage.IncrementQuestionCount(b.JobsDB, jobID)
+			log.Printf("[await_agent_input] spec clarification answer received (count: %d)", newCount)
+			newBody := j.IssueBody + "\n\n## Clarification\n\n" + strings.TrimSpace(text)
+			if err := storage.UpdateJobIssueBody(b.JobsDB, jobID, newBody); err != nil {
+				log.Printf("[await_agent_input] update body: %v", err)
+			}
+			if err := storage.SetJobProfileOutputs(b.JobsDB, jobID, agent.ProfileOutputs{}.Marshal()); err != nil {
+				log.Printf("[await_agent_input] reset profile_outputs: %v", err)
+			}
+			if err := storage.SetJobStatus(b.JobsDB, jobID, "pending"); err != nil {
+				log.Printf("[await_agent_input] set status: %v", err)
+			}
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+
+			grouped, _ := conv.Data["grouped"].(bool)
+			if grouped {
+				jobs, err := storage.FindJobsByGroupID(b.JobsDB, j.GroupID)
+				if err == nil && len(jobs) > 0 {
+					jobIDs := make([]int64, 0, len(jobs))
+					for _, jj := range jobs {
+						storage.SetJobStatus(b.JobsDB, jj.ID, "pending")
+						jobIDs = append(jobIDs, jj.ID)
+					}
+					b.send(chatID, "Got it, re-running spec with clarification across repositories...")
+					job.RunGrouped(b.ctx, j.GroupID, jobIDs)
+					return
+				}
+			}
+			b.send(chatID, "Got it, re-running spec with clarification...")
+			job.Run(b.ctx, jobID)
+			return
+		}
+
 		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_followup", conv.Data)
 		agentCfg := &agent.Config{
 			APIKeys:     b.Config.APIKeys,
@@ -1378,6 +1449,63 @@ func (b *Bot) handleText(chatID int64, text string) {
 			b.send(chatID, fmt.Sprintf("Connected! Send a %s issue URL to start a job.", providerName))
 		}
 		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+	case "await_plan_approval":
+		jobIDFloat, _ := conv.Data["job_id"].(float64)
+		jobID := int64(jobIDFloat)
+		j, err := storage.GetJob(b.JobsDB, jobID)
+		if err != nil || j == nil {
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "Job not found.")
+			return
+		}
+		mods := strings.TrimSpace(text)
+		modsLower := strings.ToLower(mods)
+		confirmPhrases := []string{"yes", "confirm", "proceed", "go ahead", "start", "execute", "do it", "looks good", "ship it", "lgtm", "approved", "approve", "ok", "okay"}
+		isConfirm := mods == ""
+		for _, phrase := range confirmPhrases {
+			if modsLower == phrase {
+				isConfirm = true
+				break
+			}
+		}
+		if isConfirm {
+			storage.SetJobStatus(b.JobsDB, jobID, "plan_confirmed")
+			storage.ResetConversation(b.JobsDB, chatID, "telegram")
+			b.send(chatID, "✅ Plan confirmed. Continuing...")
+			if j != nil && j.GroupID != "" {
+				jobs, _ := storage.FindJobsByGroupID(b.JobsDB, j.GroupID)
+				ids := make([]int64, 0, len(jobs))
+				for _, jj := range jobs {
+					ids = append(ids, jj.ID)
+				}
+				go job.RunGrouped(b.ctx, j.GroupID, ids)
+			} else {
+				go job.Run(b.ctx, jobID)
+			}
+			return
+		}
+		// Otherwise treat as feedback -> revision requested
+		newBody := j.IssueBody + "\n\n## Plan Feedback (user requested changes)\n\n" + mods
+		if err := storage.UpdateJobIssueBody(b.JobsDB, jobID, newBody); err != nil {
+			log.Printf("[await_plan_approval] update body: %v", err)
+		}
+		if err := storage.SetJobProfileOutputs(b.JobsDB, jobID, "{}"); err != nil {
+			log.Printf("[await_plan_approval] reset outputs: %v", err)
+		}
+		storage.SetJobStatus(b.JobsDB, jobID, "plan_revision_requested")
+		storage.ResetConversation(b.JobsDB, chatID, "telegram")
+		b.send(chatID, "🔄 Revising spec with your feedback...")
+		if j != nil && j.GroupID != "" {
+			jobs, _ := storage.FindJobsByGroupID(b.JobsDB, j.GroupID)
+			ids := make([]int64, 0, len(jobs))
+			for _, jj := range jobs {
+				ids = append(ids, jj.ID)
+			}
+			go job.RunGrouped(b.ctx, j.GroupID, ids)
+		} else {
+			go job.Run(b.ctx, jobID)
+		}
+
 	case "await_branch_confirm":
 		issueURL, _ := conv.Data["issue_url"].(string)
 		gitToken, _ := conv.Data["git_token"].(string)
@@ -1393,7 +1521,7 @@ func (b *Bot) handleText(chatID int64, text string) {
 		if err := storage.UpdateConnectionDefaultBranch(b.JobsDB, chatID, repoURL, chosenBranch); err != nil {
 			log.Printf("[await_branch_confirm] Failed to persist branch: %v", err)
 		}
-		b.startPlanMode(chatID, issueURL, gitToken, chosenBranch, "")
+		b.startJob(chatID, issueURL, gitToken, chosenBranch, "")
 	case "await_branch_select":
 		reposInterface, _ := conv.Data["repos"].([]interface{})
 		repos := make([]map[string]interface{}, 0, len(reposInterface))
@@ -1698,10 +1826,10 @@ func (b *Bot) processIssueWithImages(chatID int64, issueURL, gitToken, images st
 		return
 	}
 
-	b.startPlanMode(chatID, issueURL, token, defaultBranch, images)
+	b.startJob(chatID, issueURL, token, defaultBranch, images)
 }
 
-func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, images string) {
+func (b *Bot) startJob(chatID int64, issueURL, gitToken, defaultBranch, images string) {
 	providerName := detectProvider(issueURL)
 	repoURL := extractRepoURL(issueURL)
 
@@ -1770,12 +1898,6 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 		}
 	}
 
-	agentCfg := &agent.Config{
-		APIKeys:          b.Config.APIKeys,
-		TimeoutMins:      b.Config.AgentTimeoutMins,
-		WorkspaceBaseDir: b.Config.WorkspaceDir,
-	}
-
 	repoParsed, _ := url.Parse(repoURL)
 	pathParts := strings.Split(strings.Trim(repoParsed.Path, "/"), "/")
 	var workspacePath string
@@ -1807,77 +1929,21 @@ func (b *Bot) startPlanMode(chatID int64, issueURL, gitToken, defaultBranch, ima
 	}
 	storage.SetJobWorkspace(b.JobsDB, jobID, workspacePath)
 
-	b.send(chatID, "🔍 Cloning repository for analysis...")
+	b.send(chatID, "🔍 Cloning repository...")
 
 	os.MkdirAll(workspacePath, 0755)
 	if cloneErr := git.Clone(repoURL, gitToken, workspacePath, defaultBranch); cloneErr != nil {
-		log.Printf("[startPlanMode] Failed to clone repo for plan context: %v", cloneErr)
+		log.Printf("[startJob] Failed to clone repo: %v", cloneErr)
+		b.send(chatID, fmt.Sprintf("❌ Failed to clone repository: %v", cloneErr))
+		storage.SetJobStatus(b.JobsDB, jobID, "failed")
+		return
 	}
 	job.ChmodWorkspace(workspacePath)
 
-	convData := map[string]interface{}{
-		"issue_url":      issueURL,
-		"git_token":      gitToken,
-		"default_branch": defaultBranch,
-		"images":         images,
-		"provider":       providerName,
-		"repo_url":       repoURL,
-		"title":          title,
-		"body":           body,
-		"issue_id":       issueID,
-		"agent_name":     agentName,
-		"agent_model":    agentModel,
-		"plan_workspace": workspacePath,
-		"job_id":         jobID,
-	}
-
-	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
-	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions_gen", convData)
-
-	go func() {
-		heartbeatStop := make(chan struct{})
-		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-heartbeatStop:
-					return
-				case <-ticker.C:
-					b.send(chatID, "⏳ Still analyzing...")
-				}
-			}
-		}()
-
-		prompt := agent.BuildClarifyingQuestionsPrompt(title, body)
-		output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, workspacePath, prompt, agentCfg)
-		close(heartbeatStop)
-
-		questions := agent.ParseClarifyingQuestions(output)
-
-		if agentErr != nil {
-			log.Printf("[startPlanMode] Failed to generate questions: %v", agentErr)
-			b.send(chatID, fmt.Sprintf("⚠️ Could not generate clarifying questions (%v). Proceeding with plan generation...", agentErr))
-			b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, workspacePath, issueURL, providerName, gitToken, agentCfg, convData)
-			return
-		}
-
-		if len(questions) < 2 {
-			b.send(chatID, "No clarifying questions needed. Proceeding with plan generation...")
-			b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, workspacePath, issueURL, providerName, gitToken, agentCfg, convData)
-			return
-		}
-
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", convData)
-
-		var qb strings.Builder
-		qb.WriteString("I have a few questions to better understand the issue:\n\n")
-		for i, q := range questions {
-			qb.WriteString(fmt.Sprintf("%d. %s\n", i+1, q))
-		}
-		qb.WriteString("\nPlease answer all questions in a single message.")
-		b.send(chatID, qb.String())
-	}()
+	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+	storage.SetJobStatus(b.JobsDB, jobID, "pending")
+	b.send(chatID, "✅ Starting implementation (profile pipeline)...")
+	job.Run(b.ctx, jobID)
 }
 
 // generateAndReviewPlan runs plan generation with the given answers (may be empty)
@@ -2241,21 +2307,13 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		return
 	}
 
-	agentCfg := &agent.Config{
-		APIKeys:          b.Config.APIKeys,
-		TimeoutMins:      b.Config.AgentTimeoutMins,
-		WorkspaceBaseDir: b.Config.WorkspaceDir,
-	}
-
-	b.send(chatID, "🔍 Cloning repositories for analysis...")
+	b.send(chatID, "🔍 Cloning repositories...")
 
 	// Clone each repo into its subdirectory under the shared issue workspace
-	repoSources := make([]string, 0, len(repos))
 	for _, repo := range repos {
 		rURL, _ := repo["repo_url"].(string)
 		rToken, _ := repo["token"].(string)
 		rBranch, _ := repo["default_branch"].(string)
-		rProvider, _ := repo["provider"].(string)
 		owner, rName, err := git.OwnerRepo(rURL)
 		if err != nil {
 			log.Printf("[processMultiIssue] Failed to parse repo URL %s: %v", rURL, err)
@@ -2266,84 +2324,16 @@ func (b *Bot) processMultiIssue(chatID int64, issueURL string, repos []map[strin
 		os.MkdirAll(clonePath, 0755)
 		if cloneErr := git.Clone(rURL, rToken, clonePath, rBranch); cloneErr != nil {
 			log.Printf("[processMultiIssue] Failed to clone %s: %v", rURL, cloneErr)
-		} else {
-			repoSources = append(repoSources, fmt.Sprintf("  - %s/%s (%s)", owner, rName, rProvider))
 		}
 		job.ChmodWorkspace(clonePath)
 	}
 
-	// Agent CWD = shared issue workspace (sees all repos as subdirectories)
-	planWorkspace := issueWorkspace
-
-	var firstToken string
-	if len(repos) > 0 {
-		firstToken, _ = repos[0]["token"].(string)
+	storage.ResetConversation(b.JobsDB, chatID, "telegram")
+	for _, jid := range jobIDs {
+		storage.SetJobStatus(b.JobsDB, jid, "pending")
 	}
-
-	multiConvData := map[string]interface{}{
-		"issue_url":      issueURL,
-		"provider":       providerName,
-		"title":          title,
-		"body":           body,
-		"issue_id":       issueID,
-		"images":         images,
-		"agent_name":     agentName,
-		"agent_model":    agentModel,
-		"group_id":       groupID,
-		"multi_repo":     true,
-		"repos":          repos,
-		"repo_sources":   repoSources,
-		"plan_workspace": planWorkspace,
-		"job_ids":        jobIDs,
-	}
-
-	b.send(chatID, "🤔 Analyzing issue to generate clarifying questions...")
-	storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions_gen", multiConvData)
-
-	go func() {
-		heartbeatStop := make(chan struct{})
-		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-heartbeatStop:
-					return
-				case <-ticker.C:
-					b.send(chatID, "⏳ Still analyzing...")
-				}
-			}
-		}()
-
-		prompt := agent.BuildClarifyingQuestionsPrompt(title, body, repoSources...)
-		output, agentErr := agent.RunPlanAgent(b.ctx, agentName, agentModel, planWorkspace, prompt, agentCfg)
-		close(heartbeatStop)
-
-		questions := agent.ParseClarifyingQuestions(output)
-
-		if agentErr != nil {
-			log.Printf("[processMultiIssue] Failed to generate questions: %v", agentErr)
-			b.send(chatID, fmt.Sprintf("⚠️ Could not generate clarifying questions (%v). Proceeding with plan generation...", agentErr))
-			b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, planWorkspace, issueURL, providerName, firstToken, agentCfg, multiConvData, repoSources...)
-			return
-		}
-
-		if len(questions) < 2 {
-			b.send(chatID, "No clarifying questions needed. Proceeding with plan generation...")
-			b.generateAndReviewPlan(chatID, title, body, "", agentName, agentModel, planWorkspace, issueURL, providerName, firstToken, agentCfg, multiConvData, repoSources...)
-			return
-		}
-
-		storage.SetConversationState(b.JobsDB, chatID, "telegram", "await_clarifying_questions", multiConvData)
-
-		var qb strings.Builder
-		qb.WriteString("I have a few questions to better understand the issue (across all repositories):\n\n")
-		for i, q := range questions {
-			qb.WriteString(fmt.Sprintf("%d. %s\n", i+1, q))
-		}
-		qb.WriteString("\nPlease answer all questions in a single message.")
-		b.send(chatID, qb.String())
-	}()
+	b.send(chatID, "✅ Starting implementation across repositories (profile pipeline)...")
+	job.RunGrouped(b.ctx, groupID, jobIDs)
 }
 
 func (b *Bot) send(chatID int64, text string) {
