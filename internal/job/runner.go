@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -511,7 +512,8 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 	}
 
 	// Implement phase (main multi-repo code-changing run).
-	if _, ok := profileOutputs[string(agent.ProfileImplement)]; !ok {
+	errQuestion := errors.New("agent question")
+	runGroupedImplement := func() (string, error) {
 		multiRepoPrompt := fmt.Sprintf(`You are a developer fixing an issue across %d repositories.
 
 The workspace contains the following repositories as subdirectories:
@@ -542,7 +544,7 @@ Write as a human developer would.
 			for _, j := range jobs {
 				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
 			}
-			return
+			return "", fmt.Errorf("write prompt: %w", err)
 		}
 
 		notify(bot, chatID, fmt.Sprintf("🤖 Running AI agent across %d repositories for: %s", len(jobs), issueTitle))
@@ -589,7 +591,7 @@ Write as a human developer would.
 			for _, j := range jobs {
 				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr))
 			}
-			return
+			return "", fmt.Errorf("agent run: %v", agentErr)
 		}
 		// Store agent output on the first job
 		if len(jobs) > 0 {
@@ -619,16 +621,25 @@ Write as a human developer would.
 			if sent.MessageID != 0 && len(jobs) > 0 {
 				storage.SetJobNotifMsgID(jobsDB, jobs[0].ID, int64(sent.MessageID))
 			}
-			return
+			return agentText, errQuestion
 		}
 
 		if agentText != "" {
 			notifyChunked(bot, chatID, "📋 Agent output across all repositories:", agentText)
 		}
-	} else {
-		if agentText != "" {
-			// already completed earlier
+		return agentText, nil
+	}
+
+	// First pass: run implement if not already completed.
+	if _, ok := profileOutputs[string(agent.ProfileImplement)]; !ok {
+		at, err := runGroupedImplement()
+		if err == errQuestion {
+			return
 		}
+		if err != nil {
+			return
+		}
+		agentText = at
 	}
 
 	// Converge phase.
@@ -640,6 +651,97 @@ Write as a human developer would.
 		if len(jobs) > 0 {
 			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
 		}
+	}
+
+	// QA phase (after converge, before review).
+	qaOutput := ""
+	if v, ok := profileOutputs[string(agent.ProfileQA)]; ok {
+		qaOutput = v
+	}
+	if _, ok := profileOutputs[string(agent.ProfileQA)]; !ok {
+		notify(bot, chatID, fmt.Sprintf("🤖 [%d repos] running: %s", len(jobs), agent.ProfileQA.DisplayName()))
+		var qaErr error
+		qaOutput, qaErr = runProfileWithHeartbeat(ctx, bot, chatID, "group", agent.ProfileQA, agentName, agentModel, sharedWorkspace, agent.ProfilePrompt(agent.ProfileQA, issueTitle, issueBody, sharedWorkspace, priorOutputs), agentCfg)
+		if qaErr != nil {
+			log.Printf("[runGrouped] profile %s failed: %v", agent.ProfileQA, qaErr)
+			for _, j := range jobs {
+				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("QA phase failed: %v", qaErr))
+			}
+			return
+		}
+		profileOutputs[string(agent.ProfileQA)] = qaOutput
+		if qaOutput != "" {
+			priorOutputs += "\n## qa\n" + qaOutput
+		}
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+	}
+
+	// Fix-and-reverify loop on blocking QA defects.
+	qaIterations := 0
+	if v, ok := profileOutputs["qa_fix_iterations"]; ok && v != "" {
+		fmt.Sscanf(v, "%d", &qaIterations)
+	}
+	for agent.IsQAFailure(qaOutput) && qaIterations < agent.QAMaxFixIterations {
+		qaIterations++
+		profileOutputs["qa_fix_iterations"] = fmt.Sprintf("%d", qaIterations)
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+
+		notify(bot, chatID, fmt.Sprintf("🔁 [%d repos] QA found defects; re-running implement (iteration %d/%d)...", len(jobs), qaIterations, agent.QAMaxFixIterations))
+
+		// Re-run implement phase via the shared closure (multi-repo RunDetached).
+		_, err := runGroupedImplement()
+		if err == errQuestion {
+			return
+		}
+		if err != nil {
+			return
+		}
+
+		// Re-run converge.
+		notify(bot, chatID, fmt.Sprintf("🤖 [%d repos] running: %s", len(jobs), agent.ProfileConverge.DisplayName()))
+		convergeOut, convErr := runProfileWithHeartbeat(ctx, bot, chatID, "group", agent.ProfileConverge, agentName, agentModel, sharedWorkspace, agent.ProfilePrompt(agent.ProfileConverge, issueTitle, issueBody, sharedWorkspace, priorOutputs), agentCfg)
+		if convErr != nil {
+			log.Printf("[runGrouped] profile %s failed: %v", agent.ProfileConverge, convErr)
+			for _, j := range jobs {
+				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("Converge phase failed: %v", convErr))
+			}
+			return
+		}
+		profileOutputs[string(agent.ProfileConverge)] = convergeOut
+		priorOutputs += "\n## converge\n" + convergeOut
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+
+		// Re-run QA.
+		notify(bot, chatID, fmt.Sprintf("🤖 [%d repos] running: %s", len(jobs), agent.ProfileQA.DisplayName()))
+		var qaErr error
+		qaOutput, qaErr = runProfileWithHeartbeat(ctx, bot, chatID, "group", agent.ProfileQA, agentName, agentModel, sharedWorkspace, agent.ProfilePrompt(agent.ProfileQA, issueTitle, issueBody, sharedWorkspace, priorOutputs), agentCfg)
+		if qaErr != nil {
+			log.Printf("[runGrouped] profile %s failed: %v", agent.ProfileQA, qaErr)
+			for _, j := range jobs {
+				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("QA phase failed: %v", qaErr))
+			}
+			return
+		}
+		profileOutputs[string(agent.ProfileQA)] = qaOutput
+		if qaOutput != "" {
+			priorOutputs += "\n## qa\n" + qaOutput
+		}
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+	}
+
+	if agent.IsQAFailure(qaOutput) {
+		for _, j := range jobs {
+			failGroupedJob(jobsDB, bot, j, "QA phase failed after fix iterations")
+		}
+		return
 	}
 
 	// Reviewer phase.
@@ -658,6 +760,14 @@ Write as a human developer would.
 		if err := provider.PostIssueComment(jobs[0].Provider, issueURL, jobs[0].GitToken, "## Agent Review\n\n"+reviewOutput); err != nil {
 			log.Printf("[runGrouped] post review comment: %v", err)
 		}
+	}
+	// Post QA report as a comment on the issue.
+	if qaOutput != "" && len(jobs) > 0 {
+		if err := provider.PostIssueComment(jobs[0].Provider, issueURL, jobs[0].GitToken, "## QA Report\n\n"+qaOutput); err != nil {
+			log.Printf("[runGrouped] post qa comment: %v", err)
+		}
+	} else if len(jobs) > 0 {
+		notify(bot, chatID, "✅ QA passed — no defects found.")
 	}
 
 	// Process each repo: commit, push, create PR
@@ -1200,6 +1310,152 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
 	}
 
+	// QA phase (after converge, before review).
+	qaOutput := profileOutputs[string(agent.ProfileQA)]
+	if _, ok := profileOutputs[string(agent.ProfileQA)]; !ok {
+		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running: %s", j.Provider, agent.ProfileQA.DisplayName()))
+		var qaErr error
+		qaOutput, qaErr = runProfileWithHeartbeat(ctx, bot, j.ChatID, j.Provider, agent.ProfileQA, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileQA, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+		if qaErr != nil {
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("QA phase failed: %v", qaErr), workspacePath)
+			return
+		}
+		profileOutputs[string(agent.ProfileQA)] = qaOutput
+		if qaOutput != "" {
+			priorOutputs += "\n## qa\n" + qaOutput
+		}
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+	}
+
+	// Fix-and-reverify loop on blocking QA defects.
+	qaIterations := 0
+	if v, ok := profileOutputs["qa_fix_iterations"]; ok && v != "" {
+		fmt.Sscanf(v, "%d", &qaIterations)
+	}
+	for agent.IsQAFailure(qaOutput) && qaIterations < agent.QAMaxFixIterations {
+		qaIterations++
+		profileOutputs["qa_fix_iterations"] = fmt.Sprintf("%d", qaIterations)
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+
+		notify(bot, j.ChatID, fmt.Sprintf("🔁 [%s] QA found defects; re-running implement (iteration %d/%d)...", j.Provider, qaIterations, agent.QAMaxFixIterations))
+
+		// Re-run implement phase.
+		basePrompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody, filepath.Base(knowledgePath))
+		implementPrompt := agent.ProfilePrompt(agent.ProfileImplement, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs) + "\n" + basePrompt
+		promptPath2, err := agent.WritePrompt(workspacePath, j.Agent, implementPrompt)
+		if err != nil {
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err), workspacePath)
+			return
+		}
+
+		heartbeatStop := make(chan struct{})
+		var agentProc *os.Process
+		var agentProcMu sync.Mutex
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			elapsed := 0
+			for {
+				select {
+				case <-heartbeatStop:
+					return
+				case <-ticker.C:
+					elapsed += 5
+					agentProcMu.Lock()
+					proc := agentProc
+					agentProcMu.Unlock()
+					if proc != nil {
+						if err := proc.Signal(syscall.Signal(0)); err != nil {
+							notify(bot, j.ChatID, fmt.Sprintf("⚠️ [%s] Agent process died after %d min — retrying", repoName, elapsed))
+							return
+						}
+					}
+					notify(bot, j.ChatID, fmt.Sprintf("⏳ [%s] Agent still working... (%d min elapsed)", repoName, elapsed))
+				}
+			}
+		}()
+
+		agentErr := withRetry(ctx, "agent run", 3, func() error {
+			var e error
+			rawOutput, e = agent.RunDetached(ctx, j.Agent, j.AgentModel, workspacePath, promptPath2, agentCfg, func(p *os.Process) {
+				agentProcMu.Lock()
+				agentProc = p
+				agentProcMu.Unlock()
+			})
+			return e
+		})
+		close(heartbeatStop)
+		os.Remove(promptPath2)
+
+		if agentErr != nil {
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr), workspacePath)
+			return
+		}
+		storage.SetJobAgentOutput(jobsDB, jobID, rawOutput)
+
+		agentText = agent.ParseOutput(j.Agent, rawOutput)
+		profileOutputs[string(agent.ProfileImplement)] = agentText
+		priorOutputs += "\n## implement\n" + agentText
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+
+		if agent.IsQuestion(agentText) {
+			if err := storage.SetJobAwaitingInput(jobsDB, jobID, agentText); err != nil {
+				log.Printf("set awaiting_input: %v", err)
+			}
+			storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
+				map[string]interface{}{"job_id": jobID})
+			msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
+				"🤔 [%s] %s — agent needs your input:\n\n%s\n\nJust reply with your answer.",
+				j.Provider, repoName, agent.ExtractQuestion(agentText),
+			))
+			sent, _ := bot.Send(msg)
+			if sent.MessageID != 0 {
+				storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
+			}
+			return
+		}
+
+		if agentText != "" {
+			notifyChunked(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:", j.Provider), agentText)
+		}
+
+		// Re-run converge.
+		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running: %s", j.Provider, agent.ProfileConverge.DisplayName()))
+		convergeOut, convErr := runProfileWithHeartbeat(ctx, bot, j.ChatID, j.Provider, agent.ProfileConverge, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileConverge, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+		if convErr != nil {
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("Converge phase failed: %v", convErr), workspacePath)
+			return
+		}
+		profileOutputs[string(agent.ProfileConverge)] = convergeOut
+		priorOutputs += "\n## converge\n" + convergeOut
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+
+		// Re-run QA.
+		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running: %s", j.Provider, agent.ProfileQA.DisplayName()))
+		var qaErr error
+		qaOutput, qaErr = runProfileWithHeartbeat(ctx, bot, j.ChatID, j.Provider, agent.ProfileQA, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileQA, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+		if qaErr != nil {
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("QA phase failed: %v", qaErr), workspacePath)
+			return
+		}
+		profileOutputs[string(agent.ProfileQA)] = qaOutput
+		if qaOutput != "" {
+			priorOutputs += "\n## qa\n" + qaOutput
+		}
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+	}
+
+	if agent.IsQAFailure(qaOutput) {
+		metrics.Global.Failed.Add(1)
+		failJob(jobsDB, bot, j, "QA phase failed after fix iterations", workspacePath)
+		return
+	}
+
 	// Reviewer phase.
 	if _, ok := profileOutputs[string(agent.ProfileReviewer)]; !ok {
 		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running: %s", j.Provider, agent.ProfileReviewer.DisplayName()))
@@ -1258,6 +1514,13 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 		if err := provider.PostIssueComment(j.Provider, j.IssueURL, j.GitToken, "## Agent Review\n\n"+reviewOutput); err != nil {
 			log.Printf("[runJob %d] post review comment: %v", jobID, err)
 		}
+	}
+	if qaOutput != "" {
+		if err := provider.PostIssueComment(j.Provider, j.IssueURL, j.GitToken, "## QA Report\n\n"+qaOutput); err != nil {
+			log.Printf("[runJob %d] post qa comment: %v", jobID, err)
+		}
+	} else {
+		notify(bot, j.ChatID, fmt.Sprintf("✅ [%s] QA passed — no defects found.", j.Provider))
 	}
 
 	msgText := fmt.Sprintf("[%s] PR ready — %s", j.Provider, prURL)

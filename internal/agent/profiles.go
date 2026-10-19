@@ -18,6 +18,7 @@ const (
 	ProfileAnalyze   Profile = "analyze"
 	ProfileImplement Profile = "implement"
 	ProfileConverge  Profile = "converge"
+	ProfileQA        Profile = "qa"
 	ProfileReviewer  Profile = "reviewer"
 )
 
@@ -29,6 +30,7 @@ var ProfileOrder = []Profile{
 	ProfileAnalyze,
 	ProfileImplement,
 	ProfileConverge,
+	ProfileQA,
 	ProfileReviewer,
 }
 
@@ -196,6 +198,37 @@ OUTPUT CONTRACT (markdown):
 ## Fixes Applied
 ## Build/Test Status
 `
+	case ProfileQA:
+		return base + `
+ROLE: You are a quality assurance engineer verifying the implemented change (SpecKit has no direct equivalent; this is akama's verification gate).
+
+EXECUTION FLOW:
+1. Identify build/test tooling from repository files (Makefile, go.mod, package.json, Cargo.toml, etc.) — do NOT assume a fixed command.
+2. Run the project build; record PASS/FAIL.
+3. Run available automated tests; record PASS/FAIL (or N/A if none exist — do not fail solely for missing tests).
+4. Verify the implementation against the acceptance scenarios derived in the spec phase (prior outputs). For scenarios that cannot be automated, record them as "Manual/Not automated" with a reason.
+5. Report defects found (file/line when known).
+
+CONSTRAINTS:
+- Verification-only with respect to product behavior: do NOT change product behavior.
+- MAY add or modify automated tests to exercise acceptance scenarios; test changes are part of verification.
+- Do NOT introduce new features.
+- Do NOT create pull requests or push branches.
+OUTPUT CONTRACT (markdown):
+## Checks Performed
+- Build
+- Automated tests
+- Acceptance scenario: <title>
+## Results
+- Build: PASS | FAIL
+- Automated tests: PASS | FAIL | N/A (no tests)
+- Acceptance scenario: <title>: PASS | FAIL | Manual/Not automated
+## Defects Found
+- <defect description> (file/line if known)
+## Verdict
+Verdict: PASS
+(or Verdict: FAIL / Verdict: BLOCKING when a blocking defect is found)
+`
 	case ProfileReviewer:
 		return base + `
 ROLE: You are a strict code reviewer (final quality gate before PR).
@@ -253,6 +286,8 @@ func (p Profile) DisplayName() string {
 		return "Implement (Engineer)"
 	case ProfileConverge:
 		return "Converge (Integrator)"
+	case ProfileQA:
+		return "QA (Quality Assurance)"
 	case ProfileReviewer:
 		return "Review (Reviewer)"
 	}
@@ -272,6 +307,33 @@ func IsValidPlan(s string) bool {
 	for _, m := range markers {
 		if strings.Contains(lower, m) {
 			return true
+		}
+	}
+	return false
+}
+
+// QAMaxFixIterations is the maximum number of additional implement->converge->QA
+// iterations attempted when QA reports a blocking defect.
+const QAMaxFixIterations = 2
+
+// IsQAFailure reports whether a QA profile output indicates a blocking defect.
+// It scans for the last "Verdict:" line and treats FAIL or BLOCKING as failure.
+func IsQAFailure(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "verdict:") {
+			token := strings.TrimSpace(line[len("verdict:"):])
+			token = strings.ToUpper(token)
+			return strings.Contains(token, "FAIL") || strings.Contains(token, "BLOCKING")
 		}
 	}
 	return false

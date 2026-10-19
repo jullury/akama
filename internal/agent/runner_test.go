@@ -99,3 +99,24 @@ func TestBranchFromCommit(t *testing.T) {
 		}
 	}
 }
+
+func TestIsQAFailure(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"pass", "## Results\n- Build: PASS\n## Verdict\nVerdict: PASS", false},
+		{"fail", "## Results\n- Build: FAIL\n## Verdict\nVerdict: FAIL", true},
+		{"blocking", "stuff\nVerdict: BLOCKING", true},
+		{"missing verdict", "## Results\n- Build: PASS", false},
+		{"empty", "", false},
+		{"trailing text", "Verdict: FAIL - build broken", true},
+	}
+	for _, tc := range cases {
+		got := IsQAFailure(tc.in)
+		if got != tc.want {
+			t.Errorf("%s: IsQAFailure = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
