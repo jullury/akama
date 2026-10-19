@@ -38,6 +38,39 @@ func Clone(repoURL, token, destPath, branch string) error {
 	return nil
 }
 
+// Pull updates an existing workspace to the latest remote state of branch.
+// It fetches, checks out branch, hard-resets to origin/branch, and cleans
+// untracked files so the tree is a clean, up-to-date copy. Use this instead of
+// skipping when a workspace already exists, to avoid stale local copies.
+func Pull(repoPath, token, branch string) error {
+	if branch == "" {
+		branch = "main"
+	}
+	askpassPath, err := writeAskpass(token)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(askpassPath)
+
+	cmds := [][]string{
+		{"git", "fetch", "origin", branch},
+		{"git", "checkout", "-B", branch, "origin/" + branch},
+		{"git", "reset", "--hard", "origin/" + branch},
+		{"git", "clean", "-fdx"},
+	}
+	for _, args := range cmds {
+		cmd := newCommand(repoPath, askpassPath, args[0], args[1:]...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %w\n%s", strings.Join(args, " "), err, output)
+		}
+	}
+	// Ensure internal akama files are never committed
+	gitignore := filepath.Join(repoPath, ".gitignore")
+	appendIfMissing(gitignore, ".git-askpass")
+	appendIfMissing(gitignore, ".akama-prompt.txt")
+	return nil
+}
+
 // Commit stages all changes, commits, and switches to branchName. Call once.
 func Commit(repoPath, branchName, token, gitName, gitEmail, commitMsg string) error {
 	if commitMsg == "" {
