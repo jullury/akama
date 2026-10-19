@@ -98,6 +98,26 @@ func CancelJob(jobID int64) bool {
 	return ok
 }
 
+// runProfileWithHeartbeat runs a single profile phase while emitting a periodic
+// "still working" notification so long-running phases don't look stuck.
+func runProfileWithHeartbeat(ctx context.Context, bot *tgbotapi.BotAPI, chatID int64, providerName string, prof agent.Profile, agentName, model, workspacePath, prompt string, cfg *agent.Config) (string, error) {
+	heartbeatStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(2 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatStop:
+				return
+			case <-ticker.C:
+				notify(bot, chatID, fmt.Sprintf("⏳ [%s] %s still working...", providerName, prof.DisplayName()))
+			}
+		}
+	}()
+	defer close(heartbeatStop)
+	return agent.RunProfileAgent(ctx, prof, agentName, model, workspacePath, prompt, cfg)
+}
+
 func Run(ctx context.Context, jobID int64) {
 	wg.Add(1)
 	go func() {
@@ -205,7 +225,21 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 		clonePaths[j.ID] = clonePath
 
 		if _, err := os.Stat(filepath.Join(clonePath, ".git")); err == nil {
-			log.Printf("[runGrouped] Workspace exists at %s, skipping clone for job %d", clonePath, j.ID)
+			log.Printf("[runGrouped] Workspace exists at %s, pulling latest for job %d", clonePath, j.ID)
+			if err := withRetry(ctx, "git pull", 3, func() error {
+				return git.Pull(clonePath, j.GitToken, j.DefaultBranch)
+			}); err != nil {
+				log.Printf("[runGrouped] pull failed (%v); re-cloning", err)
+				os.RemoveAll(clonePath)
+				os.MkdirAll(clonePath, 0755)
+				if err := withRetry(ctx, "git clone", 3, func() error {
+					return git.Clone(j.RepoURL, j.GitToken, clonePath, j.DefaultBranch)
+				}); err != nil {
+					failGroupedJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err))
+					cloneFailedJobs[j.ID] = true
+					continue
+				}
+			}
 		} else {
 			os.MkdirAll(clonePath, 0755)
 			if err := withRetry(ctx, "git clone", 3, func() error {
@@ -274,7 +308,211 @@ func runGrouped(ctx context.Context, groupID string, jobsDB *sql.DB, bot *tgbota
 		}
 	}
 
-	prompt := fmt.Sprintf(`You are a developer fixing an issue across %d repositories.
+	// Run pre-implementation agent profiles (spec, plan, task, analyze).
+	// Resumable: skip phases already present in profile_outputs.
+	profileOutputs := agent.ParseProfileOutputs(func() string {
+		if len(jobs) > 0 {
+			jj, _ := storage.GetJob(jobsDB, jobs[0].ID)
+			if jj != nil {
+				return jj.ProfileOutputs
+			}
+		}
+		return ""
+	}())
+	priorOutputs := ""
+	for _, p := range agent.ProfileOrder {
+		out, ok := profileOutputs[string(p)]
+		if !ok || out == "" {
+			break
+		}
+		priorOutputs += fmt.Sprintf("\n## %s\n%s\n", p, out)
+	}
+
+	var promptPath string
+	var rawOutput string
+	agentText := profileOutputs[string(agent.ProfileImplement)]
+
+	// Spec profile (may ask clarifying questions).
+	if _, ok := profileOutputs[string(agent.ProfileSpec)]; !ok {
+		notify(bot, chatID, fmt.Sprintf("🤖 [%d repos] running: %s", len(jobs), agent.ProfileSpec.DisplayName()))
+		specOut, err := runProfileWithHeartbeat(ctx, bot, chatID, "group", agent.ProfileSpec, agentName, agentModel, sharedWorkspace, agent.ProfilePrompt(agent.ProfileSpec, issueTitle, issueBody, sharedWorkspace, priorOutputs), agentCfg)
+		if err != nil {
+			log.Printf("[runGrouped] profile %s failed: %v", agent.ProfileSpec, err)
+			for _, j := range jobs {
+				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("Spec phase failed: %v", err))
+			}
+			return
+		}
+		profileOutputs[string(agent.ProfileSpec)] = specOut
+		if specOut != "" {
+			priorOutputs += fmt.Sprintf("\n## %s\n%s\n", agent.ProfileSpec, specOut)
+		}
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+
+		if agent.IsQuestion(specOut) {
+			qc := 0
+			if len(jobs) > 0 {
+				qc, _ = storage.GetQuestionCount(jobsDB, jobs[0].ID)
+			}
+			if qc < 3 {
+				log.Printf("[runGrouped] spec profile asked a clarification question")
+				if len(jobs) > 0 {
+					storage.SetJobAwaitingInput(jobsDB, jobs[0].ID, specOut)
+					storage.SetConversationState(jobsDB, chatID, "telegram", "await_agent_input",
+						map[string]interface{}{"job_id": float64(jobs[0].ID), "grouped": true, "group_id": jobs[0].GroupID})
+					msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(
+						"🤔 Spec needs clarification across %d repositories:\n\n%s\n\nJust reply with your answer.",
+						len(jobs), agent.ExtractQuestion(specOut),
+					))
+					sent, _ := bot.Send(msg)
+					if sent.MessageID != 0 && len(jobs) > 0 {
+						storage.SetJobNotifMsgID(jobsDB, jobs[0].ID, int64(sent.MessageID))
+					}
+				}
+				return
+			}
+			log.Printf("[runGrouped] spec asked a question but question limit reached; continuing")
+		}
+
+		// Post the spec as a comment on the issue before relaying to the next profile.
+		if !agent.IsQuestion(specOut) && specOut != "" && len(jobs) > 0 {
+			comment := fmt.Sprintf("## Technical Specification\n\n%s", specOut)
+			if err := provider.PostIssueComment(jobs[0].Provider, issueURL, jobs[0].GitToken, comment); err != nil {
+				log.Printf("[runGrouped] post spec comment: %v", err)
+			} else {
+				notify(bot, chatID, "📝 Spec posted as comment on the issue.")
+			}
+		}
+	}
+
+	// Plan profile (run if not already completed).
+	if _, ok := profileOutputs[string(agent.ProfilePlan)]; !ok {
+		notify(bot, chatID, fmt.Sprintf("🤖 [%d repos] running: %s", len(jobs), agent.ProfilePlan.DisplayName()))
+		planOut, err := runProfileWithHeartbeat(ctx, bot, chatID, "group", agent.ProfilePlan, agentName, agentModel, sharedWorkspace, agent.ProfilePrompt(agent.ProfilePlan, issueTitle, issueBody, sharedWorkspace, priorOutputs), agentCfg)
+		if err != nil {
+			log.Printf("[runGrouped] profile %s failed: %v", agent.ProfilePlan, err)
+			for _, j := range jobs {
+				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("Plan phase failed: %v", err))
+			}
+			return
+		}
+		profileOutputs[string(agent.ProfilePlan)] = planOut
+		if planOut != "" {
+			priorOutputs += fmt.Sprintf("\n## %s\n%s\n", agent.ProfilePlan, planOut)
+			notify(bot, chatID, fmt.Sprintf("📋 Plan posted as a comment on the issue: %s", issueURL))
+		}
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+	}
+
+	// Plan review gate (grouped).
+	if len(jobs) > 0 {
+		jj, _ := storage.GetJob(jobsDB, jobs[0].ID)
+		if jj != nil && jj.Status != "plan_confirmed" {
+			planOut := profileOutputs[string(agent.ProfilePlan)]
+			if planOut != "" {
+				comment := fmt.Sprintf("## Implementation Plan\n\n%s", planOut)
+				if err := provider.PostIssueComment(jobs[0].Provider, issueURL, jobs[0].GitToken, comment); err != nil {
+					log.Printf("[runGrouped] post plan comment: %v", err)
+				}
+			}
+			notify(bot, chatID, fmt.Sprintf("📋 Plan ready across %d repositories. Confirm to proceed, or reply with feedback.\nAuto-continues in 5 minutes.", len(jobs)))
+			kb := tgbotapi.NewInlineKeyboardMarkup(
+				tgbotapi.NewInlineKeyboardRow(
+					tgbotapi.NewInlineKeyboardButtonData("✅ Confirm", "plan:confirm"),
+					tgbotapi.NewInlineKeyboardButtonData("✏️ Request changes", "plan:revise"),
+				),
+			)
+			msg := tgbotapi.NewMessage(chatID, "Choose an action:")
+			msg.ReplyMarkup = kb
+			bot.Send(msg)
+			storage.SetJobStatus(jobsDB, jobs[0].ID, "awaiting_plan_approval")
+			storage.SetConversationState(jobsDB, chatID, "telegram", "await_plan_approval",
+				map[string]interface{}{"job_id": float64(jobs[0].ID), "grouped": true, "group_id": jobs[0].GroupID})
+
+			// Auto-continue after 5 minutes if the user does nothing.
+			go func() {
+				time.Sleep(5 * time.Minute)
+				jj, err := storage.GetJob(jobsDB, jobs[0].ID)
+				if err != nil || jj == nil || jj.Status != "awaiting_plan_approval" {
+					return
+				}
+				log.Printf("[runGrouped] plan approval timed out; auto-continuing")
+				storage.SetJobStatus(jobsDB, jobs[0].ID, "plan_confirmed")
+				for _, j := range jobs {
+					storage.SetJobStatus(jobsDB, j.ID, "plan_confirmed")
+				}
+				storage.ResetConversation(jobsDB, chatID, "telegram")
+				RunGrouped(context.Background(), jobs[0].GroupID, func() []int64 {
+					ids := make([]int64, 0, len(jobs))
+					for _, j := range jobs {
+						ids = append(ids, j.ID)
+					}
+					return ids
+				}())
+			}()
+
+			// Stop here; continuation is triggered by the user or the timer above.
+			return
+		}
+	}
+	log.Printf("[runGrouped] plan review gate done; proceeding to task/analyze")
+	notify(bot, chatID, "🤖 proceeding to task breakdown...")
+
+	// Guard: do not proceed to tasks without a real plan. Retry plan a couple
+	// of times if the output is missing/invalid.
+	planOut := profileOutputs[string(agent.ProfilePlan)]
+	retries := 0
+	for !agent.IsValidPlan(planOut) && retries < 2 {
+		retries++
+		notify(bot, chatID, fmt.Sprintf("⚠️ Plan output invalid (attempt %d); re-running plan phase...", retries))
+		newOut, err := runProfileWithHeartbeat(ctx, bot, chatID, "group", agent.ProfilePlan, agentName, agentModel, sharedWorkspace, agent.ProfilePrompt(agent.ProfilePlan, issueTitle, issueBody, sharedWorkspace, priorOutputs), agentCfg)
+		if err != nil {
+			log.Printf("[runGrouped] plan profile retry failed: %v", err)
+			break
+		}
+		planOut = newOut
+		profileOutputs[string(agent.ProfilePlan)] = planOut
+		if planOut != "" {
+			priorOutputs += fmt.Sprintf("\n## %s\n%s\n", agent.ProfilePlan, planOut)
+		}
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+	}
+	if !agent.IsValidPlan(planOut) {
+		for _, j := range jobs {
+			failGroupedJob(jobsDB, bot, j, "plan profile produced no valid plan")
+		}
+		return
+	}
+
+	// Task and analyze (skip completed).
+	for _, prof := range []agent.Profile{agent.ProfileTask, agent.ProfileAnalyze} {
+		if _, ok := profileOutputs[string(prof)]; ok {
+			continue
+		}
+		notify(bot, chatID, fmt.Sprintf("🤖 [%d repos] running: %s", len(jobs), prof.DisplayName()))
+		out, err := runProfileWithHeartbeat(ctx, bot, chatID, "group", prof, agentName, agentModel, sharedWorkspace, agent.ProfilePrompt(prof, issueTitle, issueBody, sharedWorkspace, priorOutputs), agentCfg)
+		if err != nil {
+			log.Printf("[runGrouped] profile %s failed: %v", prof, err)
+			out = fmt.Sprintf("phase %s failed: %v", prof, err)
+		}
+		profileOutputs[string(prof)] = out
+		if out != "" {
+			priorOutputs += fmt.Sprintf("\n## %s\n%s\n", prof, out)
+		}
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+	}
+
+	// Implement phase (main multi-repo code-changing run).
+	if _, ok := profileOutputs[string(agent.ProfileImplement)]; !ok {
+		multiRepoPrompt := fmt.Sprintf(`You are a developer fixing an issue across %d repositories.
 
 The workspace contains the following repositories as subdirectories:
 %s
@@ -292,92 +530,134 @@ Do NOT mention AI, bots, automation, or any tool in code comments.
 Write as a human developer would.
 `, len(jobs), strings.Join(repoList, "\n"), issueTitle, issueURL, truncated)
 
-	if knowledgePath != "" {
-		prompt += fmt.Sprintf("\nPrior art from similar resolved issues is available in %s — read it before implementing.\n", filepath.Base(knowledgePath))
-	}
-
-	promptPath, err := agent.WritePrompt(sharedWorkspace, agentName, prompt)
-	if err != nil {
-		for _, j := range jobs {
-			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
+		if knowledgePath != "" {
+			multiRepoPrompt += fmt.Sprintf("\nPrior art from similar resolved issues is available in %s — read it before implementing.\n", filepath.Base(knowledgePath))
 		}
-		return
-	}
 
-	notify(bot, chatID, fmt.Sprintf("🤖 Running AI agent across %d repositories for: %s", len(jobs), issueTitle))
+		implementPrompt := agent.ProfilePrompt(agent.ProfileImplement, issueTitle, issueBody, sharedWorkspace, priorOutputs) + "\n" + multiRepoPrompt
 
-	heartbeatStop := make(chan struct{})
-	var agentProc *os.Process
-	var agentProcMu sync.Mutex
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		elapsed := 0
-		for {
-			select {
-			case <-heartbeatStop:
-				return
-			case <-ticker.C:
-				elapsed += 5
-				agentProcMu.Lock()
-				proc := agentProc
-				agentProcMu.Unlock()
-				if proc != nil {
-					if err := proc.Signal(syscall.Signal(0)); err != nil {
-						notify(bot, chatID, fmt.Sprintf("⚠️ Agent process died after %d min — retrying", elapsed))
-						return
-					}
-				}
-				notify(bot, chatID, fmt.Sprintf("⏳ Agent still working... (%d min elapsed across %d repos)", elapsed, len(jobs)))
+		var err error
+		promptPath, err = agent.WritePrompt(sharedWorkspace, agentName, implementPrompt)
+		if err != nil {
+			for _, j := range jobs {
+				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err))
 			}
+			return
 		}
-	}()
 
-	var rawOutput string
-	agentErr := withRetry(ctx, "agent run", 3, func() error {
-		var e error
-		rawOutput, e = agent.RunDetached(ctx, agentName, agentModel, sharedWorkspace, promptPath, agentCfg, func(p *os.Process) {
-			agentProcMu.Lock()
-			agentProc = p
-			agentProcMu.Unlock()
+		notify(bot, chatID, fmt.Sprintf("🤖 Running AI agent across %d repositories for: %s", len(jobs), issueTitle))
+
+		heartbeatStop := make(chan struct{})
+		var agentProc *os.Process
+		var agentProcMu sync.Mutex
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			elapsed := 0
+			for {
+				select {
+				case <-heartbeatStop:
+					return
+				case <-ticker.C:
+					elapsed += 5
+					agentProcMu.Lock()
+					proc := agentProc
+					agentProcMu.Unlock()
+					if proc != nil {
+						if err := proc.Signal(syscall.Signal(0)); err != nil {
+							notify(bot, chatID, fmt.Sprintf("⚠️ Agent process died after %d min — retrying", elapsed))
+							return
+						}
+					}
+					notify(bot, chatID, fmt.Sprintf("⏳ Agent still working... (%d min elapsed across %d repos)", elapsed, len(jobs)))
+				}
+			}
+		}()
+
+		agentErr := withRetry(ctx, "agent run", 3, func() error {
+			var e error
+			rawOutput, e = agent.RunDetached(ctx, agentName, agentModel, sharedWorkspace, promptPath, agentCfg, func(p *os.Process) {
+				agentProcMu.Lock()
+				agentProc = p
+				agentProcMu.Unlock()
+			})
+			return e
 		})
-		return e
-	})
-	close(heartbeatStop)
+		close(heartbeatStop)
 
-	if agentErr != nil {
-		for _, j := range jobs {
-			failGroupedJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr))
+		if agentErr != nil {
+			for _, j := range jobs {
+				failGroupedJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr))
+			}
+			return
 		}
-		return
-	}
-	// Store agent output on the first job
-	if len(jobs) > 0 {
-		storage.SetJobAgentOutput(jobsDB, jobs[0].ID, rawOutput)
-	}
-
-	agentText := agent.ParseOutput(agentName, rawOutput)
-
-	// Check for question
-	if agent.IsQuestion(agentText) {
+		// Store agent output on the first job
 		if len(jobs) > 0 {
-			storage.SetJobAwaitingInput(jobsDB, jobs[0].ID, agentText)
+			storage.SetJobAgentOutput(jobsDB, jobs[0].ID, rawOutput)
 		}
-		storage.SetConversationState(jobsDB, chatID, "telegram", "await_agent_input",
-			map[string]interface{}{"job_id": float64(jobs[0].ID)})
-		msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(
-			"🤔 Agent needs your input across %d repositories:\n\n%s\n\nJust reply with your answer.",
-			len(jobs), agent.ExtractQuestion(agentText),
-		))
-		sent, _ := bot.Send(msg)
-		if sent.MessageID != 0 && len(jobs) > 0 {
-			storage.SetJobNotifMsgID(jobsDB, jobs[0].ID, int64(sent.MessageID))
+
+		agentText = agent.ParseOutput(agentName, rawOutput)
+
+		profileOutputs[string(agent.ProfileImplement)] = agentText
+		priorOutputs += "\n## implement\n" + agentText
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
 		}
-		return
+
+		// Check for question
+		if agent.IsQuestion(agentText) {
+			if len(jobs) > 0 {
+				storage.SetJobAwaitingInput(jobsDB, jobs[0].ID, agentText)
+			}
+			storage.SetConversationState(jobsDB, chatID, "telegram", "await_agent_input",
+				map[string]interface{}{"job_id": float64(jobs[0].ID), "grouped": true, "group_id": jobs[0].GroupID})
+			msg := tgbotapi.NewMessage(chatID, fmt.Sprintf(
+				"🤔 Agent needs your input across %d repositories:\n\n%s\n\nJust reply with your answer.",
+				len(jobs), agent.ExtractQuestion(agentText),
+			))
+			sent, _ := bot.Send(msg)
+			if sent.MessageID != 0 && len(jobs) > 0 {
+				storage.SetJobNotifMsgID(jobsDB, jobs[0].ID, int64(sent.MessageID))
+			}
+			return
+		}
+
+		if agentText != "" {
+			notifyChunked(bot, chatID, "📋 Agent output across all repositories:", agentText)
+		}
+	} else {
+		if agentText != "" {
+			// already completed earlier
+		}
 	}
 
-	if agentText != "" {
-		notifyChunked(bot, chatID, "📋 Agent output across all repositories:", agentText)
+	// Converge phase.
+	if _, ok := profileOutputs[string(agent.ProfileConverge)]; !ok {
+		notify(bot, chatID, fmt.Sprintf("🤖 [%d repos] running: %s", len(jobs), agent.ProfileConverge.DisplayName()))
+		convergeOut, _ := runProfileWithHeartbeat(ctx, bot, chatID, "group", agent.ProfileConverge, agentName, agentModel, sharedWorkspace, agent.ProfilePrompt(agent.ProfileConverge, issueTitle, issueBody, sharedWorkspace, priorOutputs), agentCfg)
+		profileOutputs[string(agent.ProfileConverge)] = convergeOut
+		priorOutputs += "\n## converge\n" + convergeOut
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+	}
+
+	// Reviewer phase.
+	reviewOutput := profileOutputs[string(agent.ProfileReviewer)]
+	if _, ok := profileOutputs[string(agent.ProfileReviewer)]; !ok {
+		notify(bot, chatID, fmt.Sprintf("🤖 [%d repos] running: %s", len(jobs), agent.ProfileReviewer.DisplayName()))
+		reviewOutput, _ = runProfileWithHeartbeat(ctx, bot, chatID, "group", agent.ProfileReviewer, agentName, agentModel, sharedWorkspace, agent.ProfilePrompt(agent.ProfileReviewer, issueTitle, issueBody, sharedWorkspace, priorOutputs), agentCfg)
+		profileOutputs[string(agent.ProfileReviewer)] = reviewOutput
+		if len(jobs) > 0 {
+			storage.SetJobProfileOutputs(jobsDB, jobs[0].ID, profileOutputs.Marshal())
+		}
+	}
+
+	// Post reviewer output as a comment on the issue.
+	if reviewOutput != "" && len(jobs) > 0 {
+		if err := provider.PostIssueComment(jobs[0].Provider, issueURL, jobs[0].GitToken, "## Agent Review\n\n"+reviewOutput); err != nil {
+			log.Printf("[runGrouped] post review comment: %v", err)
+		}
 	}
 
 	// Process each repo: commit, push, create PR
@@ -597,7 +877,20 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 			return
 		}
 	} else {
-		log.Printf("[runJob %d] Workspace exists at %s, skipping clone", jobID, workspacePath)
+		log.Printf("[runJob %d] Workspace exists at %s, pulling latest", jobID, workspacePath)
+		notify(bot, j.ChatID, fmt.Sprintf("🔄 [%s] updating existing workspace...", j.Provider))
+		if err := withRetry(ctx, "git pull", 3, func() error {
+			return git.Pull(workspacePath, j.GitToken, j.DefaultBranch)
+		}); err != nil {
+			log.Printf("[runJob %d] pull failed (%v); re-cloning", jobID, err)
+			if err := withRetry(ctx, "git clone", 3, func() error {
+				return git.Clone(j.RepoURL, j.GitToken, workspacePath, j.DefaultBranch)
+			}); err != nil {
+				metrics.Global.Failed.Add(1)
+				failJob(jobsDB, bot, j, fmt.Sprintf("git clone: %v", err), workspacePath)
+				return
+			}
+		}
 	}
 
 	// Worker containers run as non-root (uid 1000); make the workspace writable.
@@ -636,14 +929,171 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}
 
 	// Run pre-implementation agent profiles (spec, plan, task, analyze).
-	profileOutputs := agent.ProfileOutputs{}
+	// Resumable: if profile_outputs already contains completed phases (e.g. after
+	// an interruption or clarification), skip them and continue from the next one.
+	profileOutputs := agent.ParseProfileOutputs(j.ProfileOutputs)
 	priorOutputs := ""
-	for _, prof := range []agent.Profile{agent.ProfileSpec, agent.ProfilePlan, agent.ProfileTask, agent.ProfileAnalyze} {
-		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running profile: %s", j.Provider, prof))
-		out, err := agent.RunProfileAgent(ctx, prof, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(prof, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+	for _, p := range agent.ProfileOrder {
+		out, ok := profileOutputs[string(p)]
+		if !ok || out == "" {
+			break
+		}
+		priorOutputs += fmt.Sprintf("\n## %s\n%s\n", p, out)
+	}
+
+	var promptPath string
+	var rawOutput string
+	agentText := profileOutputs[string(agent.ProfileImplement)]
+
+	// Spec profile (may ask clarifying questions).
+	if _, ok := profileOutputs[string(agent.ProfileSpec)]; !ok {
+		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running: %s", j.Provider, agent.ProfileSpec.DisplayName()))
+		specOut, err := runProfileWithHeartbeat(ctx, bot, j.ChatID, j.Provider, agent.ProfileSpec, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileSpec, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+		if err != nil {
+			log.Printf("[runJob %d] profile %s failed: %v", jobID, agent.ProfileSpec, err)
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("Spec phase failed: %v", err), workspacePath)
+			return
+		}
+		profileOutputs[string(agent.ProfileSpec)] = specOut
+		if specOut != "" {
+			priorOutputs += fmt.Sprintf("\n## %s\n%s\n", agent.ProfileSpec, specOut)
+		}
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+
+		// Post the spec as a comment on the issue before relaying to the next profile.
+		if !agent.IsQuestion(specOut) && specOut != "" {
+			comment := fmt.Sprintf("## Technical Specification\n\n%s", specOut)
+			if err := provider.PostIssueComment(j.Provider, j.IssueURL, j.GitToken, comment); err != nil {
+				log.Printf("[runJob %d] post spec comment: %v", jobID, err)
+			} else {
+				notify(bot, j.ChatID, fmt.Sprintf("📝 [%s] Spec posted as comment on the issue.", j.Provider))
+			}
+		}
+
+		if agent.IsQuestion(specOut) {
+			qc, _ := storage.GetQuestionCount(jobsDB, jobID)
+			if qc < 3 {
+				log.Printf("[runJob %d] spec profile asked a clarification question", jobID)
+				if err := storage.SetJobAwaitingInput(jobsDB, jobID, specOut); err != nil {
+					log.Printf("set awaiting_input: %v", err)
+				}
+				storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
+					map[string]interface{}{"job_id": jobID})
+				msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
+					"🤔 [%s] Spec needs clarification:\n\n%s\n\nJust reply with your answer.",
+					j.Provider, agent.ExtractQuestion(specOut),
+				))
+				sent, _ := bot.Send(msg)
+				if sent.MessageID != 0 {
+					storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
+				}
+				return
+			}
+			log.Printf("[runJob %d] spec asked a question but question limit reached; continuing", jobID)
+		}
+	}
+
+	// Plan profile (run if not already completed).
+	if _, ok := profileOutputs[string(agent.ProfilePlan)]; !ok {
+		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running: %s", j.Provider, agent.ProfilePlan.DisplayName()))
+		planOut, err := runProfileWithHeartbeat(ctx, bot, j.ChatID, j.Provider, agent.ProfilePlan, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfilePlan, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+		if err != nil {
+			log.Printf("[runJob %d] profile %s failed: %v", jobID, agent.ProfilePlan, err)
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("Plan phase failed: %v", err), workspacePath)
+			return
+		}
+		profileOutputs[string(agent.ProfilePlan)] = planOut
+		if planOut != "" {
+			priorOutputs += fmt.Sprintf("\n## %s\n%s\n", agent.ProfilePlan, planOut)
+			notify(bot, j.ChatID, fmt.Sprintf("📋 [%s] Plan posted as a comment on the issue: %s", j.Provider, j.IssueURL))
+		}
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+	}
+
+	// Guard: do not proceed to tasks without a real plan. Re-run the plan
+	// profile a couple of times if the output is missing/invalid.
+	planOut := profileOutputs[string(agent.ProfilePlan)]
+	retries := 0
+	for !agent.IsValidPlan(planOut) && retries < 2 {
+		retries++
+		notify(bot, j.ChatID, fmt.Sprintf("⚠️ [%s] Plan output invalid (attempt %d); re-running plan phase...", j.Provider, retries))
+		newOut, err := runProfileWithHeartbeat(ctx, bot, j.ChatID, j.Provider, agent.ProfilePlan, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfilePlan, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+		if err != nil {
+			log.Printf("[runJob %d] plan profile retry failed: %v", jobID, err)
+			break
+		}
+		planOut = newOut
+		profileOutputs[string(agent.ProfilePlan)] = planOut
+		if planOut != "" {
+			priorOutputs += fmt.Sprintf("\n## %s\n%s\n", agent.ProfilePlan, planOut)
+		}
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+	}
+	if !agent.IsValidPlan(planOut) {
+		metrics.Global.Failed.Add(1)
+		failJob(jobsDB, bot, j, "plan profile produced no valid plan", workspacePath)
+		return
+	}
+
+	// Plan review gate: ask user to confirm the plan before proceeding to tasks.
+	// Auto-proceeds after 5 minutes if no response; feedback triggers a spec revision.
+	if j.Status != "plan_confirmed" {
+		planOut := profileOutputs[string(agent.ProfilePlan)]
+		log.Printf("[runJob %d] plan review gate: planOut len=%d, status=%s", jobID, len(planOut), j.Status)
+		if planOut != "" {
+			comment := fmt.Sprintf("## Implementation Plan\n\n%s", planOut)
+			if err := provider.PostIssueComment(j.Provider, j.IssueURL, j.GitToken, comment); err != nil {
+				log.Printf("[runJob %d] post plan comment: %v", jobID, err)
+			}
+		} else {
+			notify(bot, j.ChatID, fmt.Sprintf("⚠️ [%s] Plan phase produced no output.", j.Provider))
+		}
+		notify(bot, j.ChatID, fmt.Sprintf("📋 [%s] Plan ready. Confirm to proceed, or reply with feedback to revise the spec.\nAuto-continues in 5 minutes.", j.Provider))
+		kb := tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("✅ Confirm", "plan:confirm"),
+				tgbotapi.NewInlineKeyboardButtonData("✏️ Request changes", "plan:revise"),
+			),
+		)
+		msg := tgbotapi.NewMessage(j.ChatID, "Choose an action:")
+		msg.ReplyMarkup = kb
+		bot.Send(msg)
+		storage.SetJobStatus(jobsDB, jobID, "awaiting_plan_approval")
+		storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_plan_approval",
+			map[string]interface{}{"job_id": jobID})
+
+		// Auto-continue after 5 minutes if the user does nothing.
+		go func() {
+			time.Sleep(5 * time.Minute)
+			jj, err := storage.GetJob(jobsDB, jobID)
+			if err != nil || jj == nil || jj.Status != "awaiting_plan_approval" {
+				return
+			}
+			log.Printf("[runJob %d] plan approval timed out; auto-continuing", jobID)
+			storage.SetJobStatus(jobsDB, jobID, "plan_confirmed")
+			storage.ResetConversation(jobsDB, jj.ChatID, "telegram")
+			Run(context.Background(), jobID)
+		}()
+
+		// Stop here; continuation is triggered by the user (button/text) or the
+		// auto-continue timer above.
+		return
+	}
+	log.Printf("[runJob %d] plan review gate done; proceeding to task/analyze", jobID)
+	notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] proceeding to task breakdown...", j.Provider))
+
+	// Task and analyze (skip completed).
+	for _, prof := range []agent.Profile{agent.ProfileTask, agent.ProfileAnalyze} {
+		if _, ok := profileOutputs[string(prof)]; ok {
+			continue
+		}
+		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running: %s", j.Provider, prof.DisplayName()))
+		out, err := runProfileWithHeartbeat(ctx, bot, j.ChatID, j.Provider, prof, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(prof, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
 		if err != nil {
 			log.Printf("[runJob %d] profile %s failed: %v", jobID, prof, err)
-			out = fmt.Sprintf("profile %s failed: %v", prof, err)
+			out = fmt.Sprintf("phase %s failed: %v", prof, err)
 		}
 		profileOutputs[string(prof)] = out
 		if out != "" {
@@ -653,99 +1103,112 @@ func runJob(ctx context.Context, jobID int64, jobsDB *sql.DB, bot *tgbotapi.BotA
 	}
 
 	// Implement phase (main code-changing run).
-	basePrompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody, filepath.Base(knowledgePath))
-	implementPrompt := agent.ProfilePrompt(agent.ProfileImplement, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs) + "\n" + basePrompt
-	promptPath, err := agent.WritePrompt(workspacePath, j.Agent, implementPrompt)
-	if err != nil {
-		metrics.Global.Failed.Add(1)
-		failJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err), workspacePath)
-		return
-	}
+	if _, ok := profileOutputs[string(agent.ProfileImplement)]; !ok {
+		basePrompt := agent.BuildPrompt(j.IssueTitle, j.IssueURL, j.IssueBody, filepath.Base(knowledgePath))
+		implementPrompt := agent.ProfilePrompt(agent.ProfileImplement, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs) + "\n" + basePrompt
+		var err error
+		promptPath, err = agent.WritePrompt(workspacePath, j.Agent, implementPrompt) // reuse promptPath
+		_ = promptPath
+		if err != nil {
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("write prompt: %v", err), workspacePath)
+			return
+		}
 
-	heartbeatStop := make(chan struct{})
-	var agentProc *os.Process
-	var agentProcMu sync.Mutex
-	go func() {
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-		elapsed := 0
-		for {
-			select {
-			case <-heartbeatStop:
-				return
-			case <-ticker.C:
-				elapsed += 5
-				agentProcMu.Lock()
-				proc := agentProc
-				agentProcMu.Unlock()
-				if proc != nil {
-					if err := proc.Signal(syscall.Signal(0)); err != nil {
-						notify(bot, j.ChatID, fmt.Sprintf("⚠️ [%s] Agent process died after %d min — retrying", repoName, elapsed))
-						return
+		heartbeatStop := make(chan struct{})
+		var agentProc *os.Process
+		var agentProcMu sync.Mutex
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			elapsed := 0
+			for {
+				select {
+				case <-heartbeatStop:
+					return
+				case <-ticker.C:
+					elapsed += 5
+					agentProcMu.Lock()
+					proc := agentProc
+					agentProcMu.Unlock()
+					if proc != nil {
+						if err := proc.Signal(syscall.Signal(0)); err != nil {
+							notify(bot, j.ChatID, fmt.Sprintf("⚠️ [%s] Agent process died after %d min — retrying", repoName, elapsed))
+							return
+						}
 					}
+					notify(bot, j.ChatID, fmt.Sprintf("⏳ [%s] Agent still working... (%d min elapsed)", repoName, elapsed))
 				}
-				notify(bot, j.ChatID, fmt.Sprintf("⏳ [%s] Agent still working... (%d min elapsed)", repoName, elapsed))
 			}
-		}
-	}()
+		}()
 
-	var rawOutput string
-	agentErr := withRetry(ctx, "agent run", 3, func() error {
-		var e error
-		rawOutput, e = agent.RunDetached(ctx, j.Agent, j.AgentModel, workspacePath, promptPath, agentCfg, func(p *os.Process) {
-			agentProcMu.Lock()
-			agentProc = p
-			agentProcMu.Unlock()
+		agentErr := withRetry(ctx, "agent run", 3, func() error {
+			var e error
+			rawOutput, e = agent.RunDetached(ctx, j.Agent, j.AgentModel, workspacePath, promptPath, agentCfg, func(p *os.Process) {
+				agentProcMu.Lock()
+				agentProc = p
+				agentProcMu.Unlock()
+			})
+			return e
 		})
-		return e
-	})
-	close(heartbeatStop)
+		close(heartbeatStop)
 
-	if agentErr != nil {
-		metrics.Global.Failed.Add(1)
-		failJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr), workspacePath)
-		return
-	}
-	storage.SetJobAgentOutput(jobsDB, jobID, rawOutput)
-
-	agentText := agent.ParseOutput(j.Agent, rawOutput)
-	profileOutputs[string(agent.ProfileImplement)] = agentText
-	priorOutputs += "\n## implement\n" + agentText
-	storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
-
-	if agent.IsQuestion(agentText) {
-		if err := storage.SetJobAwaitingInput(jobsDB, jobID, agentText); err != nil {
-			log.Printf("set awaiting_input: %v", err)
+		if agentErr != nil {
+			metrics.Global.Failed.Add(1)
+			failJob(jobsDB, bot, j, fmt.Sprintf("agent run: %v", agentErr), workspacePath)
+			return
 		}
-		storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
-			map[string]interface{}{"job_id": jobID})
-		msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
-			"🤔 [%s] %s — agent needs your input:\n\n%s\n\nJust reply with your answer.",
-			j.Provider, repoName, agent.ExtractQuestion(agentText),
-		))
-		sent, _ := bot.Send(msg)
-		if sent.MessageID != 0 {
-			storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
-		}
-		return
-	}
+		storage.SetJobAgentOutput(jobsDB, jobID, rawOutput)
 
-	if agentText != "" {
-		notifyChunked(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:", j.Provider), agentText)
+		agentText = agent.ParseOutput(j.Agent, rawOutput)
+		profileOutputs[string(agent.ProfileImplement)] = agentText
+		priorOutputs += "\n## implement\n" + agentText
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+
+		if agent.IsQuestion(agentText) {
+			if err := storage.SetJobAwaitingInput(jobsDB, jobID, agentText); err != nil {
+				log.Printf("set awaiting_input: %v", err)
+			}
+			storage.SetConversationState(jobsDB, j.ChatID, "telegram", "await_agent_input",
+				map[string]interface{}{"job_id": jobID})
+			msg := tgbotapi.NewMessage(j.ChatID, fmt.Sprintf(
+				"🤔 [%s] %s — agent needs your input:\n\n%s\n\nJust reply with your answer.",
+				j.Provider, repoName, agent.ExtractQuestion(agentText),
+			))
+			sent, _ := bot.Send(msg)
+			if sent.MessageID != 0 {
+				storage.SetJobNotifMsgID(jobsDB, jobID, int64(sent.MessageID))
+			}
+			return
+		}
+
+		if agentText != "" {
+			notifyChunked(bot, j.ChatID, fmt.Sprintf("📋 [%s] Agent output:", j.Provider), agentText)
+		}
+	} else {
+		if agentText != "" {
+			// already completed earlier; still notify? skip to avoid spam
+		}
 	}
 
 	// Converge phase.
-	notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running profile: converge", j.Provider))
-	convergeOut, _ := agent.RunProfileAgent(ctx, agent.ProfileConverge, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileConverge, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
-	profileOutputs[string(agent.ProfileConverge)] = convergeOut
-	priorOutputs += "\n## converge\n" + convergeOut
-	storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+	if _, ok := profileOutputs[string(agent.ProfileConverge)]; !ok {
+		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running: %s", j.Provider, agent.ProfileConverge.DisplayName()))
+		convergeOut, _ := runProfileWithHeartbeat(ctx, bot, j.ChatID, j.Provider, agent.ProfileConverge, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileConverge, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+		profileOutputs[string(agent.ProfileConverge)] = convergeOut
+		priorOutputs += "\n## converge\n" + convergeOut
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+	}
 
 	// Reviewer phase.
-	notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running profile: reviewer", j.Provider))
-	reviewOutput, _ := agent.RunProfileAgent(ctx, agent.ProfileReviewer, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileReviewer, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
-	profileOutputs[string(agent.ProfileReviewer)] = reviewOutput
-	storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+	if _, ok := profileOutputs[string(agent.ProfileReviewer)]; !ok {
+		notify(bot, j.ChatID, fmt.Sprintf("🤖 [%s] running: %s", j.Provider, agent.ProfileReviewer.DisplayName()))
+		reviewOutput, _ := runProfileWithHeartbeat(ctx, bot, j.ChatID, j.Provider, agent.ProfileReviewer, j.Agent, j.AgentModel, workspacePath, agent.ProfilePrompt(agent.ProfileReviewer, j.IssueTitle, j.IssueBody, workspacePath, priorOutputs), agentCfg)
+		profileOutputs[string(agent.ProfileReviewer)] = reviewOutput
+		storage.SetJobProfileOutputs(jobsDB, jobID, profileOutputs.Marshal())
+	}
+
+	reviewOutput := profileOutputs[string(agent.ProfileReviewer)]
 
 	notify(bot, j.ChatID, fmt.Sprintf("📦 [%s] %s — committing and pushing changes...", j.Provider, repoName))
 
