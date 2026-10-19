@@ -85,8 +85,12 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then RTK_ARCH="aarch64-unknown-linux-gnu";
 # Placed in /usr/local/bin so it's on the default PATH for all users.
 RUN curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh
 
-# Ensure the workspaces directory is writable by the worker user.
-RUN mkdir -p /workspaces && chown worker:worker /workspaces
+# Ensure the workspaces directories are writable by the worker user.
+# Both /workspaces (manager.go / Go default) and /home/worker/workspaces
+# (compose bind-mounted volume) must be owned by worker, otherwise the named
+# volume is seeded root-owned and clones fail with "permission denied".
+RUN mkdir -p /workspaces /home/worker/workspaces && \
+    chown worker:worker /workspaces /home/worker/workspaces
 
 # Drop back to the non-root worker user for runtime.
 USER worker

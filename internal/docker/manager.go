@@ -706,10 +706,11 @@ func EnsureDaemonContainer(ctx context.Context, cli *client.Client, configDir, l
 			Target: "/workspaces",
 		},
 		// Mount the whole ~/.akama dir so the keyfile, config, and logs all persist.
+		// Target must be the worker user's home (not /root) so the daemon can read it.
 		{
 			Type:   mount.TypeBind,
 			Source: configDir,
-			Target: "/root/.akama",
+			Target: "/home/worker/.akama",
 		},
 		// Mount the host ~/.claude so the agent CLIs find their auth tokens.
 		{

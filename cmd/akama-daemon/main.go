@@ -47,6 +47,21 @@ func main() {
 		log.Fatalf("Invalid config: %v", err)
 	}
 
+	// Fail fast with an actionable message if the workspace directory is missing
+	// or not writable, instead of surfacing a confusing "permission denied"
+	// deep inside a clone later.
+	if cfg.WorkspaceDir != "" {
+		if err := os.MkdirAll(cfg.WorkspaceDir, 0755); err != nil {
+			log.Fatalf("Workspace dir %s is not writable: %v (check ownership/permissions)", cfg.WorkspaceDir, err)
+		}
+		tmp, err := os.CreateTemp(cfg.WorkspaceDir, ".akama-writecheck-*")
+		if err != nil {
+			log.Fatalf("Workspace dir %s is not writable: %v (check ownership/permissions)", cfg.WorkspaceDir, err)
+		}
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}
+
 	// When running inside a container, environment variables override the config
 	// so the daemon uses internal container-network URLs instead of host-bound ones.
 	if v := os.Getenv("POSTGRES_URL"); v != "" {
