@@ -1,3 +1,20 @@
+# [3.14.0](https://github.com/jullury/akama/compare/v3.13.0...v3.14.0) (2026-10-19)
+
+
+### Bug Fixes
+
+* **agent:** skip tool_use events in opencode output parsing ([e9fb39b](https://github.com/jullury/akama/commit/e9fb39b9ffb2a1827d6a793544250f42ab6d2e82))
+* **deploy:** make workspace and config dirs writable by non-root user ([77b88e8](https://github.com/jullury/akama/commit/77b88e85be9086d8bdc383c4b452c25e228efc59))
+
+
+### Features
+
+* **agent:** add QA profile to agent pipeline ([c0b9279](https://github.com/jullury/akama/commit/c0b9279d6165f729743cd522514de068acf4d31a))
+* **agent:** SpecKit-style profile prompts with plan validation and display names ([bd8bb71](https://github.com/jullury/akama/commit/bd8bb717e85948dcfcaf3f2ab1e10c974b948510))
+* **bot:** route jobs through profile pipeline and handle plan approval ([04a0ff5](https://github.com/jullury/akama/commit/04a0ff50e4249f52eaf74bff433620243194a684))
+* **git:** add Pull for updating existing workspaces ([9fa18a5](https://github.com/jullury/akama/commit/9fa18a5a0859f6f883cebb70a79a95155a649411))
+* **job:** checkpointed profile pipeline with spec clarification and plan review gate ([f3f7fea](https://github.com/jullury/akama/commit/f3f7feaa1569f2bb9dbfa0ca1ecc82123e5a20b6))
+
 # [3.13.0](https://github.com/jullury/akama/compare/v3.12.3...v3.13.0) (2026-10-18)
 
 
