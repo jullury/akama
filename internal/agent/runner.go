@@ -322,30 +322,10 @@ func parseOpencodeOutput(output string) string {
 			continue
 		}
 
-		// Handle tool_use events - show tool name and output
+		// Skip tool_use events entirely: their output (file contents, grep
+		// results, etc.) is intermediate noise. Only the agent's final text
+		// messages are part of the deliverable (spec/plan/task/...).
 		if evtType == "tool_use" {
-			var tu struct {
-				Part struct {
-					Type  string `json:"type"`
-					Tool  string `json:"tool"`
-					State struct {
-						Status string          `json:"status"`
-						Input  json.RawMessage `json:"input"`
-						Output string          `json:"output"`
-					} `json:"state"`
-				} `json:"part"`
-			}
-			if json.Unmarshal([]byte(line), &tu) == nil && tu.Part.Tool != "" {
-				// Show what tool was used
-				output := strings.TrimSpace(tu.Part.State.Output)
-				if output != "" {
-					// Truncate very long output
-					if len(output) > 500 {
-						output = output[:500] + "..."
-					}
-					parts = append(parts, output)
-				}
-			}
 			continue
 		}
 
